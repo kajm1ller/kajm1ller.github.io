@@ -1,3 +1,17 @@
+html{
+    font-size: 20px;
+    color: white;
+    text-shadow:
+        -1px -1px 0 #000,
+        1px -1px 0 #000,
+        -1px 1px 0 #000,
+        1px 1px 0 #000;
+    max-width: 960px;
+    margin: auto;
+}
+
+
+
 body{
 
   background: hsla(257, 96%, 67%, 1);
