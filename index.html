@@ -11,7 +11,7 @@
 <h1>Kaj's JW Pepper Piracy Button</h1>
 <p1>Paste the song's number in the text box below, and then press the button.</p1> 
 <p id="demo"></p>
-<input type="text" id="myText" value="Some text...">
+<input type="text" id="myText" value="">
 <script>
 function myFunction() {
   var x = document.getElementById("myText").value;
@@ -22,7 +22,7 @@ function myFunction() {
   link.download = name;
   link.href = uri;
   document.body.appendChild(link);
-  save(y);
+  link.click();
   document.body.removeChild(link);
   
 }
