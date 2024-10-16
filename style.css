@@ -29,10 +29,9 @@ body {
 
 /* Example content styling - adjust to your needs */
 .content {
-  padding: 20px;
   background-color: #fff; /* White background for the content area */
 }
 
 .image {
-  margin: 20 auto;
+  margin: 0 auto;
 }
