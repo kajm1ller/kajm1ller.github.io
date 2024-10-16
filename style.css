@@ -15,7 +15,7 @@ body {
   top: 0;
   width: 183px; /* Adjust the width as needed */
   height: 100%;
-  background-image: url('border.png'); /* Replace with your image URL */
+  background-image: url('border.PNG'); /* Replace with your image URL */
   background-repeat: repeat-y; /* Repeat vertically */
 }
 
