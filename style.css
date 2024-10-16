@@ -32,3 +32,7 @@ body {
   padding: 20px;
   background-color: #fff; /* White background for the content area */
 }
+
+.image {
+  margin: 20 auto;
+}
