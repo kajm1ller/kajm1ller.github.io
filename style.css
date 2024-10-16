@@ -1,27 +1,34 @@
-html{
-    font-size: 20px;
-    color: white;
-    text-shadow:
-        -1px -1px 0 #000,
-        1px -1px 0 #000,
-        -1px 1px 0 #000,
-        1px 1px 0 #000;
-    max-width: 960px;
-    margin: auto;
+
+body {
+  background-color: #f0f8ff; /* Light blue background for the main page */
+  margin: 0; /* Reset default margin */
 }
 
-
-
-body{
-
-  background: hsla(257, 96%, 67%, 1);
-
-  background: linear-gradient(90deg, hsla(257, 96%, 67%, 1) 0%, hsla(283, 100%, 68%, 1) 100%);
-
-  background: -moz-linear-gradient(90deg, hsla(257, 96%, 67%, 1) 0%, hsla(283, 100%, 68%, 1) 100%);
-
-  background: -webkit-linear-gradient(90deg, hsla(257, 96%, 67%, 1) 0%, hsla(283, 100%, 68%, 1) 100%);
-
-  filter: progid: DXImageTransform.Microsoft.gradient( startColorstr="#885BFC", endColorstr="#D15EFF", GradientType=1 );
+.container {
+  width: 80%; /* Adjust as needed */
+  margin: 0 auto; /* Center the content */
+  position: relative; /* To position the side backgrounds */
 }
 
+.side-bg {
+  position: absolute;
+  top: 0;
+  width: 50px; /* Adjust the width as needed */
+  height: 100%;
+  background-image: url('border.png'); /* Replace with your image URL */
+  background-repeat: repeat-y; /* Repeat vertically */
+}
+
+.left-bg {
+  left: 0;
+}
+
+.right-bg {
+  right: 0;
+}
+
+/* Example content styling - adjust to your needs */
+.content {
+  padding: 20px;
+  background-color: #fff; /* White background for the content area */
+}
