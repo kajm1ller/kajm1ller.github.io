@@ -13,7 +13,7 @@ body {
 .side-bg {
   position: absolute;
   top: 0;
-  width: 50px; /* Adjust the width as needed */
+  width: 183px; /* Adjust the width as needed */
   height: 100%;
   background-image: url('border.png'); /* Replace with your image URL */
   background-repeat: repeat-y; /* Repeat vertically */
