@@ -1,107 +1,109 @@
 <!DOCTYPE html>
 <html>
-<div class="side-bg left-bg"></div>
-<div class="side-bg right-bg"></div>
-<link rel="stylesheet" href="style.css">
-
-<head>
-</head>
-
-<body>
-    <div id="image">
-        <title>kaj/projects</title>
+<div class="container">
+    <div class="side-bg left-bg"></div>
+    <div class="side-bg right-bg"></div>
+    <link rel="stylesheet" href="style.css">
 
 
+    <head>
+    </head>
 
-
-        <center>
-            <h1>projects</h1>
-            <br>
-            <h1>Kaj's JW Pepper Piracy Button</h1>
-            <p><i>"Fuck You Greg Burtch!"</i></p>
-            <br>
-
-            <p1>Paste the song's number in the text box below, and then press the button.</p1>
-
-
-            <p id="demo"></p>
-
-
-            <input type="text" id="myText" value="">
-
-
-            <script>
-
-
-                function myFunction() {
-
-
-                    var x = document.getElementById("myText").value;
-
-
-                    var y = "https://d2fizz4npx5v6x.cloudfront.net/audio/" + x + ".mp3";
+    <body>
+        <div id="image">
+            <title>kaj/projects</title>
 
 
 
 
+            <center>
+                <h1>projects</h1>
+                <br>
+                <h1>Kaj's JW Pepper Piracy Button</h1>
+                <p><i>"Fuck You Greg Burtch!"</i></p>
+                <br>
 
-                    const downloadURI = (uri, name) => {
-
-
-                        const link = document.createElement("a");
-
-
-                        link.download = name;
-
-
-                        link.href = uri;
+                <p1>Paste the song's number in the text box below, and then press the button.</p1>
 
 
-                        document.body.appendChild(link);
+                <p id="demo"></p>
 
 
-                        link.click();
+                <input type="text" id="myText" value="">
 
 
-                        document.body.removeChild(link);
+                <script>
+
+
+                    function myFunction() {
+
+
+                        var x = document.getElementById("myText").value;
+
+
+                        var y = "https://d2fizz4npx5v6x.cloudfront.net/audio/" + x + ".mp3";
+
+
+
+
+
+                        const downloadURI = (uri, name) => {
+
+
+                            const link = document.createElement("a");
+
+
+                            link.download = name;
+
+
+                            link.href = uri;
+
+
+                            document.body.appendChild(link);
+
+
+                            link.click();
+
+
+                            document.body.removeChild(link);
+                        }
+
+
+
+                        downloadURI(y, x + ".mp3")
+
+
                     }
 
 
-
-                    downloadURI(y, x + ".mp3")
-
-
-                }
-
-
-            </script>
+                </script>
 
 
 
 
 
-            <button onclick="myFunction()">Click Here!</button>
+                <button onclick="myFunction()">Click Here!</button>
 
 
 
 
 
-            <p><br></p>
+                <p><br></p>
 
 
 
 
 
-            <button>second button</button>
+                <button>second button</button>
 
 
-            <p>this second button doesn't do anything, but it sure is fun to press!</p>
-            <br><br>
-            <p>for reference, if the link we're dealing with is
-                "https://www.jwpepper.com/apt-11616010-2539653/p?preview=true", we'd copy the number 11616010,</br>
-                paste it into the text field, and then hit the button.</p>
-        </center>
-</body>
+                <p>this second button doesn't do anything, but it sure is fun to press!</p>
+                <br><br>
+                <p>for reference, if the link we're dealing with is
+                    "https://www.jwpepper.com/apt-11616010-2539653/p?preview=true", we'd copy the number 11616010,</br>
+                    paste it into the text field, and then hit the button.</p>
+            </center>
+    </body>
 </div>
 </div>
 
