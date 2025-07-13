@@ -7,23 +7,31 @@
 
 
 body {
-  background-color: #f0f8ff; /* Light blue background for the main page */
-  margin: 0; /* Reset default margin */
+  background-color: #f0f8ff;
+  /* Light blue background for the main page */
+  margin: 0;
+  /* Reset default margin */
 }
 
 .container {
-  width: 80%; /* Adjust as needed */
-  margin: 0 auto; /* Center the content */
-  position: relative; /* To position the side backgrounds */
+  width: 80%;
+  /* Adjust as needed */
+  margin: 0 auto;
+  /* Center the content */
+  position: relative;
+  /* To position the side backgrounds */
 }
 
 .side-bg {
   position: absolute;
   top: 0;
-  width: 183px; /* Adjust the width as needed */
+  width: 183px;
+  /* Adjust the width as needed */
   height: 100vh;
-  background-image: url('border.png'); /* Replace with your image URL */
-  background-repeat: repeat-y; /* Repeat vertically */
+  background-image: url('border.png');
+  /* Replace with your image URL */
+  background-repeat: repeat-y;
+  /* Repeat vertically */
 }
 
 .left-bg {
@@ -36,9 +44,14 @@ body {
 
 /* Example content styling - adjust to your needs */
 .content {
-  background-color: #fff; /* White background for the content area */
+  background-color: #fff;
+  /* White background for the content area */
 }
 
 .image {
   margin: 0 auto;
+}
+
+.piracy {
+  border: solid;
 }
