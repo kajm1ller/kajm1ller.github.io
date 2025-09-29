@@ -1,20 +1,14 @@
-* {
-  margin: 0;
-  padding: 0;
-}
-
-
 
 
 body {
-  background-color: #f0f8ff;
+  background-color: #000000;
   /* Light blue background for the main page */
-  margin: 0;
   /* Reset default margin */
+  margin: 0; 
 }
 
 .container {
-  width: 80%;
+  width: 100%;
   /* Adjust as needed */
   margin: 0 auto;
   /* Center the content */
@@ -24,34 +18,62 @@ body {
 
 .side-bg {
   position: absolute;
-  top: 0;
-  width: 183px;
+  
+
   /* Adjust the width as needed */
-  height: 100vh;
+ 
   background-image: url('border.png');
-  /* Replace with your image URL */
   background-repeat: repeat-y;
-  /* Repeat vertically */
+  top: 115.367px;
 }
 
 .left-bg {
   left: 0;
+  width: 180px;
+  height: 90vh;
 }
 
 .right-bg {
-  right: 0;
+  right:0;
+  width: 180px;
+  height: 90vh;
 }
 
-/* Example content styling - adjust to your needs */
 .content {
   background-color: #fff;
-  /* White background for the content area */
+  
 }
 
-.image {
+image {
   margin: 0 auto;
+  padding-top:100px;
 }
 
 .piracy {
   border: solid;
+}
+
+ul {
+  list-style-type: none;
+  margin: auto;
+  padding: 0;
+  
+  background-color: #000000;
+  display: flex;
+  max-width: 716px;
+}
+
+ul li a {
+  display: block;
+  color: white;
+  padding: 14px 16px;
+  text-decoration: none;
+}
+
+ul li a:hover:not(.active) {
+  background-image:url(hover.gif)
+}
+
+ul li a.active {
+  background-color: #04AA6D;
 }
