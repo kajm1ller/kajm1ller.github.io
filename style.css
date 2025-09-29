@@ -7,6 +7,11 @@ body {
   margin: 0; 
 }
 
+h1, p, p1 {
+  color:white;
+}
+
+
 .container {
   width: 100%;
   /* Adjust as needed */
