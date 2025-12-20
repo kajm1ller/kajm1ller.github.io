@@ -1,49 +1,71 @@
 // rapier.js
 // External module containing the Rapier3D demo moved out of index.html.
 
-// The script runs on module load. It dynamically imports the package and
-// starts a small simulation loop that logs the dynamic body's position.
+// This module supports both browser and Node.js execution. In browsers we
+// import the package by its bare specifier. In Node.js the runtime doesn't
+// remap bare specifiers the same way, so we resolve the package path using
+// createRequire + require.resolve and import the resulting file:// URL.
 
-import('@dimforge/rapier3d').then(RAPIER => {
-    // Use the RAPIER module here.
-    let gravity = { x: 0.0, y: -9.81, z: 0.0 };
-    let world = new RAPIER.World(gravity);
+(async () => {
+    try {
+        let RAPIER_MODULE;
 
-    // Create the ground
-    let groundColliderDesc = RAPIER.ColliderDesc.cuboid(10.0, 0.1, 10.0);
-    world.createCollider(groundColliderDesc);
+        // Detect Node.js vs browser
+        const isNode = typeof process !== 'undefined' && !!process.versions && !!process.versions.node;
 
-    // Create a dynamic rigid-body.
-    let rigidBodyDesc = RAPIER.RigidBodyDesc.dynamic()
-        .setTranslation(0.0, 1.0, 0.0);
-    let rigidBody = world.createRigidBody(rigidBodyDesc);
+        if (isNode) {
+            // In Node, resolve the package entry to a file path then import via file URL
+            const { createRequire } = await import('module');
+            const require = createRequire(import.meta.url);
+            const pkgPath = require.resolve('@dimforge/rapier3d');
+            const { pathToFileURL } = await import('url');
+            const pkgUrl = pathToFileURL(pkgPath).href;
+            RAPIER_MODULE = await import(pkgUrl);
+        } else {
+            // Browser: use the bare specifier (requires serving the page over HTTP)
+            RAPIER_MODULE = await import('@dimforge/rapier3d');
+        }
 
-    // Create a cuboid collider attached to the dynamic rigidBody.
-    let colliderDesc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5);
-    let collider = world.createCollider(colliderDesc, rigidBody);
+        const RAPIER = RAPIER_MODULE;
 
-    // Game loop. Replace by your own game loop system.
-    let gameLoop = () => {
-        // Step the simulation forward.  
-        world.step();
+        // Use the RAPIER module here.
+        let gravity = { x: 0.0, y: -9.81, z: 0.0 };
+        let world = new RAPIER.World(gravity);
 
-        // Get and print the rigid-body's position.
-        let position = rigidBody.translation();
-        console.log("Rigid-body position: ", position.x, position.y);
+        // Create the ground
+        let groundColliderDesc = RAPIER.ColliderDesc.cuboid(10.0, 0.1, 10.0);
+        world.createCollider(groundColliderDesc);
 
-        setTimeout(gameLoop, 16);
-    };
+        // Create a dynamic rigid-body.
+        let rigidBodyDesc = RAPIER.RigidBodyDesc.dynamic()
+            .setTranslation(0.0, 1.0, 0.0);
+        let rigidBody = world.createRigidBody(rigidBodyDesc);
 
-    gameLoop();
-}).catch(err => {
-    console.error('Failed to import Rapier3D:', err);
-});
+        // Create a cuboid collider attached to the dynamic rigidBody.
+        let colliderDesc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5);
+        let collider = world.createCollider(colliderDesc, rigidBody);
+
+        // Game loop. Replace by your own game loop system.
+        let gameLoop = () => {
+            // Step the simulation forward.  
+            world.step();
+
+            // Get and print the rigid-body's position.
+            let position = rigidBody.translation();
+            console.log("Rigid-body position: ", position.x, position.y);
+
+            setTimeout(gameLoop, 16);
+        };
+
+        gameLoop();
+    } catch (err) {
+        console.error('Failed to import Rapier3D:', err);
+    }
+})();
 
 // Notes:
-// - This uses a bare specifier import('@dimforge/rapier3d'). In a browser
-//   environment that doesn't resolve bare specifiers, you'll need to either:
-//     * Serve the page through a bundler/dev server that resolves node_modules,
-//     * Or replace the import with an ESM CDN URL (jsDelivr/unpkg) that provides
-//       an ESM build of Rapier.
-// - Keep the script as type="module" in index.html so this file runs as a
-//   module.
+// - When running in Node.js this file resolves the package path and imports the
+//   exact file. Make sure you run Node v16+ (ESM support) and that @dimforge/rapier3d
+//   is installed (npm install).
+// - In the browser serve the repo over HTTP (e.g. `npm run dev`) so bare imports
+//   resolve correctly.
