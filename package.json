@@ -5,10 +5,10 @@
   "scripts": {
     "dev": "http-server -c-1 -p 8000"
   },
-  "dependencies": {
-    "@dimforge/rapier3d": "^0.19.3"
-  },
   "devDependencies": {
     "http-server": "^14.1.1"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.19.3"
   }
 }
