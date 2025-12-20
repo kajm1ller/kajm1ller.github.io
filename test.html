@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Rapier3D Demo</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="info">
+        
+        <div id="position">Position: ...</div>
+        <button id="addCube" style="margin-top: 10px; padding: 5px 10px; cursor: pointer;">Add Cube</button>
+        <button id="resetCubes" style="margin-top: 5px; padding: 5px 10px; cursor: pointer; background-color: #dc3545; color: white; border: none; border-radius: 3px;">Reset All Cubes</button>
+    </div>
+</body>
+
+<script type="module" src="js/rapier.js"></script>
+</html>
