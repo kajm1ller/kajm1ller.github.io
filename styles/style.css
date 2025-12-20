@@ -1,7 +1,7 @@
 
 
 body {
-  background-image: url(blowjob.png);
+  background-image: url(../images/blowjob.png);
   background-repeat:repeat;
 
   margin: 0; 
@@ -26,7 +26,7 @@ h1, p, p1 {
   
 
  
-  background-image: url('border.png');
+  background-image: url('../images/border.png');
   background-repeat: repeat-y;
   top: 115.367px;
 }
@@ -76,7 +76,7 @@ ul li a {
 }
 
 ul li a:hover:not(.active) {
-  background-image:url(hover.gif)
+  background-image:url(../images/hover.gif)
 }
 
 ul li a.active {
