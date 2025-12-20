@@ -22,8 +22,10 @@
             const pkgUrl = pathToFileURL(pkgPath).href;
             RAPIER_MODULE = await import(pkgUrl);
         } else {
-            // Browser: use the bare specifier (requires serving the page over HTTP)
-            RAPIER_MODULE = await import('@dimforge/rapier3d');
+            // Browser: import an ESM build from a CDN so browsers (without import maps)
+            // can resolve the module. Pin the version to match the repo dependency.
+            // Using unpkg with ?module serves an ESM-compatible entrypoint.
+            RAPIER_MODULE = await import('https://unpkg.com/@dimforge/rapier3d@0.19.3?module');
         }
 
         const RAPIER = RAPIER_MODULE;
