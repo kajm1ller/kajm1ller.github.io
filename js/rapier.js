@@ -250,6 +250,106 @@ RAPIER.init().then(() => {
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     
+    // Touch event handlers for mobile
+    function onTouchStart(event) {
+        if (event.touches.length === 1) {
+            event.preventDefault();
+            
+            const touch = event.touches[0];
+            mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+            
+            raycaster.setFromCamera(mouse, camera);
+            
+            // Check all cubes for intersection
+            const allMeshes = allCubes.map(cube => cube.mesh);
+            const intersects = raycaster.intersectObjects(allMeshes);
+            
+            if (intersects.length > 0) {
+                // Find which cube was touched
+                const clickedMesh = intersects[0].object;
+                draggedCube = allCubes.find(cube => cube.mesh === clickedMesh);
+                
+                if (draggedCube) {
+                    isDragging = true;
+                    
+                    // Disable orbit controls while dragging
+                    controls.enabled = false;
+                    
+                    // Set up the drag plane perpendicular to camera
+                    const cameraDirection = new THREE.Vector3();
+                    camera.getWorldDirection(cameraDirection);
+                    dragPlane.setFromNormalAndCoplanarPoint(
+                        cameraDirection,
+                        intersects[0].point
+                    );
+                    
+                    // Store initial drag point
+                    raycaster.ray.intersectPlane(dragPlane, lastDragPoint);
+                    dragPoint.copy(lastDragPoint);
+                    lastTime = Date.now();
+                    
+                    // Store previous position
+                    const pos = draggedCube.body.translation();
+                    previousPosition.set(pos.x, pos.y, pos.z);
+                }
+            }
+        }
+    }
+    
+    function onTouchMove(event) {
+        if (!isDragging || event.touches.length !== 1) return;
+        
+        event.preventDefault();
+        
+        const touch = event.touches[0];
+        mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+        
+        raycaster.setFromCamera(mouse, camera);
+        
+        // Get intersection with drag plane
+        if (raycaster.ray.intersectPlane(dragPlane, dragPoint)) {
+            const currentTime = Date.now();
+            const deltaTime = (currentTime - lastTime) / 1000;
+            
+            if (deltaTime > 0) {
+                // Calculate velocity for throwing
+                dragVelocity.subVectors(dragPoint, lastDragPoint).divideScalar(deltaTime);
+                lastDragPoint.copy(dragPoint);
+                lastTime = currentTime;
+            }
+        }
+    }
+    
+    function onTouchEnd(event) {
+        if (isDragging && draggedCube) {
+            event.preventDefault();
+            
+            isDragging = false;
+            
+            // Re-enable orbit controls
+            controls.enabled = true;
+            
+            // Apply throw velocity (capped for stability)
+            const maxVelocity = 20;
+            dragVelocity.clampLength(0, maxVelocity);
+            draggedCube.body.setLinvel({ x: dragVelocity.x, y: dragVelocity.y, z: dragVelocity.z }, true);
+            
+            // Reset dragged cube reference
+            draggedCube = null;
+            
+            // Reset velocity tracking
+            dragVelocity.set(0, 0, 0);
+        }
+    }
+    
+    // Add touch event listeners for mobile support
+    window.addEventListener('touchstart', onTouchStart, { passive: false });
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', onTouchEnd, { passive: false });
+    window.addEventListener('touchcancel', onTouchEnd, { passive: false });
+    
     // Handle window resize
     window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;
