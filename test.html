@@ -2,6 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rapier3D Demo</title>
     <style>
         body {
@@ -15,12 +16,85 @@
             left: 10px;
             color: white;
             background: rgba(0,0,0,0.7);
-            padding: 10px;
-            border-radius: 5px;
+            padding: 15px;
+            border-radius: 8px;
             font-size: 14px;
+            max-width: 90vw;
         }
         canvas {
             display: block;
+        }
+
+        /* Modern button styling - mobile-first approach */
+        .control-button {
+            display: block;
+            width: 100%;
+            min-height: 48px;
+            margin-top: 12px;
+            padding: 14px 20px;
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        #addCube {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        #addCube:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        #addCube:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 6px rgba(102, 126, 234, 0.3);
+        }
+
+        #resetCubes {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        #resetCubes:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(245, 87, 108, 0.4);
+        }
+
+        #resetCubes:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 6px rgba(245, 87, 108, 0.3);
+        }
+
+        /* Desktop and larger tablet adjustments */
+        @media (min-width: 768px) {
+            #info {
+                padding: 12px;
+                max-width: 250px;
+            }
+
+            .control-button {
+                min-height: 44px;
+                padding: 12px 18px;
+                font-size: 15px;
+            }
+        }
+
+        /* Large desktop adjustments */
+        @media (min-width: 1024px) {
+            .control-button {
+                min-height: 40px;
+                padding: 10px 16px;
+                font-size: 14px;
+            }
         }
     </style>
 </head>
@@ -29,8 +103,8 @@
     <div id="info">
         
         <div id="position">Position: ...</div>
-        <button id="addCube" style="margin-top: 10px; padding: 5px 10px; cursor: pointer;">Add Cube</button>
-        <button id="resetCubes" style="margin-top: 5px; padding: 5px 10px; cursor: pointer; background-color: #dc3545; color: white; border: none; border-radius: 3px;">Reset All Cubes</button>
+        <button id="addCube" class="control-button">Add Cube</button>
+        <button id="resetCubes" class="control-button">Reset All Cubes</button>
     </div>
 </body>
 
