@@ -107,17 +107,22 @@ RAPIER.init().then(() => {
     
     // Button to add new cubes
     const addCubeButton = document.getElementById('addCube');
-    addCubeButton.addEventListener('click', () => {
+    const addCubeHandler = () => {
         // Spawn cube above the center with slight random offset
         const x = (Math.random() - 0.5) * 2;
         const y = 5 + Math.random() * 2;
         const z = (Math.random() - 0.5) * 2;
         createCube(x, y, z);
+    };
+    addCubeButton.addEventListener('click', addCubeHandler);
+    addCubeButton.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        addCubeHandler();
     });
     
     // Button to reset all cubes
     const resetCubesButton = document.getElementById('resetCubes');
-    resetCubesButton.addEventListener('click', () => {
+    const resetCubesHandler = () => {
         // Stop any ongoing drag operation
         if (isDragging) {
             isDragging = false;
@@ -139,6 +144,11 @@ RAPIER.init().then(() => {
             cube.mesh.geometry.dispose();
             cube.mesh.material.dispose();
         }
+    };
+    resetCubesButton.addEventListener('click', resetCubesHandler);
+    resetCubesButton.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        resetCubesHandler();
     });
     
     // Raycaster for mouse picking
