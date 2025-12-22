@@ -52,7 +52,7 @@ RAPIER.init().then(() => {
     groundMesh.receiveShadow = true;
     scene.add(groundMesh);
 
-    // Array to store all draggable cubes
+    // Array to store all draggable objects (cubes, spheres, etc.)
     const allCubes = [];
     
     // Function to create a new cube
@@ -62,20 +62,20 @@ RAPIER.init().then(() => {
             color = Math.random() * 0xffffff;
         }
         
-        // Create physics body with squishy properties
+        // Create physics body with bouncy properties
         const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
             .setTranslation(x, y, z);
         const body = world.createRigidBody(bodyDesc);
         
-        // Make cubes squishy with physics properties
-        body.setLinearDamping(2.0);
-        body.setAngularDamping(2.0);
+        // Bouncy physics properties
+        body.setLinearDamping(0.3);
+        body.setAngularDamping(0.5);
         
-        // Create collider with squishy material properties
+        // Create collider with bouncy material properties
         const colliderDesc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
-            .setRestitution(0.0)  // No bounce
-            .setFriction(1.5)      // High friction
-            .setDensity(0.1);      // Low density (lighter/softer feel)
+            .setRestitution(0.8)  // High bounce
+            .setFriction(0.5)
+            .setDensity(1.0);
         world.createCollider(colliderDesc, body);
         
         // Create visual mesh with segments for smooth deformation
@@ -93,11 +93,164 @@ RAPIER.init().then(() => {
             originalGeometry: cubeGeometry.clone(),
             squishScale: new THREE.Vector3(1, 1, 1),
             targetSquishScale: new THREE.Vector3(1, 1, 1),
-            lastVelocity: new THREE.Vector3(0, 0, 0)
+            lastVelocity: new THREE.Vector3(0, 0, 0),
+            type: 'cube'
         };
         allCubes.push(cubeData);
         
         return cubeData;
+    }
+    
+    // Function to create a sphere
+    function createSphere(x, y, z, color = null) {
+        if (!color) {
+            color = Math.random() * 0xffffff;
+        }
+        
+        const radius = 0.5;
+        
+        // Create physics body
+        const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
+            .setTranslation(x, y, z);
+        const body = world.createRigidBody(bodyDesc);
+        
+        body.setLinearDamping(0.1);
+        body.setAngularDamping(0.3);
+        
+        // Create sphere collider
+        const colliderDesc = RAPIER.ColliderDesc.ball(radius)
+            .setRestitution(0.95)  // Super bouncy
+            .setFriction(0.3)
+            .setDensity(1.0);
+        world.createCollider(colliderDesc, body);
+        
+        // Create visual mesh
+        const sphereGeometry = new THREE.SphereGeometry(radius, 32, 32);
+        const material = new THREE.MeshStandardMaterial({ color: color });
+        const mesh = new THREE.Mesh(sphereGeometry, material);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        scene.add(mesh);
+        
+        const sphereData = { 
+            body: body, 
+            mesh: mesh,
+            originalGeometry: sphereGeometry.clone(),
+            squishScale: new THREE.Vector3(1, 1, 1),
+            targetSquishScale: new THREE.Vector3(1, 1, 1),
+            lastVelocity: new THREE.Vector3(0, 0, 0),
+            type: 'sphere'
+        };
+        allCubes.push(sphereData);
+        
+        return sphereData;
+    }
+    
+    // Function to create a triangle (tetrahedron/pyramid)
+    function createTriangle(x, y, z, color = null) {
+        if (!color) {
+            color = Math.random() * 0xffffff;
+        }
+        
+        // Create physics body
+        const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
+            .setTranslation(x, y, z);
+        const body = world.createRigidBody(bodyDesc);
+        
+        body.setLinearDamping(0.3);
+        body.setAngularDamping(0.5);
+        
+        // Create tetrahedron collider using convex hull
+        const points = [
+            { x: 0, y: 0.6, z: 0 },        // Top
+            { x: -0.5, y: -0.3, z: 0.5 },  // Base 1
+            { x: 0.5, y: -0.3, z: 0.5 },   // Base 2
+            { x: 0, y: -0.3, z: -0.5 }     // Base 3
+        ];
+        const colliderDesc = RAPIER.ColliderDesc.convexHull(
+            new Float32Array(points.flatMap(p => [p.x, p.y, p.z]))
+        )
+            .setRestitution(0.75)
+            .setFriction(0.6)
+            .setDensity(1.0);
+        world.createCollider(colliderDesc, body);
+        
+        // Create visual tetrahedron
+        const geometry = new THREE.TetrahedronGeometry(0.7, 0);
+        const material = new THREE.MeshStandardMaterial({ color: color });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        scene.add(mesh);
+        
+        const triangleData = { 
+            body: body, 
+            mesh: mesh,
+            originalGeometry: geometry.clone(),
+            squishScale: new THREE.Vector3(1, 1, 1),
+            targetSquishScale: new THREE.Vector3(1, 1, 1),
+            lastVelocity: new THREE.Vector3(0, 0, 0),
+            type: 'triangle'
+        };
+        allCubes.push(triangleData);
+        
+        return triangleData;
+    }
+    
+    // Function to create a wavy tube
+    function createWavyTube(x, y, z, color = null) {
+        if (!color) {
+            color = Math.random() * 0xffffff;
+        }
+        
+        // Create physics body
+        const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
+            .setTranslation(x, y, z);
+        const body = world.createRigidBody(bodyDesc);
+        
+        body.setLinearDamping(0.3);
+        body.setAngularDamping(0.5);
+        
+        // Create capsule collider (cylinder with rounded ends for tube)
+        const colliderDesc = RAPIER.ColliderDesc.capsule(0.5, 0.3)
+            .setRestitution(0.85)
+            .setFriction(0.5)
+            .setDensity(1.0);
+        world.createCollider(colliderDesc, body);
+        
+        // Create wavy tube visual using a custom curve
+        const curve = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(0, -0.5, 0),
+            new THREE.Vector3(0.2, -0.25, 0.1),
+            new THREE.Vector3(-0.1, 0, -0.1),
+            new THREE.Vector3(0.15, 0.25, 0.05),
+            new THREE.Vector3(0, 0.5, 0)
+        ]);
+        
+        const tubeGeometry = new THREE.TubeGeometry(curve, 20, 0.15, 16, false);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: color,
+            side: THREE.DoubleSide,
+            metalness: 0.3,
+            roughness: 0.7
+        });
+        const mesh = new THREE.Mesh(tubeGeometry, material);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        scene.add(mesh);
+        
+        const tubeData = { 
+            body: body, 
+            mesh: mesh,
+            originalGeometry: tubeGeometry.clone(),
+            squishScale: new THREE.Vector3(1, 1, 1),
+            targetSquishScale: new THREE.Vector3(1, 1, 1),
+            lastVelocity: new THREE.Vector3(0, 0, 0),
+            type: 'tube'
+        };
+        allCubes.push(tubeData);
+        
+        return tubeData;
     }
     
     // Create initial cubes (none by default, user adds them)
@@ -108,7 +261,6 @@ RAPIER.init().then(() => {
     // Button to add new cubes
     const addCubeButton = document.getElementById('addCube');
     const addCubeHandler = () => {
-        // Spawn cube above the center with slight random offset
         const x = (Math.random() - 0.5) * 2;
         const y = 5 + Math.random() * 2;
         const z = (Math.random() - 0.5) * 2;
@@ -120,7 +272,49 @@ RAPIER.init().then(() => {
         addCubeHandler();
     });
     
-    // Button to reset all cubes
+    // Button to add new spheres
+    const addSphereButton = document.getElementById('addSphere');
+    const addSphereHandler = () => {
+        const x = (Math.random() - 0.5) * 2;
+        const y = 5 + Math.random() * 2;
+        const z = (Math.random() - 0.5) * 2;
+        createSphere(x, y, z);
+    };
+    addSphereButton.addEventListener('click', addSphereHandler);
+    addSphereButton.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        addSphereHandler();
+    });
+    
+    // Button to add new triangles
+    const addTriangleButton = document.getElementById('addTriangle');
+    const addTriangleHandler = () => {
+        const x = (Math.random() - 0.5) * 2;
+        const y = 5 + Math.random() * 2;
+        const z = (Math.random() - 0.5) * 2;
+        createTriangle(x, y, z);
+    };
+    addTriangleButton.addEventListener('click', addTriangleHandler);
+    addTriangleButton.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        addTriangleHandler();
+    });
+    
+    // Button to add new wavy tubes
+    const addTubeButton = document.getElementById('addTube');
+    const addTubeHandler = () => {
+        const x = (Math.random() - 0.5) * 2;
+        const y = 5 + Math.random() * 2;
+        const z = (Math.random() - 0.5) * 2;
+        createWavyTube(x, y, z);
+    };
+    addTubeButton.addEventListener('click', addTubeHandler);
+    addTubeButton.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        addTubeHandler();
+    });
+    
+    // Button to reset all shapes
     const resetCubesButton = document.getElementById('resetCubes');
     const resetCubesHandler = () => {
         // Stop any ongoing drag operation
@@ -130,19 +324,19 @@ RAPIER.init().then(() => {
             controls.enabled = true;
         }
         
-        // Remove all cubes
+        // Remove all shapes
         while (allCubes.length > 0) {
-            const cube = allCubes.pop();
+            const shape = allCubes.pop();
             
             // Remove physics body from world
-            world.removeRigidBody(cube.body);
+            world.removeRigidBody(shape.body);
             
             // Remove mesh from scene
-            scene.remove(cube.mesh);
+            scene.remove(shape.mesh);
             
             // Dispose of geometry and material to free memory
-            cube.mesh.geometry.dispose();
-            cube.mesh.material.dispose();
+            shape.mesh.geometry.dispose();
+            shape.mesh.material.dispose();
         }
     };
     resetCubesButton.addEventListener('click', resetCubesHandler);
@@ -489,7 +683,7 @@ RAPIER.init().then(() => {
         // Update the position display
         const cubeCount = allCubes.length;
         const status = isDragging ? ' [GRABBED]' : '';
-        positionElement.textContent = `Cubes: ${cubeCount}${status}`;
+        positionElement.textContent = `Shapes: ${cubeCount}${status}`;
 
         // Render the scene
         renderer.render(scene, camera);

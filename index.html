@@ -13,8 +13,8 @@
         }
         #info {
             position: absolute;
-            top: 10px;
-            left: 10px;
+            bottom: 10px;
+            right: 10px;
             color: white;
             background: rgba(0,0,0,0.7);
             padding: 15px;
@@ -60,6 +60,51 @@
             box-shadow: 0 2px 6px rgba(102, 126, 234, 0.3);
         }
 
+        #addSphere {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+
+        #addSphere:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(79, 172, 254, 0.4);
+        }
+
+        #addSphere:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 6px rgba(79, 172, 254, 0.3);
+        }
+
+        #addTriangle {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+            color: white;
+        }
+
+        #addTriangle:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(250, 112, 154, 0.4);
+        }
+
+        #addTriangle:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 6px rgba(250, 112, 154, 0.3);
+        }
+
+        #addTube {
+            background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+            color: white;
+        }
+
+        #addTube:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(67, 233, 123, 0.4);
+        }
+
+        #addTube:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 6px rgba(67, 233, 123, 0.3);
+        }
+
         #resetCubes {
             background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
             color: white;
@@ -79,7 +124,7 @@
         @media (min-width: 768px) {
             #info {
                 padding: 12px;
-                max-width: 250px;
+                max-width: 280px;
             }
 
             .control-button {
@@ -102,10 +147,12 @@
 
 <body>
     <div id="info">
-        
-        <div id="position">Position: ...</div>
+        <div id="position">Shapes: 0</div>
         <button id="addCube" class="control-button">Add Cube</button>
-        <button id="resetCubes" class="control-button">Reset All Cubes</button>
+        <button id="addSphere" class="control-button">Add Sphere</button>
+        <button id="addTriangle" class="control-button">Add Triangle</button>
+        <button id="addTube" class="control-button">Add Wavy Tube</button>
+        <button id="resetCubes" class="control-button">Reset All Shapes</button>
     </div>
 </body>
 
