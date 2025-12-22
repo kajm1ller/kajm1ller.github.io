@@ -17,14 +17,23 @@ RAPIER.init().then(() => {
     renderer.shadowMap.enabled = true;
     document.body.appendChild(renderer.domElement);
     
-    // Add OrbitControls for camera rotation with middle mouse button
+    // Add OrbitControls with mobile-friendly gestures
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true; // Smooth camera movement
     controls.dampingFactor = 0.05;
+    controls.enableZoom = true;
+    controls.enablePan = true;
+    controls.minDistance = 2.5;
+    controls.maxDistance = 25;
+    controls.maxPolarAngle = Math.PI * 0.49; // prevent flipping below ground
     controls.mouseButtons = {
-        LEFT: null, // Disable left button for orbit (we use it for dragging)
-        MIDDLE: THREE.MOUSE.ROTATE, // Middle button rotates camera
-        RIGHT: THREE.MOUSE.PAN // Right button pans camera
+        LEFT: null, // Disable left button for orbit (reserved for dragging shapes)
+        MIDDLE: THREE.MOUSE.ROTATE,
+        RIGHT: THREE.MOUSE.PAN
+    };
+    controls.touches = {
+        ONE: THREE.TOUCH.ROTATE,        // one-finger orbit
+        TWO: THREE.TOUCH.DOLLY_PAN      // pinch to zoom + two-finger pan
     };
     controls.target.set(0, 1, 0); // Look at center of action
     
@@ -456,48 +465,55 @@ RAPIER.init().then(() => {
     
     // Touch event handlers for mobile
     function onTouchStart(event) {
-        if (event.touches.length === 1) {
-            event.preventDefault();
+        // Let OrbitControls handle multi-touch (pinch/pan)
+        if (event.touches.length !== 1) {
+            return;
+        }
+
+        const touch = event.touches[0];
+        mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+        
+        raycaster.setFromCamera(mouse, camera);
+        
+        // Check all meshes for intersection
+        const allMeshes = allCubes.map(cube => cube.mesh);
+        const intersects = raycaster.intersectObjects(allMeshes);
+        
+        if (intersects.length > 0) {
+            // Find which mesh was touched
+            const clickedMesh = intersects[0].object;
+            draggedCube = allCubes.find(cube => cube.mesh === clickedMesh);
             
-            const touch = event.touches[0];
-            mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
-            
-            raycaster.setFromCamera(mouse, camera);
-            
-            // Check all cubes for intersection
-            const allMeshes = allCubes.map(cube => cube.mesh);
-            const intersects = raycaster.intersectObjects(allMeshes);
-            
-            if (intersects.length > 0) {
-                // Find which cube was touched
-                const clickedMesh = intersects[0].object;
-                draggedCube = allCubes.find(cube => cube.mesh === clickedMesh);
+            if (draggedCube) {
+                event.preventDefault();
+                isDragging = true;
                 
-                if (draggedCube) {
-                    isDragging = true;
-                    
-                    // Disable orbit controls while dragging
-                    controls.enabled = false;
-                    
-                    // Set up the drag plane perpendicular to camera
-                    const cameraDirection = new THREE.Vector3();
-                    camera.getWorldDirection(cameraDirection);
-                    dragPlane.setFromNormalAndCoplanarPoint(
-                        cameraDirection,
-                        intersects[0].point
-                    );
-                    
-                    // Store initial drag point
-                    raycaster.ray.intersectPlane(dragPlane, lastDragPoint);
-                    dragPoint.copy(lastDragPoint);
-                    lastTime = Date.now();
-                    
-                    // Store previous position
-                    const pos = draggedCube.body.translation();
-                    previousPosition.set(pos.x, pos.y, pos.z);
-                }
+                // Disable orbit controls while dragging a shape
+                controls.enabled = false;
+                
+                // Set up the drag plane perpendicular to camera
+                const cameraDirection = new THREE.Vector3();
+                camera.getWorldDirection(cameraDirection);
+                dragPlane.setFromNormalAndCoplanarPoint(
+                    cameraDirection,
+                    intersects[0].point
+                );
+                
+                // Store initial drag point
+                raycaster.ray.intersectPlane(dragPlane, lastDragPoint);
+                dragPoint.copy(lastDragPoint);
+                lastTime = Date.now();
+                
+                // Store previous position
+                const pos = draggedCube.body.translation();
+                previousPosition.set(pos.x, pos.y, pos.z);
             }
+        } else {
+            // No hit: keep controls active for orbit
+            controls.enabled = true;
+            isDragging = false;
+            draggedCube = null;
         }
     }
     
@@ -527,25 +543,25 @@ RAPIER.init().then(() => {
     }
     
     function onTouchEnd(event) {
-        if (isDragging && draggedCube) {
-            event.preventDefault();
-            
-            isDragging = false;
-            
-            // Re-enable orbit controls
-            controls.enabled = true;
-            
-            // Apply throw velocity (capped for stability)
-            const maxVelocity = 20;
-            dragVelocity.clampLength(0, maxVelocity);
-            draggedCube.body.setLinvel({ x: dragVelocity.x, y: dragVelocity.y, z: dragVelocity.z }, true);
-            
-            // Reset dragged cube reference
-            draggedCube = null;
-            
-            // Reset velocity tracking
-            dragVelocity.set(0, 0, 0);
-        }
+        if (!isDragging || !draggedCube) return;
+        
+        event.preventDefault();
+        
+        isDragging = false;
+        
+        // Re-enable orbit controls
+        controls.enabled = true;
+        
+        // Apply throw velocity (capped for stability)
+        const maxVelocity = 20;
+        dragVelocity.clampLength(0, maxVelocity);
+        draggedCube.body.setLinvel({ x: dragVelocity.x, y: dragVelocity.y, z: dragVelocity.z }, true);
+        
+        // Reset dragged cube reference
+        draggedCube = null;
+        
+        // Reset velocity tracking
+        dragVelocity.set(0, 0, 0);
     }
     
     // Add touch event listeners for mobile support
