@@ -1,43 +1,112 @@
 <!DOCTYPE html>
 <html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rapier3D Demo</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            max-width: 90vw;
+        }
+        canvas {
+            display: block;
+        }
 
- <head>
-  <link rel="stylesheet" href="styles/style.css">
-  <title>kajs website</title>
+        /* Modern button styling - mobile-first approach */
+        .control-button {
+            display: block;
+            width: 100%;
+            min-height: 48px;
+            margin-top: 12px;
+            padding: 14px 20px;
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+            text-align: center;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
 
-  
-  </head>
+        #addCube {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
 
-  <body>
+        #addCube:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
 
-<!--
-     <div class="side-bg left-bg"></div>
-  <div class="side-bg right-bg"></div>
--->
-    <ul>
-      <li><a href ="index.html"><h1>home</h1></a></li>
-      <li><a href="projects.html"><h1>projects</h1></a></li>
-      <li><a href="funny.html"><h1>funny</h1></a></li>
-      <li><a href="games.html"><h1>games</h1></a></li> 
-      <li><a href="https://linkedin.com/in/kaj-miller-63661424a" target="_blank"><h1>linkedin</h1></a></li>
-    </ul>
+        #addCube:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 6px rgba(102, 126, 234, 0.3);
+        }
 
-<!--
-    <center>
-      <h1 style="color: white;">kaj</h1>
-      <div id="image"><img src="images/logo.gif" alt="logo"></div>
-      <h1 style="color: white;">you shouldn't be here.</h1>
-  </center>
-  -->
-</div>
+        #resetCubes {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
 
+        #resetCubes:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(245, 87, 108, 0.4);
+        }
 
-<script type="module" src="js/rapier.js" type="module"></script>
+        #resetCubes:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 6px rgba(245, 87, 108, 0.3);
+        }
 
+        /* Desktop and larger tablet adjustments */
+        @media (min-width: 768px) {
+            #info {
+                padding: 12px;
+                max-width: 250px;
+            }
+
+            .control-button {
+                min-height: 44px;
+                padding: 12px 18px;
+                font-size: 15px;
+            }
+        }
+
+        /* Large desktop adjustments */
+        @media (min-width: 1024px) {
+            .control-button {
+                min-height: 40px;
+                padding: 10px 16px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="info">
+        
+        <div id="position">Position: ...</div>
+        <button id="addCube" class="control-button">Add Cube</button>
+        <button id="resetCubes" class="control-button">Reset All Cubes</button>
+    </div>
 </body>
 
-</div>
-
-
-
+<script type="module" src="js/rapier.js"></script>
 </html>
