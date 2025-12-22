@@ -13,7 +13,7 @@
         }
         #info {
             position: absolute;
-            bottom: 10px;
+            bottom: 70px;
             right: 10px;
             color: white;
             background: rgba(0,0,0,0.7);
@@ -26,7 +26,7 @@
             display: block;
         }
 
-        /* Modern button styling - mobile-first approach */
+        /* Modern glassy buttons - mobile-first approach */
         .control-button {
             display: block;
             width: 100%;
@@ -35,90 +35,57 @@
             padding: 14px 20px;
             font-size: 16px;
             font-weight: 600;
-            border: none;
-            border-radius: 8px;
+            border-radius: 14px;
             cursor: pointer;
             transition: all 0.2s ease;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
             text-align: center;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            color: #f7f9fc;
+            background: linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.10));
+            border: 1px solid rgba(255,255,255,0.35);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+            backdrop-filter: blur(12px) saturate(140%);
+            -webkit-backdrop-filter: blur(12px) saturate(140%);
+        }
+
+        #toggleMenu {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            width: auto;
+            min-height: 44px;
+            padding: 10px 16px;
+            font-size: 14px;
+            font-weight: 600;
+            border-radius: 999px;
+            cursor: pointer;
+            color: #f7f9fc;
+            background: linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.10));
+            border: 1px solid rgba(255,255,255,0.35);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+            backdrop-filter: blur(12px) saturate(140%);
+            -webkit-backdrop-filter: blur(12px) saturate(140%);
             touch-action: manipulation;
             -webkit-tap-highlight-color: transparent;
         }
 
-        #addCube {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+        #toggleMenu:active,
+        .control-button:active {
+            transform: translateY(1px);
         }
 
-        #addCube:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        #toggleMenu:hover,
+        .control-button:hover {
+            box-shadow: 0 10px 28px rgba(0,0,0,0.28);
+            border-color: rgba(255,255,255,0.5);
         }
 
-        #addCube:active {
-            transform: translateY(0);
-            box-shadow: 0 2px 6px rgba(102, 126, 234, 0.3);
+        .hidden {
+            display: none !important;
         }
 
-        #addSphere {
-            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-            color: white;
-        }
-
-        #addSphere:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(79, 172, 254, 0.4);
-        }
-
-        #addSphere:active {
-            transform: translateY(0);
-            box-shadow: 0 2px 6px rgba(79, 172, 254, 0.3);
-        }
-
-        #addTriangle {
-            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
-            color: white;
-        }
-
-        #addTriangle:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(250, 112, 154, 0.4);
-        }
-
-        #addTriangle:active {
-            transform: translateY(0);
-            box-shadow: 0 2px 6px rgba(250, 112, 154, 0.3);
-        }
-
-        #addTube {
-            background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
-            color: white;
-        }
-
-        #addTube:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(67, 233, 123, 0.4);
-        }
-
-        #addTube:active {
-            transform: translateY(0);
-            box-shadow: 0 2px 6px rgba(67, 233, 123, 0.3);
-        }
-
-        #resetCubes {
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-            color: white;
-        }
-
-        #resetCubes:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(245, 87, 108, 0.4);
-        }
-
-        #resetCubes:active {
-            transform: translateY(0);
-            box-shadow: 0 2px 6px rgba(245, 87, 108, 0.3);
-        }
+        /* Per-button overrides removed; all share the glass style above */
 
         /* Desktop and larger tablet adjustments */
         @media (min-width: 768px) {
@@ -132,6 +99,12 @@
                 padding: 12px 18px;
                 font-size: 15px;
             }
+
+            #toggleMenu {
+                min-height: 40px;
+                padding: 8px 14px;
+                font-size: 13px;
+            }
         }
 
         /* Large desktop adjustments */
@@ -141,11 +114,18 @@
                 padding: 10px 16px;
                 font-size: 14px;
             }
+
+            #toggleMenu {
+                min-height: 38px;
+                padding: 8px 12px;
+                font-size: 12px;
+            }
         }
     </style>
 </head>
 
 <body>
+    <button id="toggleMenu" aria-label="Toggle menu visibility">Hide Menu</button>
     <div id="info">
         <div id="position">Shapes: 0</div>
         <button id="addCube" class="control-button">Add Cube</button>
@@ -155,6 +135,26 @@
         <button id="resetCubes" class="control-button">Reset All Shapes</button>
     </div>
 </body>
+<script>
+    (function() {
+        const info = document.getElementById('info');
+        const toggle = document.getElementById('toggleMenu');
+        let hidden = false;
+
+        const updateLabel = () => {
+            toggle.textContent = hidden ? 'Show Menu' : 'Hide Menu';
+            toggle.setAttribute('aria-pressed', String(!hidden));
+        };
+
+        toggle.addEventListener('click', () => {
+            hidden = !hidden;
+            info.classList.toggle('hidden', hidden);
+            updateLabel();
+        });
+
+        updateLabel();
+    })();
+</script>
 
 <script type="module" src="js/rapier.js"></script>
 </html>
