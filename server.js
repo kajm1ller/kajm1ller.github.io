@@ -1,14 +1,29 @@
-const https = require('https');
-const fs = require('fs');
 const express = require('express');
+const path = require('path');
 
 const app = express();
+const port = 8000;
 
-const options = {
-  key: fs.readFileSync('/etc/letsencrypt/live/kaj.services/privkey.pem'),
-  cert: fs.readFileSync('//etc/letsencrypt/live/kaj.services/fullchain.pem')
-};
+// Override CSP header
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', 
+    "default-src 'self'; " +
+    "img-src 'self' data: https:; " +
+    "script-src 'self' 'unsafe-inline'; " +
+    "style-src 'self' 'unsafe-inline'; " +
+    "font-src 'self'"
+  );
+  next();
+});
 
-https.createServer(options, app).listen(443, '0.0.0.0', () => {
-  console.log('HTTPS Server running on port 443');
+// Serve static files
+app.use(express.static('.'));
+
+// Handle favicon requests
+app.get('/favicon.ico', (req, res) => {
+  res.status(204).end(); // No content
+});
+
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Server running at http://0.0.0.0:${port}`);
 });
