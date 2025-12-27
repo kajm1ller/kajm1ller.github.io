@@ -22,10 +22,10 @@ RAPIER.init().then(() => {
     
     // Preload impact sounds
     const impactSounds = [
-        new Audio('media/Funny.wav'),
-        new Audio('media/Noises.wav'),
-        new Audio('media/OhMan.wav'),
-        new Audio('media/TheBiggestHonk.wav')
+        new Audio('media/mp3/Funny.mp3'),
+        new Audio('media/mp3/Noises.mp3'),
+        new Audio('media/mp3/OhMan.mp3'),
+        new Audio('media/mp3/TheBiggestHonk.mp3')
     ];
     impactSounds.forEach(a => { a.preload = 'auto'; a.volume = 0.55; });
 
