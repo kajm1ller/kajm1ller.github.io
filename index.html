@@ -9,153 +9,890 @@
         body {
             margin: 0;
             overflow: hidden;
-            font-family: Arial, sans-serif;
+            background-color: #000;
         }
-        #info {
-            position: absolute;
-            bottom: 70px;
-            right: 10px;
-            color: white;
-            background: rgba(0,0,0,0.7);
-            padding: 15px;
-            border-radius: 8px;
-            font-size: 14px;
-            max-width: 90vw;
-        }
+
         canvas {
             display: block;
+            width: 100vw;
+            height: 100vh;
         }
 
-        /* Modern glassy buttons - mobile-first approach */
-        .control-button {
-            display: block;
-            width: 100%;
-            min-height: 48px;
-            margin-top: 12px;
-            padding: 14px 20px;
-            font-size: 16px;
-            font-weight: 600;
-            border-radius: 14px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            text-align: center;
-            touch-action: manipulation;
-            -webkit-tap-highlight-color: transparent;
-            color: #f7f9fc;
-            background: linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.10));
-            border: 1px solid rgba(255,255,255,0.35);
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-            backdrop-filter: blur(12px) saturate(140%);
-            -webkit-backdrop-filter: blur(12px) saturate(140%);
-        }
-
-        #toggleMenu {
+        .title {
             position: absolute;
-            bottom: 10px;
-            right: 10px;
-            width: auto;
-            min-height: 44px;
-            padding: 10px 16px;
-            font-size: 14px;
-            font-weight: 600;
-            border-radius: 999px;
-            cursor: pointer;
-            color: #f7f9fc;
-            background: linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.10));
-            border: 1px solid rgba(255,255,255,0.35);
-            box-shadow: 0 8px 24px rgba(0,0,0,0.25);
-            backdrop-filter: blur(12px) saturate(140%);
-            -webkit-backdrop-filter: blur(12px) saturate(140%);
-            touch-action: manipulation;
-            -webkit-tap-highlight-color: transparent;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            font-family: Arial, sans-serif;
+            font-size: 32px;
+            font-weight: bold;
+            z-index: 10;
+            pointer-events: none;
         }
 
-        #toggleMenu:active,
-        .control-button:active {
-            transform: translateY(1px);
+        .navbar {
+            position: absolute;
+            top: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            display: flex;
+            gap: 30px;
         }
 
-        #toggleMenu:hover,
-        .control-button:hover {
-            box-shadow: 0 10px 28px rgba(0,0,0,0.28);
-            border-color: rgba(255,255,255,0.5);
+        .navbar a {
+            color: white;
+            font-family: Arial, sans-serif;
+            font-size: 16px;
+            text-decoration: none;
+            transition: opacity 0.2s;
         }
 
-        .hidden {
-            display: none !important;
-        }
-
-        /* Per-button overrides removed; all share the glass style above */
-
-        /* Desktop and larger tablet adjustments */
-        @media (min-width: 768px) {
-            #info {
-                padding: 12px;
-                max-width: 280px;
-            }
-
-            .control-button {
-                min-height: 44px;
-                padding: 12px 18px;
-                font-size: 15px;
-            }
-
-            #toggleMenu {
-                min-height: 40px;
-                padding: 8px 14px;
-                font-size: 13px;
-            }
-        }
-
-        /* Large desktop adjustments */
-        @media (min-width: 1024px) {
-            .control-button {
-                min-height: 40px;
-                padding: 10px 16px;
-                font-size: 14px;
-            }
-
-            #toggleMenu {
-                min-height: 38px;
-                padding: 8px 12px;
-                font-size: 12px;
-            }
+        .navbar a:hover {
+            opacity: 0.7;
         }
     </style>
 </head>
 
 <body>
-    <button id="toggleMenu" aria-label="Toggle menu visibility">Hide Menu</button>
-    <div id="info">
-        <div id="position">Shapes: 0</div>
-        <button id="addCube" class="control-button">Add Cube</button>
-        <button id="addSphere" class="control-button">Add Sphere</button>
-        <button id="addTriangle" class="control-button">Add Triangle</button>
-        <button id="addTube" class="control-button">Add Wavy Tube</button>
-        <button id="gravityGun" class="control-button">Gravity Gun: Off</button>
-        <button id="resetCubes" class="control-button">Reset All Shapes</button>
-    </div>
+    <div class="title">Kaj Services</div>
+    <nav class="navbar">
+        <a href="projects.html">projects</a>
+        <a href="#contact">contact</a>
+        <a href="#about">about</a>
+        <a href="https://github.com" target="_blank">github</a>
+    </nav>
+    <canvas id="scene"></canvas>
 </body>
-<script>
-    (function() {
-        const info = document.getElementById('info');
-        const toggle = document.getElementById('toggleMenu');
-        let hidden = false;
+<script type="module">
+    import * as THREE from 'three';
+    import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+    import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+    import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+    import { parseGIF, decompressFrames } from 'https://esm.sh/gifuct-js@2.1.2';
+    import * as CANNON from 'https://esm.sh/cannon-es@0.20.0';
+    import blissGifUrl from './images/bliss-winxp.gif?url';
+    import floorGifUrl from './images/floor-ceiling.gif?url';
 
-        const updateLabel = () => {
-            toggle.textContent = hidden ? 'Show Menu' : 'Hide Menu';
-            toggle.setAttribute('aria-pressed', String(!hidden));
+    const canvas = document.getElementById('scene');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setClearColor(0x000000, 1);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(2.5, 1.5, 4);
+    camera.lookAt(0, 0, 0);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = false;
+    controls.enablePan = false;
+    controls.minDistance = 1.2;
+    controls.maxDistance = 12;
+    controls.mouseButtons = {
+        LEFT: null,
+        MIDDLE: THREE.MOUSE.ROTATE,
+        RIGHT: THREE.MOUSE.PAN
+    };
+    controls.target.set(0, 0, 0);
+
+    const light = new THREE.DirectionalLight(0xffffff, 1);
+    light.position.set(3, 5, 4);
+    scene.add(light);
+    scene.add(new THREE.AmbientLight(0x404040));
+
+    const geometry = new THREE.BoxGeometry(1.5, 1.5, 1.5);
+    const cube = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: 0x111111, wireframe: true }));
+    const outerOpaque = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.FrontSide });
+    const outerTransparent = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.FrontSide });
+    // Box face order: +x, -x, +y (top), -y (bottom), +z (front), -z (back)
+    const outerCube = new THREE.Mesh(geometry, [outerOpaque, outerOpaque, outerOpaque, outerOpaque, outerTransparent, outerOpaque]);
+    const edges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(geometry),
+        new THREE.LineBasicMaterial({ color: 0x00ff0d, linewidth: 2 })
+    );
+    const cycleColor = new THREE.Color();
+    const occupantGroup = new THREE.Group();
+    let blissTexture = null;
+    let blissCanvas = null;
+    let blissCtx = null;
+    let blissFrames = [];
+    let blissFrameIndex = 0;
+    let blissFrameTimer = 0;
+    let blissFrameDelay = 100;
+    let blissLastFrame = null;
+    let blissLastSnapshot = null;
+    let blissTempCanvas = null;
+    let blissTempCtx = null;
+    let floorTexture = null;
+    let floorCanvas = null;
+    let floorCtx = null;
+    let floorFrames = [];
+    let floorFrameIndex = 0;
+    let floorFrameTimer = 0;
+    let floorTempCanvas = null;
+    let floorTempCtx = null;
+    scene.add(cube);
+    scene.add(outerCube);
+    scene.add(edges);
+    scene.add(occupantGroup);
+
+    // Physics world setup
+    const world = new CANNON.World();
+    world.gravity.set(0, 0, 0); // Start with no gravity
+    world.broadphase = new CANNON.NaiveBroadphase();
+    world.solver.iterations = 20; // More iterations for better collision
+
+    // Shared physics material for all objects
+    const sharedMaterial = new CANNON.Material('shared');
+    const sharedContactMaterial = new CANNON.ContactMaterial(sharedMaterial, sharedMaterial, {
+        friction: 0.5,
+        restitution: 0.3
+    });
+    world.addContactMaterial(sharedContactMaterial);
+    world.defaultContactMaterial = sharedContactMaterial;
+
+    // Ragdoll body parts and constraints
+    const ragdollBodies = [];
+    const ragdollMeshes = [];
+    const ragdollConstraints = [];
+    let physicsActivated = false;
+
+    // Create a ragdoll with physics bodies
+    const createRagdoll = (startPos, seated = false) => {
+        // Body part dimensions (scaled for our scene)
+        const headRadius = 0.08;
+        const torsoSize = { x: 0.12, y: 0.18, z: 0.08 };
+        const upperArmSize = { x: 0.04, y: 0.12, z: 0.04 };
+        const lowerArmSize = { x: 0.035, y: 0.1, z: 0.035 };
+        const upperLegSize = { x: 0.05, y: 0.14, z: 0.05 };
+        const lowerLegSize = { x: 0.04, y: 0.13, z: 0.04 };
+
+        const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xffccaa, roughness: 0.6 });
+
+        // Seated position offsets - position above chair seat
+        const seatHeight = seated ? -0.15 : 0; // Torso height when seated
+        const legForward = seated ? 0.15 : 0; // Legs extend forward when seated
+
+        // Helper to create a body with damping
+        const createBody = (mass) => {
+            const body = new CANNON.Body({ mass, material: sharedMaterial });
+            body.linearDamping = 0.5;
+            body.angularDamping = 0.5;
+            return body;
         };
 
-        toggle.addEventListener('click', () => {
-            hidden = !hidden;
-            info.classList.toggle('hidden', hidden);
-            updateLabel();
+        // Head
+        const headShape = new CANNON.Sphere(headRadius);
+        const headBody = createBody(3);
+        headBody.addShape(headShape);
+        headBody.position.set(startPos.x, startPos.y + 0.35 + seatHeight, startPos.z);
+        world.addBody(headBody);
+        ragdollBodies.push(headBody);
+        const headMesh = new THREE.Mesh(new THREE.SphereGeometry(headRadius, 16, 16), bodyMaterial);
+        scene.add(headMesh);
+        ragdollMeshes.push(headMesh);
+
+        // Torso
+        const torsoShape = new CANNON.Box(new CANNON.Vec3(torsoSize.x, torsoSize.y, torsoSize.z));
+        const torsoBody = createBody(8);
+        torsoBody.addShape(torsoShape);
+        torsoBody.position.set(startPos.x, startPos.y + 0.12 + seatHeight, startPos.z);
+        world.addBody(torsoBody);
+        ragdollBodies.push(torsoBody);
+        const torsoMesh = new THREE.Mesh(new THREE.BoxGeometry(torsoSize.x * 2, torsoSize.y * 2, torsoSize.z * 2), bodyMaterial);
+        scene.add(torsoMesh);
+        ragdollMeshes.push(torsoMesh);
+
+        // Left upper arm
+        const lUpperArmShape = new CANNON.Box(new CANNON.Vec3(upperArmSize.x, upperArmSize.y, upperArmSize.z));
+        const lUpperArmBody = createBody(2);
+        lUpperArmBody.addShape(lUpperArmShape);
+        lUpperArmBody.position.set(startPos.x - 0.18, startPos.y + 0.18 + seatHeight, startPos.z);
+        world.addBody(lUpperArmBody);
+        ragdollBodies.push(lUpperArmBody);
+        const lUpperArmMesh = new THREE.Mesh(new THREE.BoxGeometry(upperArmSize.x * 2, upperArmSize.y * 2, upperArmSize.z * 2), bodyMaterial);
+        scene.add(lUpperArmMesh);
+        ragdollMeshes.push(lUpperArmMesh);
+
+        // Right upper arm
+        const rUpperArmShape = new CANNON.Box(new CANNON.Vec3(upperArmSize.x, upperArmSize.y, upperArmSize.z));
+        const rUpperArmBody = createBody(2);
+        rUpperArmBody.addShape(rUpperArmShape);
+        rUpperArmBody.position.set(startPos.x + 0.18, startPos.y + 0.18 + seatHeight, startPos.z);
+        world.addBody(rUpperArmBody);
+        ragdollBodies.push(rUpperArmBody);
+        const rUpperArmMesh = new THREE.Mesh(new THREE.BoxGeometry(upperArmSize.x * 2, upperArmSize.y * 2, upperArmSize.z * 2), bodyMaterial);
+        scene.add(rUpperArmMesh);
+        ragdollMeshes.push(rUpperArmMesh);
+
+        // Left lower arm
+        const lLowerArmShape = new CANNON.Box(new CANNON.Vec3(lowerArmSize.x, lowerArmSize.y, lowerArmSize.z));
+        const lLowerArmBody = createBody(1.5);
+        lLowerArmBody.addShape(lLowerArmShape);
+        lLowerArmBody.position.set(startPos.x - 0.18, startPos.y + 0.0 + seatHeight, startPos.z);
+        world.addBody(lLowerArmBody);
+        ragdollBodies.push(lLowerArmBody);
+        const lLowerArmMesh = new THREE.Mesh(new THREE.BoxGeometry(lowerArmSize.x * 2, lowerArmSize.y * 2, lowerArmSize.z * 2), bodyMaterial);
+        scene.add(lLowerArmMesh);
+        ragdollMeshes.push(lLowerArmMesh);
+
+        // Right lower arm
+        const rLowerArmShape = new CANNON.Box(new CANNON.Vec3(lowerArmSize.x, lowerArmSize.y, lowerArmSize.z));
+        const rLowerArmBody = createBody(1.5);
+        rLowerArmBody.addShape(rLowerArmShape);
+        rLowerArmBody.position.set(startPos.x + 0.18, startPos.y + 0.0 + seatHeight, startPos.z);
+        world.addBody(rLowerArmBody);
+        ragdollBodies.push(rLowerArmBody);
+        const rLowerArmMesh = new THREE.Mesh(new THREE.BoxGeometry(lowerArmSize.x * 2, lowerArmSize.y * 2, lowerArmSize.z * 2), bodyMaterial);
+        scene.add(rLowerArmMesh);
+        ragdollMeshes.push(rLowerArmMesh);
+
+        // Left upper leg - horizontal when seated
+        const lUpperLegShape = new CANNON.Box(new CANNON.Vec3(upperLegSize.x, upperLegSize.y, upperLegSize.z));
+        const lUpperLegBody = createBody(3);
+        lUpperLegBody.addShape(lUpperLegShape);
+        if (seated) {
+            // Rotate to horizontal and position forward
+            lUpperLegBody.position.set(startPos.x - 0.07, startPos.y - 0.12 + seatHeight, startPos.z + legForward);
+            lUpperLegBody.quaternion.setFromEuler(Math.PI / 2, 0, 0); // Rotate 90 degrees to horizontal
+        } else {
+            lUpperLegBody.position.set(startPos.x - 0.07, startPos.y - 0.2, startPos.z);
+        }
+        world.addBody(lUpperLegBody);
+        ragdollBodies.push(lUpperLegBody);
+        const lUpperLegMesh = new THREE.Mesh(new THREE.BoxGeometry(upperLegSize.x * 2, upperLegSize.y * 2, upperLegSize.z * 2), bodyMaterial);
+        scene.add(lUpperLegMesh);
+        ragdollMeshes.push(lUpperLegMesh);
+
+        // Right upper leg - horizontal when seated
+        const rUpperLegShape = new CANNON.Box(new CANNON.Vec3(upperLegSize.x, upperLegSize.y, upperLegSize.z));
+        const rUpperLegBody = createBody(3);
+        rUpperLegBody.addShape(rUpperLegShape);
+        if (seated) {
+            rUpperLegBody.position.set(startPos.x + 0.07, startPos.y - 0.12 + seatHeight, startPos.z + legForward);
+            rUpperLegBody.quaternion.setFromEuler(Math.PI / 2, 0, 0);
+        } else {
+            rUpperLegBody.position.set(startPos.x + 0.07, startPos.y - 0.2, startPos.z);
+        }
+        world.addBody(rUpperLegBody);
+        ragdollBodies.push(rUpperLegBody);
+        const rUpperLegMesh = new THREE.Mesh(new THREE.BoxGeometry(upperLegSize.x * 2, upperLegSize.y * 2, upperLegSize.z * 2), bodyMaterial);
+        scene.add(rUpperLegMesh);
+        ragdollMeshes.push(rUpperLegMesh);
+
+        // Left lower leg - vertical when seated (hanging down at knee)
+        const lLowerLegShape = new CANNON.Box(new CANNON.Vec3(lowerLegSize.x, lowerLegSize.y, lowerLegSize.z));
+        const lLowerLegBody = createBody(2);
+        lLowerLegBody.addShape(lLowerLegShape);
+        if (seated) {
+            lLowerLegBody.position.set(startPos.x - 0.07, startPos.y - 0.38 + seatHeight, startPos.z + legForward + 0.14);
+        } else {
+            lLowerLegBody.position.set(startPos.x - 0.07, startPos.y - 0.47, startPos.z);
+        }
+        world.addBody(lLowerLegBody);
+        ragdollBodies.push(lLowerLegBody);
+        const lLowerLegMesh = new THREE.Mesh(new THREE.BoxGeometry(lowerLegSize.x * 2, lowerLegSize.y * 2, lowerLegSize.z * 2), bodyMaterial);
+        scene.add(lLowerLegMesh);
+        ragdollMeshes.push(lLowerLegMesh);
+
+        // Right lower leg - vertical when seated
+        const rLowerLegShape = new CANNON.Box(new CANNON.Vec3(lowerLegSize.x, lowerLegSize.y, lowerLegSize.z));
+        const rLowerLegBody = createBody(2);
+        rLowerLegBody.addShape(rLowerLegShape);
+        if (seated) {
+            rLowerLegBody.position.set(startPos.x + 0.07, startPos.y - 0.38 + seatHeight, startPos.z + legForward + 0.14);
+        } else {
+            rLowerLegBody.position.set(startPos.x + 0.07, startPos.y - 0.47, startPos.z);
+        }
+        world.addBody(rLowerLegBody);
+        ragdollBodies.push(rLowerLegBody);
+        const rLowerLegMesh = new THREE.Mesh(new THREE.BoxGeometry(lowerLegSize.x * 2, lowerLegSize.y * 2, lowerLegSize.z * 2), bodyMaterial);
+        scene.add(rLowerLegMesh);
+        ragdollMeshes.push(rLowerLegMesh);
+
+        // Constraints (joints)
+        // Neck: head to torso
+        const neckConstraint = new CANNON.ConeTwistConstraint(headBody, torsoBody, {
+            pivotA: new CANNON.Vec3(0, -headRadius, 0),
+            pivotB: new CANNON.Vec3(0, torsoSize.y, 0),
+            axisA: CANNON.Vec3.UNIT_Y,
+            axisB: CANNON.Vec3.UNIT_Y,
+            angle: Math.PI / 6,
+            twistAngle: Math.PI / 6
         });
+        world.addConstraint(neckConstraint);
+        ragdollConstraints.push(neckConstraint);
 
-        updateLabel();
-    })();
+        // Left shoulder: torso to left upper arm
+        const lShoulderConstraint = new CANNON.ConeTwistConstraint(torsoBody, lUpperArmBody, {
+            pivotA: new CANNON.Vec3(-torsoSize.x, torsoSize.y * 0.7, 0),
+            pivotB: new CANNON.Vec3(0, upperArmSize.y, 0),
+            axisA: new CANNON.Vec3(-1, 0, 0),
+            axisB: CANNON.Vec3.UNIT_Y,
+            angle: Math.PI / 2,
+            twistAngle: Math.PI / 4
+        });
+        world.addConstraint(lShoulderConstraint);
+        ragdollConstraints.push(lShoulderConstraint);
+
+        // Right shoulder
+        const rShoulderConstraint = new CANNON.ConeTwistConstraint(torsoBody, rUpperArmBody, {
+            pivotA: new CANNON.Vec3(torsoSize.x, torsoSize.y * 0.7, 0),
+            pivotB: new CANNON.Vec3(0, upperArmSize.y, 0),
+            axisA: new CANNON.Vec3(1, 0, 0),
+            axisB: CANNON.Vec3.UNIT_Y,
+            angle: Math.PI / 2,
+            twistAngle: Math.PI / 4
+        });
+        world.addConstraint(rShoulderConstraint);
+        ragdollConstraints.push(rShoulderConstraint);
+
+        // Left elbow
+        const lElbowConstraint = new CANNON.ConeTwistConstraint(lUpperArmBody, lLowerArmBody, {
+            pivotA: new CANNON.Vec3(0, -upperArmSize.y, 0),
+            pivotB: new CANNON.Vec3(0, lowerArmSize.y, 0),
+            axisA: CANNON.Vec3.UNIT_Y,
+            axisB: CANNON.Vec3.UNIT_Y,
+            angle: Math.PI / 3,
+            twistAngle: 0.1
+        });
+        world.addConstraint(lElbowConstraint);
+        ragdollConstraints.push(lElbowConstraint);
+
+        // Right elbow
+        const rElbowConstraint = new CANNON.ConeTwistConstraint(rUpperArmBody, rLowerArmBody, {
+            pivotA: new CANNON.Vec3(0, -upperArmSize.y, 0),
+            pivotB: new CANNON.Vec3(0, lowerArmSize.y, 0),
+            axisA: CANNON.Vec3.UNIT_Y,
+            axisB: CANNON.Vec3.UNIT_Y,
+            angle: Math.PI / 3,
+            twistAngle: 0.1
+        });
+        world.addConstraint(rElbowConstraint);
+        ragdollConstraints.push(rElbowConstraint);
+
+        // Left hip
+        const lHipConstraint = new CANNON.ConeTwistConstraint(torsoBody, lUpperLegBody, {
+            pivotA: new CANNON.Vec3(-0.05, -torsoSize.y, 0),
+            pivotB: new CANNON.Vec3(0, upperLegSize.y, 0),
+            axisA: CANNON.Vec3.UNIT_Y,
+            axisB: CANNON.Vec3.UNIT_Y,
+            angle: Math.PI / 3,
+            twistAngle: Math.PI / 6
+        });
+        world.addConstraint(lHipConstraint);
+        ragdollConstraints.push(lHipConstraint);
+
+        // Right hip
+        const rHipConstraint = new CANNON.ConeTwistConstraint(torsoBody, rUpperLegBody, {
+            pivotA: new CANNON.Vec3(0.05, -torsoSize.y, 0),
+            pivotB: new CANNON.Vec3(0, upperLegSize.y, 0),
+            axisA: CANNON.Vec3.UNIT_Y,
+            axisB: CANNON.Vec3.UNIT_Y,
+            angle: Math.PI / 3,
+            twistAngle: Math.PI / 6
+        });
+        world.addConstraint(rHipConstraint);
+        ragdollConstraints.push(rHipConstraint);
+
+        // Left knee
+        const lKneeConstraint = new CANNON.ConeTwistConstraint(lUpperLegBody, lLowerLegBody, {
+            pivotA: new CANNON.Vec3(0, -upperLegSize.y, 0),
+            pivotB: new CANNON.Vec3(0, lowerLegSize.y, 0),
+            axisA: CANNON.Vec3.UNIT_Y,
+            axisB: CANNON.Vec3.UNIT_Y,
+            angle: Math.PI / 4,
+            twistAngle: 0.05
+        });
+        world.addConstraint(lKneeConstraint);
+        ragdollConstraints.push(lKneeConstraint);
+
+        // Right knee
+        const rKneeConstraint = new CANNON.ConeTwistConstraint(rUpperLegBody, rLowerLegBody, {
+            pivotA: new CANNON.Vec3(0, -upperLegSize.y, 0),
+            pivotB: new CANNON.Vec3(0, lowerLegSize.y, 0),
+            axisA: CANNON.Vec3.UNIT_Y,
+            axisB: CANNON.Vec3.UNIT_Y,
+            angle: Math.PI / 4,
+            twistAngle: 0.05
+        });
+        world.addConstraint(rKneeConstraint);
+        ragdollConstraints.push(rKneeConstraint);
+    };
+
+    // Activate physics - enable gravity
+    const activatePhysics = () => {
+        if (physicsActivated) return;
+        physicsActivated = true;
+        world.gravity.set(0, -2.5, 0);
+    };
+
+    // Update ragdoll meshes from physics bodies
+    const updateRagdoll = () => {
+        for (let i = 0; i < ragdollBodies.length; i++) {
+            ragdollMeshes[i].position.copy(ragdollBodies[i].position);
+            ragdollMeshes[i].quaternion.copy(ragdollBodies[i].quaternion);
+        }
+        
+        // Update chair mesh from physics body
+        if (chairBody && chairMesh) {
+            chairMesh.position.set(chairBody.position.x, chairBody.position.y - 0.25, chairBody.position.z);
+            chairMesh.quaternion.copy(chairBody.quaternion);
+        }
+    };
+
+    // Add floor to physics world (matches bottom of cube at y = -0.75)
+    const floorBody = new CANNON.Body({
+        mass: 0, // static
+        shape: new CANNON.Plane(),
+        material: new CANNON.Material()
+    });
+    floorBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+    floorBody.position.y = -0.75;
+    world.addBody(floorBody);
+
+    // Cube walls (6 planes for collision) - cube is 1.5x1.5x1.5 centered at origin
+    const cubeHalfSize = 0.75;
+    const wallMaterial = new CANNON.Material('wall');
+    
+    // Top wall (ceiling)
+    const ceilingBody = new CANNON.Body({ mass: 0, material: wallMaterial });
+    ceilingBody.addShape(new CANNON.Plane());
+    ceilingBody.quaternion.setFromEuler(Math.PI / 2, 0, 0);
+    ceilingBody.position.y = cubeHalfSize;
+    world.addBody(ceilingBody);
+
+    // Left wall (-x)
+    const leftWallBody = new CANNON.Body({ mass: 0, material: wallMaterial });
+    leftWallBody.addShape(new CANNON.Plane());
+    leftWallBody.quaternion.setFromEuler(0, Math.PI / 2, 0);
+    leftWallBody.position.x = -cubeHalfSize;
+    world.addBody(leftWallBody);
+
+    // Right wall (+x)
+    const rightWallBody = new CANNON.Body({ mass: 0, material: wallMaterial });
+    rightWallBody.addShape(new CANNON.Plane());
+    rightWallBody.quaternion.setFromEuler(0, -Math.PI / 2, 0);
+    rightWallBody.position.x = cubeHalfSize;
+    world.addBody(rightWallBody);
+
+    // Back wall (-z)
+    const backWallBody = new CANNON.Body({ mass: 0, material: wallMaterial });
+    backWallBody.addShape(new CANNON.Plane());
+    backWallBody.quaternion.setFromEuler(0, 0, 0);
+    backWallBody.position.z = -cubeHalfSize;
+    world.addBody(backWallBody);
+
+    // Front wall (+z)
+    const frontWallBody = new CANNON.Body({ mass: 0, material: wallMaterial });
+    frontWallBody.addShape(new CANNON.Plane());
+    frontWallBody.quaternion.setFromEuler(0, Math.PI, 0);
+    frontWallBody.position.z = cubeHalfSize;
+    world.addBody(frontWallBody);
+
+    // Chair physics body (will be set when chair loads)
+    let chairBody = null;
+    let chairMesh = null;
+
+    // Dragging state
+    let isDragging = false;
+    let draggedBody = null;
+    let dragPlane = new THREE.Plane();
+    let dragOffset = new THREE.Vector3();
+    let raycaster = new THREE.Raycaster();
+    let mouse = new THREE.Vector2();
+    let lastCameraAngle = null; // Will be set on first frame
+    let rotationVelocity = 0;
+
+    // Find closest physics body to a world position
+    const findClosestBody = (worldPos) => {
+        let closest = null;
+        let minDist = Infinity;
+        
+        // Check chair
+        if (chairBody) {
+            const dist = worldPos.distanceTo(new THREE.Vector3(chairBody.position.x, chairBody.position.y, chairBody.position.z));
+            if (dist < 0.5 && dist < minDist) {
+                minDist = dist;
+                closest = chairBody;
+            }
+        }
+        
+        // Check ragdoll torso (drag whole ragdoll by torso)
+        if (ragdollBodies.length > 1) {
+            const torso = ragdollBodies[1]; // torso is index 1
+            const dist = worldPos.distanceTo(new THREE.Vector3(torso.position.x, torso.position.y, torso.position.z));
+            if (dist < 0.5 && dist < minDist) {
+                minDist = dist;
+                closest = torso;
+            }
+        }
+        
+        return closest;
+    };
+
+    // Mouse event handlers
+    const onMouseDown = (event) => {
+        if (event.button !== 0) return; // Only left click
+        
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        
+        raycaster.setFromCamera(mouse, camera);
+        
+        // Create a plane at camera distance for picking
+        const intersectObjects = [...ragdollMeshes];
+        if (chairMesh) {
+            chairMesh.traverse(node => {
+                if (node.isMesh) intersectObjects.push(node);
+            });
+        }
+        
+        const intersects = raycaster.intersectObjects(intersectObjects, true);
+        
+        if (intersects.length > 0) {
+            const hitPoint = intersects[0].point;
+            const body = findClosestBody(hitPoint);
+            
+            if (body) {
+                activatePhysics(); // Activate physics when dragging
+                isDragging = true;
+                draggedBody = body;
+                
+                // Create drag plane facing camera
+                dragPlane.setFromNormalAndCoplanarPoint(
+                    camera.getWorldDirection(new THREE.Vector3()).negate(),
+                    hitPoint
+                );
+                
+                dragOffset.copy(hitPoint).sub(new THREE.Vector3(body.position.x, body.position.y, body.position.z));
+            }
+        }
+    };
+
+    const onMouseMove = (event) => {
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        
+        if (isDragging && draggedBody) {
+            raycaster.setFromCamera(mouse, camera);
+            
+            const intersectPoint = new THREE.Vector3();
+            if (raycaster.ray.intersectPlane(dragPlane, intersectPoint)) {
+                const targetPos = intersectPoint.sub(dragOffset);
+                
+                // Clamp to cube bounds
+                const margin = 0.2;
+                targetPos.x = Math.max(-cubeHalfSize + margin, Math.min(cubeHalfSize - margin, targetPos.x));
+                targetPos.y = Math.max(-cubeHalfSize + margin, Math.min(cubeHalfSize - margin, targetPos.y));
+                targetPos.z = Math.max(-cubeHalfSize + margin, Math.min(cubeHalfSize - margin, targetPos.z));
+                
+                // Apply force towards target position (much stronger)
+                const force = new CANNON.Vec3(
+                    (targetPos.x - draggedBody.position.x) * 300,
+                    (targetPos.y - draggedBody.position.y) * 300,
+                    (targetPos.z - draggedBody.position.z) * 300
+                );
+                draggedBody.applyForce(force);
+                
+                // Also set velocity directly towards target for snappier response
+                draggedBody.velocity.x = (targetPos.x - draggedBody.position.x) * 10;
+                draggedBody.velocity.y = (targetPos.y - draggedBody.position.y) * 10;
+                draggedBody.velocity.z = (targetPos.z - draggedBody.position.z) * 10;
+                
+                // Dampen angular velocity while dragging
+                draggedBody.angularVelocity.scale(0.8, draggedBody.angularVelocity);
+            }
+        }
+    };
+
+    const onMouseUp = (event) => {
+        if (event.button !== 0) return;
+        isDragging = false;
+        draggedBody = null;
+    };
+
+    canvas.addEventListener('mousedown', onMouseDown);
+    canvas.addEventListener('mousemove', onMouseMove);
+    canvas.addEventListener('mouseup', onMouseUp);
+    canvas.addEventListener('mouseleave', onMouseUp);
+
+    const resize = () => {
+        const { innerWidth: w, innerHeight: h } = window;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h, false);
+    };
+
+    window.addEventListener('resize', resize);
+    resize();
+
+    cube.rotation.y -= 0.3;
+    outerCube.rotation.y -= 0.3;
+    edges.rotation.y -= 0.3;
+
+    const tintMeshes = (root, color, map) => {
+        root.traverse(node => {
+            if (node.isMesh) {
+                node.material = new THREE.MeshStandardMaterial({
+                    color,
+                    roughness: 0.45,
+                    metalness: 0.2,
+                    map: map || null
+                });
+                node.castShadow = false;
+                node.receiveShadow = false;
+            }
+        });
+    };
+
+    const positionOccupants = (chair, dummy) => {
+        occupantGroup.clear();
+        chair.scale.setScalar(0.0015);
+        chair.position.set(0.4, -0.75, -0.4); // right back corner
+        chair.rotation.y = 0; // face the camera
+        occupantGroup.add(chair);
+
+        if (dummy) {
+            dummy.scale.setScalar(0.02);
+            dummy.position.set(0.4, -0.15, -0.4); // same corner, seated height
+            dummy.rotation.y = 0; // face the camera
+            occupantGroup.add(dummy);
+        }
+
+        occupantGroup.position.set(0, 0, 0);
+    };
+
+    const fbxLoader = new FBXLoader();
+    const objLoader = new OBJLoader();
+
+    const loadBlissTexture = async () => {
+        const res = await fetch(blissGifUrl);
+        const buffer = await res.arrayBuffer();
+        const gif = parseGIF(buffer);
+        blissFrames = decompressFrames(gif, true);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = gif.lsd.width;
+        canvas.height = gif.lsd.height;
+        const ctx = canvas.getContext('2d');
+
+        const texture = new THREE.CanvasTexture(canvas);
+        if (texture.colorSpace !== undefined) {
+            texture.colorSpace = THREE.SRGBColorSpace;
+        }
+        texture.flipY = true;
+        texture.needsUpdate = true;
+
+        blissCanvas = canvas;
+        blissCtx = ctx;
+        blissFrameIndex = 0;
+        blissFrameTimer = 0;
+        blissFrameDelay = (blissFrames[0]?.delay || 10) * 10;
+
+        // Create temp canvas for compositing frames
+        blissTempCanvas = document.createElement('canvas');
+        blissTempCtx = blissTempCanvas.getContext('2d');
+
+        // Draw the initial frame immediately
+        if (blissFrames.length) {
+            const f0 = blissFrames[0];
+            blissTempCanvas.width = f0.dims.width;
+            blissTempCanvas.height = f0.dims.height;
+            const imageData = new ImageData(f0.patch, f0.dims.width, f0.dims.height);
+            blissTempCtx.putImageData(imageData, 0, 0);
+            blissCtx.drawImage(blissTempCanvas, f0.dims.left, f0.dims.top);
+            texture.needsUpdate = true;
+            blissLastFrame = f0;
+            blissLastSnapshot = null;
+        }
+        return texture;
+    };
+
+    const loadFloorTexture = async () => {
+        const res = await fetch(floorGifUrl);
+        const buffer = await res.arrayBuffer();
+        const gif = parseGIF(buffer);
+        floorFrames = decompressFrames(gif, true);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = gif.lsd.width;
+        canvas.height = gif.lsd.height;
+        const ctx = canvas.getContext('2d');
+
+        const texture = new THREE.CanvasTexture(canvas);
+        if (texture.colorSpace !== undefined) {
+            texture.colorSpace = THREE.SRGBColorSpace;
+        }
+        texture.flipY = true;
+        texture.needsUpdate = true;
+
+        floorCanvas = canvas;
+        floorCtx = ctx;
+        floorFrameIndex = 0;
+
+        floorTempCanvas = document.createElement('canvas');
+        floorTempCtx = floorTempCanvas.getContext('2d');
+
+        if (floorFrames.length) {
+            const f0 = floorFrames[0];
+            floorTempCanvas.width = f0.dims.width;
+            floorTempCanvas.height = f0.dims.height;
+            const imageData = new ImageData(f0.patch, f0.dims.width, f0.dims.height);
+            floorTempCtx.putImageData(imageData, 0, 0);
+            floorCtx.drawImage(floorTempCanvas, f0.dims.left, f0.dims.top);
+            texture.needsUpdate = true;
+        }
+        return texture;
+    };
+
+    Promise.all([
+        new Promise((resolve, reject) => {
+            fbxLoader.load('media/3e/chair/source/9-Chair.fbx', model => {
+                tintMeshes(model, 0x777777);
+                resolve(model);
+            }, undefined, reject);
+        }),
+        loadBlissTexture(),
+        loadFloorTexture()
+    ]).then(([chair, loadedBliss, loadedFloor]) => {
+        blissTexture = loadedBliss;00
+        floorTexture = loadedFloor;
+
+        const gifMat = new THREE.MeshBasicMaterial({ map: blissTexture, toneMapped: false, side: THREE.BackSide });
+        const floorMat = new THREE.MeshBasicMaterial({ map: floorTexture, toneMapped: false, side: THREE.BackSide });
+        const frontMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.BackSide });
+        // Box face order: +x, -x, +y (top), -y (bottom), +z (front), -z (back)
+        cube.material = [gifMat, gifMat, floorMat, floorMat, frontMat, gifMat];
+        blissTexture.needsUpdate = true;
+        floorTexture.needsUpdate = true;
+        
+        // Position chair - add to scene directly for physics sync
+        chair.scale.setScalar(0.0015);
+        scene.add(chair);
+        chairMesh = chair;
+
+        // Create chair physics body (simplified box)
+        const chairSize = { x: 0.2, y: 0.15, z: 0.2 };
+        chairBody = new CANNON.Body({ mass: 5, material: sharedMaterial });
+        chairBody.addShape(new CANNON.Box(new CANNON.Vec3(chairSize.x, chairSize.y, chairSize.z)));
+        chairBody.position.set(-0.35, -0.45, 0.0);
+        chairBody.linearDamping = 0.5;
+        chairBody.angularDamping = 0.5;
+        world.addBody(chairBody);
+
+        // Create ragdoll lying on the floor to the right
+        createRagdoll({ x: 0.25, y: -0.35, z: 0.0 }, false);
+    }).catch(err => {
+        console.error('Model load error', err);
+    });
+
+    let prevTime = performance.now();
+
+    const animate = () => {
+        const now = performance.now();
+        const delta = now - prevTime;
+        prevTime = now;
+
+        // Detect camera rotation and apply centrifugal forces
+        const currentAngle = controls.getAzimuthalAngle();
+        
+        // Initialize on first frame
+        if (lastCameraAngle === null) {
+            lastCameraAngle = currentAngle;
+        }
+        
+        rotationVelocity = currentAngle - lastCameraAngle;
+        
+        // Normalize angle difference for wrapping
+        if (rotationVelocity > Math.PI) rotationVelocity -= Math.PI * 2;
+        if (rotationVelocity < -Math.PI) rotationVelocity += Math.PI * 2;
+        
+        // Apply centrifugal/tangential force based on rotation
+        if (Math.abs(rotationVelocity) > 0.0001) {
+            activatePhysics(); // Activate physics on first rotation
+            const forceMultiplier = rotationVelocity * 500; // Much stronger force
+            
+            // Apply to all ragdoll bodies
+            for (const body of ragdollBodies) {
+                // Tangential force (perpendicular to radius from center)
+                const dx = body.position.x;
+                const dz = body.position.z;
+                // Add radial component too (centrifugal)
+                const dist = Math.sqrt(dx * dx + dz * dz) + 0.1;
+                const force = new CANNON.Vec3(
+                    -dz * forceMultiplier + dx * Math.abs(rotationVelocity) * 200 / dist,
+                    0,
+                    dx * forceMultiplier + dz * Math.abs(rotationVelocity) * 200 / dist
+                );
+                body.applyForce(force);
+            }
+            
+            // Apply to chair
+            if (chairBody) {
+                const dx = chairBody.position.x;
+                const dz = chairBody.position.z;
+                const dist = Math.sqrt(dx * dx + dz * dz) + 0.1;
+                const force = new CANNON.Vec3(
+                    -dz * forceMultiplier + dx * Math.abs(rotationVelocity) * 200 / dist,
+                    0,
+                    dx * forceMultiplier + dz * Math.abs(rotationVelocity) * 200 / dist
+                );
+                chairBody.applyForce(force);
+            }
+        }
+        
+        lastCameraAngle = currentAngle;
+
+        // Step physics world
+        world.step(1 / 60, delta / 1000, 3);
+        updateRagdoll();
+
+        const t = now * 0.0002;
+        cycleColor.setHSL(t % 1, 0.9, 0.55);
+        edges.material.color.copy(cycleColor);
+
+        if (blissTexture && blissCtx && blissFrames.length) {
+            // Slow animation - advance every 33ms (~30fps)
+            blissFrameTimer += delta;
+            if (blissFrameTimer >= 33) {
+                blissFrameTimer = 0;
+                blissFrameIndex = (blissFrameIndex + 1) % blissFrames.length;
+                const useFrame = blissFrames[blissFrameIndex];
+
+                blissTempCanvas.width = useFrame.dims.width;
+                blissTempCanvas.height = useFrame.dims.height;
+                const imageData = new ImageData(useFrame.patch, useFrame.dims.width, useFrame.dims.height);
+                blissTempCtx.putImageData(imageData, 0, 0);
+                blissCtx.drawImage(blissTempCanvas, useFrame.dims.left, useFrame.dims.top);
+                blissTexture.needsUpdate = true;
+            }
+        }
+
+        if (floorTexture && floorCtx && floorFrames.length) {
+            // Slow animation - advance every 100ms
+            floorFrameTimer += delta;
+            if (floorFrameTimer >= 100) {
+                floorFrameTimer = 0;
+                floorFrameIndex = (floorFrameIndex + 1) % floorFrames.length;
+                const useFrame = floorFrames[floorFrameIndex];
+
+                floorTempCanvas.width = useFrame.dims.width;
+                floorTempCanvas.height = useFrame.dims.height;
+                const imageData = new ImageData(useFrame.patch, useFrame.dims.width, useFrame.dims.height);
+                floorTempCtx.putImageData(imageData, 0, 0);
+                floorCtx.drawImage(floorTempCanvas, useFrame.dims.left, useFrame.dims.top);
+                floorTexture.needsUpdate = true;
+            }
+        }
+
+        controls.update();
+        renderer.render(scene, camera);
+        requestAnimationFrame(animate);
+    };
+
+    animate();
 </script>
-
-<script type="module" src="js/rapier.js"></script>
 </html>
