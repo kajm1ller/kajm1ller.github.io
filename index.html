@@ -122,7 +122,7 @@
 <body>
     <div class="title">Kaj Services</div>
     <nav class="navbar">
-        <a href="#" data-popup="projects">projects</a>
+        
         <a href="#" data-popup="contact">contact</a>
         <a href="#" data-popup="about">about</a>
         <a href="https://github.com/kajm1ller" target="_blank">github</a>
@@ -191,7 +191,18 @@
     import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/+esm';
     
     const blissGifUrl = './images/bliss-winxp.gif';
-    const floorGifUrl = './images/floor-ceiling.gif';
+    const floorCeilingGifs = [
+        './images/floor-ceiling-gifs/floor-ceiling.gif',
+        './images/floor-ceiling-gifs/floor-ceiling-alt.gif',
+        './images/floor-ceiling-gifs/floor-ceiling-alt2.gif',
+        './images/floor-ceiling-gifs/floor-ceiling-alt3.gif',
+        './images/floor-ceiling-gifs/floor-ceiling-alt4.gif',
+        './images/floor-ceiling-gifs/floor-ceiling-alt5.gif',
+        './images/floor-ceiling-gifs/floor-ceiling-alt6.gif',
+        './images/floor-ceiling-gifs/floor-ceiling-alt7.gif',
+        './images/floor-ceiling-gifs/floor-ceiling-alt8.gif'
+    ];
+    const floorGifUrl = floorCeilingGifs[Math.floor(Math.random() * floorCeilingGifs.length)];
 
     const canvas = document.getElementById('scene');
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -1175,9 +1186,9 @@
         }
 
         if (floorTexture && floorCtx && floorFrames.length) {
-            // Slow animation - advance every 100ms
+            // 60fps animation
             floorFrameTimer += delta;
-            if (floorFrameTimer >= 100) {
+            if (floorFrameTimer >= 10.67) {
                 floorFrameTimer = 0;
                 floorFrameIndex = (floorFrameIndex + 1) % floorFrames.length;
                 const useFrame = floorFrames[floorFrameIndex];
