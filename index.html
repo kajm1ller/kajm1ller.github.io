@@ -1169,9 +1169,9 @@
         edges.material.color.copy(cycleColor);
 
         if (blissTexture && blissCtx && blissFrames.length) {
-            // Slow animation - advance every 33ms (~30fps)
+            // ~15fps animation
             blissFrameTimer += delta;
-            if (blissFrameTimer >= 33) {
+            if (blissFrameTimer >= 67) {
                 blissFrameTimer = 0;
                 blissFrameIndex = (blissFrameIndex + 1) % blissFrames.length;
                 const useFrame = blissFrames[blissFrameIndex];
@@ -1186,9 +1186,9 @@
         }
 
         if (floorTexture && floorCtx && floorFrames.length) {
-            // 60fps animation
+            // ~15fps animation
             floorFrameTimer += delta;
-            if (floorFrameTimer >= 10.67) {
+            if (floorFrameTimer >= 67) {
                 floorFrameTimer = 0;
                 floorFrameIndex = (floorFrameIndex + 1) % floorFrames.length;
                 const useFrame = floorFrames[floorFrameIndex];
