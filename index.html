@@ -66,14 +66,15 @@
     <canvas id="scene"></canvas>
 </body>
 <script type="module">
-    import * as THREE from 'three';
-    import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
-    import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
-    import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+    import { FBXLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/FBXLoader.js';
+    import { OBJLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js';
+    import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
     import { parseGIF, decompressFrames } from 'https://esm.sh/gifuct-js@2.1.2';
     import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/+esm';
-    import blissGifUrl from './images/bliss-winxp.gif?url';
-    import floorGifUrl from './images/floor-ceiling.gif?url';
+    
+    const blissGifUrl = './images/bliss-winxp.gif';
+    const floorGifUrl = './images/floor-ceiling.gif';
 
     const canvas = document.getElementById('scene');
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
