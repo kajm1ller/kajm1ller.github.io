@@ -513,6 +513,7 @@
     let raycaster = new THREE.Raycaster();
     let mouse = new THREE.Vector2();
     let lastCameraAngle = null; // Will be set on first frame
+    let lastPolarAngle = null; // Track vertical rotation
     let rotationVelocity = 0;
 
     // Find closest physics body to a world position
@@ -807,10 +808,21 @@
 
         // Detect camera rotation and apply centrifugal forces
         const currentAngle = controls.getAzimuthalAngle();
+        const currentPolarAngle = controls.getPolarAngle();
         
         // Initialize on first frame
         if (lastCameraAngle === null) {
             lastCameraAngle = currentAngle;
+        }
+        if (lastPolarAngle === null) {
+            lastPolarAngle = currentPolarAngle;
+        }
+        
+        // Update gravity based on vertical camera angle (polar angle)
+        // Polar angle: 0 = looking straight down, PI/2 = level, PI = looking straight up
+        const polarDelta = currentPolarAngle - lastPolarAngle;
+        if (Math.abs(polarDelta) > 0.001) {
+            activatePhysics();
         }
         
         rotationVelocity = currentAngle - lastCameraAngle;
@@ -819,44 +831,73 @@
         if (rotationVelocity > Math.PI) rotationVelocity -= Math.PI * 2;
         if (rotationVelocity < -Math.PI) rotationVelocity += Math.PI * 2;
         
-        // Apply centrifugal/tangential force based on rotation
-        if (Math.abs(rotationVelocity) > 0.0001) {
-            activatePhysics(); // Activate physics on first rotation
-            const forceMultiplier = rotationVelocity * 500; // Much stronger force
-            
-            // Apply to all ragdoll bodies
-            for (const body of ragdollBodies) {
-                // Tangential force (perpendicular to radius from center)
-                const dx = body.position.x;
-                const dz = body.position.z;
-                // Add radial component too (centrifugal)
-                const dist = Math.sqrt(dx * dx + dz * dz) + 0.1;
-                const force = new CANNON.Vec3(
-                    -dz * forceMultiplier + dx * Math.abs(rotationVelocity) * 200 / dist,
-                    0,
-                    dx * forceMultiplier + dz * Math.abs(rotationVelocity) * 200 / dist
-                );
-                body.applyForce(force);
-            }
-            
-            // Apply to chair
-            if (chairBody) {
-                const dx = chairBody.position.x;
-                const dz = chairBody.position.z;
-                const dist = Math.sqrt(dx * dx + dz * dz) + 0.1;
-                const force = new CANNON.Vec3(
-                    -dz * forceMultiplier + dx * Math.abs(rotationVelocity) * 200 / dist,
-                    0,
-                    dx * forceMultiplier + dz * Math.abs(rotationVelocity) * 200 / dist
-                );
-                chairBody.applyForce(force);
-            }
+        // Activate physics on any camera movement
+        if (Math.abs(rotationVelocity) > 0.0001 || Math.abs(polarDelta) > 0.001) {
+            activatePhysics();
         }
         
+        // Only update gravity direction if physics is active
+        if (physicsActivated) {
+            // Gravity tilts based on camera orientation
+            const gravityStrength = 2.5;
+            
+            // Vertical tilt from polar angle (looking up/down)
+            const tiltFactor = (Math.PI / 2 - currentPolarAngle) * 2;
+            
+            // Horizontal tilt from azimuthal rotation velocity
+            const horizontalTilt = rotationVelocity * 15; // Scale rotation to tilt
+            
+            // Camera forward direction (horizontal only)
+            const camDir = new THREE.Vector3();
+            camera.getWorldDirection(camDir);
+            camDir.y = 0;
+            camDir.normalize();
+            
+            // Camera right direction
+            const camRight = new THREE.Vector3();
+            camRight.crossVectors(new THREE.Vector3(0, 1, 0), camDir).normalize();
+            
+            // Gravity tilts forward/back based on pitch, and left/right based on rotation
+            const gravY = -gravityStrength * Math.cos(tiltFactor) * Math.cos(horizontalTilt);
+            const gravForward = gravityStrength * Math.sin(tiltFactor);
+            const gravSide = gravityStrength * Math.sin(horizontalTilt);
+            
+            world.gravity.set(
+                camDir.x * gravForward + camRight.x * gravSide,
+                gravY,
+                camDir.z * gravForward + camRight.z * gravSide
+            );
+        }
+        
+        lastPolarAngle = currentPolarAngle;
         lastCameraAngle = currentAngle;
 
         // Step physics world
         world.step(1 / 60, delta / 1000, 3);
+        
+        // Clamp all physics bodies inside the cube bounds to prevent clipping out
+        const boundsLimit = 0.7; // Slightly inside the walls
+        const clampBody = (body) => {
+            if (!body) return;
+            const pos = body.position;
+            let clamped = false;
+            if (pos.x < -boundsLimit) { pos.x = -boundsLimit; clamped = true; }
+            if (pos.x > boundsLimit) { pos.x = boundsLimit; clamped = true; }
+            if (pos.y < -boundsLimit) { pos.y = -boundsLimit; clamped = true; }
+            if (pos.y > boundsLimit) { pos.y = boundsLimit; clamped = true; }
+            if (pos.z < -boundsLimit) { pos.z = -boundsLimit; clamped = true; }
+            if (pos.z > boundsLimit) { pos.z = boundsLimit; clamped = true; }
+            if (clamped) {
+                // Dampen velocity when hitting bounds
+                body.velocity.scale(0.5, body.velocity);
+            }
+        };
+        
+        for (const body of ragdollBodies) {
+            clampBody(body);
+        }
+        clampBody(chairBody);
+        
         updateRagdoll();
 
         const t = now * 0.0002;
