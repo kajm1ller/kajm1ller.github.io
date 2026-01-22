@@ -60,19 +60,128 @@
         .navbar a:hover {
             opacity: 0.7;
         }
+
+        .popup-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .popup-overlay.active {
+            display: flex;
+        }
+
+        .popup-content {
+            background-color: rgba(30, 30, 30, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            padding: 30px 40px;
+            max-width: 500px;
+            color: white;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            position: relative;
+        }
+
+        .popup-content h2 {
+            margin-top: 0;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+
+        .popup-content p {
+            margin: 0;
+            line-height: 1.6;
+            font-size: 16px;
+        }
+
+        .popup-close {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            font-size: 24px;
+            color: white;
+            cursor: pointer;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+
+        .popup-close:hover {
+            opacity: 1;
+        }
     </style>
 </head>
 
 <body>
     <div class="title">Kaj Services</div>
     <nav class="navbar">
-        <a href="projects.html">projects</a>
-        <a href="contact.html">contact</a>
-        <a href="about.html">about</a>
+        <a href="#" data-popup="projects">projects</a>
+        <a href="#" data-popup="contact">contact</a>
+        <a href="#" data-popup="about">about</a>
         <a href="https://github.com/kajm1ller" target="_blank">github</a>
     </nav>
+    
+    <div class="popup-overlay" id="popup-overlay">
+        <div class="popup-content">
+            <span class="popup-close" id="popup-close">&times;</span>
+            <h2 id="popup-title"></h2>
+            <p id="popup-text"></p>
+        </div>
+    </div>
+    
     <canvas id="scene"></canvas>
 </body>
+<script>
+    const popupData = {
+        projects: {
+            title: 'Projects',
+            text: 'no current projects :('
+        },
+        contact: {
+            title: 'Contact',
+            text: 'email: kajm@bgsu.edu'
+        },
+        about: {
+            title: 'About',
+            text: "Hi! My name is Kaj. I'm a 21 year old Software Engineering Major at BGSU. I enjoy working with Javascript and C++. I spend most of my free time working on code and solving tech problems. Feel free to let me know if you need anything."
+        }
+    };
+
+    const overlay = document.getElementById('popup-overlay');
+    const popupTitle = document.getElementById('popup-title');
+    const popupText = document.getElementById('popup-text');
+    const closeBtn = document.getElementById('popup-close');
+
+    document.querySelectorAll('.navbar a[data-popup]').forEach(link => {
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const key = link.getAttribute('data-popup');
+            const data = popupData[key];
+            if (data) {
+                popupTitle.textContent = data.title;
+                popupText.textContent = data.text;
+                overlay.classList.add('active');
+            }
+        });
+    });
+
+    closeBtn.addEventListener('click', () => {
+        overlay.classList.remove('active');
+    });
+
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+            overlay.classList.remove('active');
+        }
+    });
+</script>
 <script type="module">
     import * as THREE from 'three';
     import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
@@ -91,7 +200,15 @@
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-    camera.position.set(2.5, 1.5, 4);
+    
+    // Check if mobile device
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
+    
+    if (isMobile) {
+        camera.position.set(-0.9466522247248941, 0.4868536431089318, 0.5539161449307736);
+    } else {
+        camera.position.set(2.5, 1.5, 4);
+    }
     camera.lookAt(0, 0, 0);
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -105,6 +222,11 @@
         RIGHT: THREE.MOUSE.PAN
     };
     controls.target.set(0, 0, 0);
+    
+    // Lock camera on mobile
+    if (isMobile) {
+        controls.enabled = false;
+    }
 
     const light = new THREE.DirectionalLight(0xffffff, 1);
     light.position.set(3, 5, 4);
@@ -169,7 +291,11 @@
     let physicsActivated = false;
 
     // Create a ragdoll with physics bodies
-    const createRagdoll = (startPos, seated = false) => {
+    const createRagdoll = (startPos, pose = 'standing') => {
+        // pose can be: 'standing', 'seated', 'laying'
+        const seated = pose === 'seated';
+        const laying = pose === 'laying';
+        
         // Body part dimensions (scaled for our scene)
         const headRadius = 0.08;
         const torsoSize = { x: 0.12, y: 0.18, z: 0.08 };
@@ -183,6 +309,9 @@
         // Seated position offsets - position above chair seat
         const seatHeight = seated ? -0.15 : 0; // Torso height when seated
         const legForward = seated ? 0.15 : 0; // Legs extend forward when seated
+        
+        // Laying down: everything is rotated 90 degrees, body along Z axis
+        const layHeight = laying ? startPos.y : 0;
 
         // Helper to create a body with damping
         const createBody = (mass) => {
@@ -196,7 +325,11 @@
         const headShape = new CANNON.Sphere(headRadius);
         const headBody = createBody(3);
         headBody.addShape(headShape);
-        headBody.position.set(startPos.x, startPos.y + 0.35 + seatHeight, startPos.z);
+        if (laying) {
+            headBody.position.set(startPos.x, layHeight + headRadius, startPos.z - 0.35);
+        } else {
+            headBody.position.set(startPos.x, startPos.y + 0.35 + seatHeight, startPos.z);
+        }
         world.addBody(headBody);
         ragdollBodies.push(headBody);
         const headMesh = new THREE.Mesh(new THREE.SphereGeometry(headRadius, 16, 16), bodyMaterial);
@@ -207,7 +340,12 @@
         const torsoShape = new CANNON.Box(new CANNON.Vec3(torsoSize.x, torsoSize.y, torsoSize.z));
         const torsoBody = createBody(8);
         torsoBody.addShape(torsoShape);
-        torsoBody.position.set(startPos.x, startPos.y + 0.12 + seatHeight, startPos.z);
+        if (laying) {
+            torsoBody.position.set(startPos.x, layHeight + torsoSize.z, startPos.z - 0.1);
+            torsoBody.quaternion.setFromEuler(Math.PI / 2, 0, 0); // Rotate to lay flat
+        } else {
+            torsoBody.position.set(startPos.x, startPos.y + 0.12 + seatHeight, startPos.z);
+        }
         world.addBody(torsoBody);
         ragdollBodies.push(torsoBody);
         const torsoMesh = new THREE.Mesh(new THREE.BoxGeometry(torsoSize.x * 2, torsoSize.y * 2, torsoSize.z * 2), bodyMaterial);
@@ -218,7 +356,12 @@
         const lUpperArmShape = new CANNON.Box(new CANNON.Vec3(upperArmSize.x, upperArmSize.y, upperArmSize.z));
         const lUpperArmBody = createBody(2);
         lUpperArmBody.addShape(lUpperArmShape);
-        lUpperArmBody.position.set(startPos.x - 0.18, startPos.y + 0.18 + seatHeight, startPos.z);
+        if (laying) {
+            lUpperArmBody.position.set(startPos.x - 0.2, layHeight + upperArmSize.z, startPos.z - 0.1);
+            lUpperArmBody.quaternion.setFromEuler(0, 0, Math.PI / 2); // Arms out to side
+        } else {
+            lUpperArmBody.position.set(startPos.x - 0.18, startPos.y + 0.18 + seatHeight, startPos.z);
+        }
         world.addBody(lUpperArmBody);
         ragdollBodies.push(lUpperArmBody);
         const lUpperArmMesh = new THREE.Mesh(new THREE.BoxGeometry(upperArmSize.x * 2, upperArmSize.y * 2, upperArmSize.z * 2), bodyMaterial);
@@ -229,7 +372,12 @@
         const rUpperArmShape = new CANNON.Box(new CANNON.Vec3(upperArmSize.x, upperArmSize.y, upperArmSize.z));
         const rUpperArmBody = createBody(2);
         rUpperArmBody.addShape(rUpperArmShape);
-        rUpperArmBody.position.set(startPos.x + 0.18, startPos.y + 0.18 + seatHeight, startPos.z);
+        if (laying) {
+            rUpperArmBody.position.set(startPos.x + 0.2, layHeight + upperArmSize.z, startPos.z - 0.1);
+            rUpperArmBody.quaternion.setFromEuler(0, 0, -Math.PI / 2); // Arms out to side
+        } else {
+            rUpperArmBody.position.set(startPos.x + 0.18, startPos.y + 0.18 + seatHeight, startPos.z);
+        }
         world.addBody(rUpperArmBody);
         ragdollBodies.push(rUpperArmBody);
         const rUpperArmMesh = new THREE.Mesh(new THREE.BoxGeometry(upperArmSize.x * 2, upperArmSize.y * 2, upperArmSize.z * 2), bodyMaterial);
@@ -240,7 +388,12 @@
         const lLowerArmShape = new CANNON.Box(new CANNON.Vec3(lowerArmSize.x, lowerArmSize.y, lowerArmSize.z));
         const lLowerArmBody = createBody(1.5);
         lLowerArmBody.addShape(lLowerArmShape);
-        lLowerArmBody.position.set(startPos.x - 0.18, startPos.y + 0.0 + seatHeight, startPos.z);
+        if (laying) {
+            lLowerArmBody.position.set(startPos.x - 0.4, layHeight + lowerArmSize.z, startPos.z - 0.1);
+            lLowerArmBody.quaternion.setFromEuler(0, 0, Math.PI / 2);
+        } else {
+            lLowerArmBody.position.set(startPos.x - 0.18, startPos.y + 0.0 + seatHeight, startPos.z);
+        }
         world.addBody(lLowerArmBody);
         ragdollBodies.push(lLowerArmBody);
         const lLowerArmMesh = new THREE.Mesh(new THREE.BoxGeometry(lowerArmSize.x * 2, lowerArmSize.y * 2, lowerArmSize.z * 2), bodyMaterial);
@@ -251,21 +404,28 @@
         const rLowerArmShape = new CANNON.Box(new CANNON.Vec3(lowerArmSize.x, lowerArmSize.y, lowerArmSize.z));
         const rLowerArmBody = createBody(1.5);
         rLowerArmBody.addShape(rLowerArmShape);
-        rLowerArmBody.position.set(startPos.x + 0.18, startPos.y + 0.0 + seatHeight, startPos.z);
+        if (laying) {
+            rLowerArmBody.position.set(startPos.x + 0.4, layHeight + lowerArmSize.z, startPos.z - 0.1);
+            rLowerArmBody.quaternion.setFromEuler(0, 0, -Math.PI / 2);
+        } else {
+            rLowerArmBody.position.set(startPos.x + 0.18, startPos.y + 0.0 + seatHeight, startPos.z);
+        }
         world.addBody(rLowerArmBody);
         ragdollBodies.push(rLowerArmBody);
         const rLowerArmMesh = new THREE.Mesh(new THREE.BoxGeometry(lowerArmSize.x * 2, lowerArmSize.y * 2, lowerArmSize.z * 2), bodyMaterial);
         scene.add(rLowerArmMesh);
         ragdollMeshes.push(rLowerArmMesh);
 
-        // Left upper leg - horizontal when seated
+        // Left upper leg
         const lUpperLegShape = new CANNON.Box(new CANNON.Vec3(upperLegSize.x, upperLegSize.y, upperLegSize.z));
         const lUpperLegBody = createBody(3);
         lUpperLegBody.addShape(lUpperLegShape);
-        if (seated) {
-            // Rotate to horizontal and position forward
+        if (laying) {
+            lUpperLegBody.position.set(startPos.x - 0.07, layHeight + upperLegSize.z, startPos.z + 0.2);
+            lUpperLegBody.quaternion.setFromEuler(Math.PI / 2, 0, 0);
+        } else if (seated) {
             lUpperLegBody.position.set(startPos.x - 0.07, startPos.y - 0.12 + seatHeight, startPos.z + legForward);
-            lUpperLegBody.quaternion.setFromEuler(Math.PI / 2, 0, 0); // Rotate 90 degrees to horizontal
+            lUpperLegBody.quaternion.setFromEuler(Math.PI / 2, 0, 0);
         } else {
             lUpperLegBody.position.set(startPos.x - 0.07, startPos.y - 0.2, startPos.z);
         }
@@ -275,11 +435,14 @@
         scene.add(lUpperLegMesh);
         ragdollMeshes.push(lUpperLegMesh);
 
-        // Right upper leg - horizontal when seated
+        // Right upper leg
         const rUpperLegShape = new CANNON.Box(new CANNON.Vec3(upperLegSize.x, upperLegSize.y, upperLegSize.z));
         const rUpperLegBody = createBody(3);
         rUpperLegBody.addShape(rUpperLegShape);
-        if (seated) {
+        if (laying) {
+            rUpperLegBody.position.set(startPos.x + 0.07, layHeight + upperLegSize.z, startPos.z + 0.2);
+            rUpperLegBody.quaternion.setFromEuler(Math.PI / 2, 0, 0);
+        } else if (seated) {
             rUpperLegBody.position.set(startPos.x + 0.07, startPos.y - 0.12 + seatHeight, startPos.z + legForward);
             rUpperLegBody.quaternion.setFromEuler(Math.PI / 2, 0, 0);
         } else {
@@ -291,11 +454,14 @@
         scene.add(rUpperLegMesh);
         ragdollMeshes.push(rUpperLegMesh);
 
-        // Left lower leg - vertical when seated (hanging down at knee)
+        // Left lower leg
         const lLowerLegShape = new CANNON.Box(new CANNON.Vec3(lowerLegSize.x, lowerLegSize.y, lowerLegSize.z));
         const lLowerLegBody = createBody(2);
         lLowerLegBody.addShape(lLowerLegShape);
-        if (seated) {
+        if (laying) {
+            lLowerLegBody.position.set(startPos.x - 0.07, layHeight + lowerLegSize.z, startPos.z + 0.45);
+            lLowerLegBody.quaternion.setFromEuler(Math.PI / 2, 0, 0);
+        } else if (seated) {
             lLowerLegBody.position.set(startPos.x - 0.07, startPos.y - 0.38 + seatHeight, startPos.z + legForward + 0.14);
         } else {
             lLowerLegBody.position.set(startPos.x - 0.07, startPos.y - 0.47, startPos.z);
@@ -306,11 +472,14 @@
         scene.add(lLowerLegMesh);
         ragdollMeshes.push(lLowerLegMesh);
 
-        // Right lower leg - vertical when seated
+        // Right lower leg
         const rLowerLegShape = new CANNON.Box(new CANNON.Vec3(lowerLegSize.x, lowerLegSize.y, lowerLegSize.z));
         const rLowerLegBody = createBody(2);
         rLowerLegBody.addShape(rLowerLegShape);
-        if (seated) {
+        if (laying) {
+            rLowerLegBody.position.set(startPos.x + 0.07, layHeight + lowerLegSize.z, startPos.z + 0.45);
+            rLowerLegBody.quaternion.setFromEuler(Math.PI / 2, 0, 0);
+        } else if (seated) {
             rLowerLegBody.position.set(startPos.x + 0.07, startPos.y - 0.38 + seatHeight, startPos.z + legForward + 0.14);
         } else {
             rLowerLegBody.position.set(startPos.x + 0.07, startPos.y - 0.47, startPos.z);
@@ -629,6 +798,89 @@
     canvas.addEventListener('mouseup', onMouseUp);
     canvas.addEventListener('mouseleave', onMouseUp);
 
+    // Touch event handlers for mobile dragging
+    const onTouchStart = (event) => {
+        if (event.touches.length !== 1) return;
+        event.preventDefault();
+        
+        const touch = event.touches[0];
+        mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+        
+        raycaster.setFromCamera(mouse, camera);
+        
+        const intersectObjects = [...ragdollMeshes];
+        if (chairMesh) {
+            chairMesh.traverse(node => {
+                if (node.isMesh) intersectObjects.push(node);
+            });
+        }
+        
+        const intersects = raycaster.intersectObjects(intersectObjects, true);
+        
+        if (intersects.length > 0) {
+            const hitPoint = intersects[0].point;
+            const body = findClosestBody(hitPoint);
+            
+            if (body) {
+                activatePhysics();
+                isDragging = true;
+                draggedBody = body;
+                
+                dragPlane.setFromNormalAndCoplanarPoint(
+                    camera.getWorldDirection(new THREE.Vector3()).negate(),
+                    hitPoint
+                );
+                
+                dragOffset.copy(hitPoint).sub(new THREE.Vector3(body.position.x, body.position.y, body.position.z));
+            }
+        }
+    };
+
+    const onTouchMove = (event) => {
+        if (!isDragging || !draggedBody || event.touches.length !== 1) return;
+        event.preventDefault();
+        
+        const touch = event.touches[0];
+        mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+        
+        raycaster.setFromCamera(mouse, camera);
+        
+        const intersectPoint = new THREE.Vector3();
+        if (raycaster.ray.intersectPlane(dragPlane, intersectPoint)) {
+            const targetPos = intersectPoint.sub(dragOffset);
+            
+            const margin = 0.2;
+            targetPos.x = Math.max(-cubeHalfSize + margin, Math.min(cubeHalfSize - margin, targetPos.x));
+            targetPos.y = Math.max(-cubeHalfSize + margin, Math.min(cubeHalfSize - margin, targetPos.y));
+            targetPos.z = Math.max(-cubeHalfSize + margin, Math.min(cubeHalfSize - margin, targetPos.z));
+            
+            const force = new CANNON.Vec3(
+                (targetPos.x - draggedBody.position.x) * 300,
+                (targetPos.y - draggedBody.position.y) * 300,
+                (targetPos.z - draggedBody.position.z) * 300
+            );
+            draggedBody.applyForce(force);
+            
+            draggedBody.velocity.x = (targetPos.x - draggedBody.position.x) * 10;
+            draggedBody.velocity.y = (targetPos.y - draggedBody.position.y) * 10;
+            draggedBody.velocity.z = (targetPos.z - draggedBody.position.z) * 10;
+            
+            draggedBody.angularVelocity.scale(0.8, draggedBody.angularVelocity);
+        }
+    };
+
+    const onTouchEnd = () => {
+        isDragging = false;
+        draggedBody = null;
+    };
+
+    canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+    canvas.addEventListener('touchend', onTouchEnd);
+    canvas.addEventListener('touchcancel', onTouchEnd);
+
     const resize = () => {
         const { innerWidth: w, innerHeight: h } = window;
         camera.aspect = w / h;
@@ -793,8 +1045,8 @@
         chairBody.angularDamping = 0.5;
         world.addBody(chairBody);
 
-        // Create ragdoll lying on the floor to the right
-        createRagdoll({ x: 0.25, y: -0.35, z: 0.0 }, false);
+        // Create ragdoll lying on the floor
+        createRagdoll({ x: 0.15, y: -0.67, z: -0.25 }, 'laying');
     }).catch(err => {
         console.error('Model load error', err);
     });
@@ -802,6 +1054,7 @@
     let prevTime = performance.now();
 
     const animate = () => {
+        
         const now = performance.now();
         const delta = now - prevTime;
         prevTime = now;
