@@ -218,7 +218,7 @@
     if (isMobile) {
         camera.position.set(-0.9466522247248941, 0.4868536431089318, 0.5539161449307736);
     } else {
-        camera.position.set(2.5, 1.5, 4);
+        camera.position.set(-0.32130409236298296, 0.4362341566543904, 1.0707303305682692);
     }
     camera.lookAt(0, 0, 0);
 
@@ -234,10 +234,8 @@
     };
     controls.target.set(0, 0, 0);
     
-    // Lock camera on mobile
-    if (isMobile) {
-        controls.enabled = false;
-    }
+    // Lock camera on both mobile and desktop
+    controls.enabled = false;
 
     const light = new THREE.DirectionalLight(0xffffff, 1);
     light.position.set(3, 5, 4);
@@ -1065,6 +1063,8 @@
     let prevTime = performance.now();
 
     const animate = () => {
+
+      
         
         const now = performance.now();
         const delta = now - prevTime;
