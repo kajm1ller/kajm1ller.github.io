@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <link rel="icon" href="images/favicon_io/favicon-16x16.png">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music - Kaj Services</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            color: white;
+            font-family: 'Segoe UI', Arial, sans-serif;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            padding: 20px 0;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 2.5em;
+            color: #1DB954;
+            text-shadow: 0 0 20px rgba(29, 185, 84, 0.5);
+        }
+
+        .back-link {
+            display: inline-block;
+            color: #1DB954;
+            text-decoration: none;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+
+        /* Now Playing Section */
+        .now-playing {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .now-playing h2 {
+            margin: 0 0 20px 0;
+            color: #1DB954;
+            font-size: 1.2em;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .track-info {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .album-art {
+            width: 150px;
+            height: 150px;
+            border-radius: 8px;
+            background: #333;
+            object-fit: cover;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .track-details {
+            flex: 1;
+        }
+
+        .track-name {
+            font-size: 1.5em;
+            font-weight: bold;
+            margin: 0 0 8px 0;
+        }
+
+        .artist-name {
+            font-size: 1.1em;
+            color: #b3b3b3;
+            margin: 0 0 8px 0;
+        }
+
+        .album-name {
+            font-size: 0.9em;
+            color: #666;
+            margin: 0;
+        }
+
+        .not-playing {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        /* Add to Queue Section */
+        .add-queue {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .add-queue h2 {
+            margin: 0 0 20px 0;
+            color: #1DB954;
+            font-size: 1.2em;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .search-form {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 15px;
+        }
+
+        .form-row input {
+            flex: 1;
+            padding: 12px 16px;
+            border: none;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 16px;
+        }
+
+        .form-row input::placeholder {
+            color: #888;
+        }
+
+        .form-row input:focus {
+            outline: 2px solid #1DB954;
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .search-btn {
+            padding: 12px 24px;
+            background: #1DB954;
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .search-btn:hover {
+            background: #1ed760;
+            transform: scale(1.02);
+        }
+
+        .search-btn:disabled {
+            background: #555;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Search Results */
+        .search-results {
+            margin-top: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .search-result-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .search-result-item:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .search-result-item img {
+            width: 50px;
+            height: 50px;
+            border-radius: 4px;
+        }
+
+        .search-result-info {
+            flex: 1;
+        }
+
+        .search-result-info .track {
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+
+        .search-result-info .artist {
+            color: #b3b3b3;
+            font-size: 0.9em;
+        }
+
+        .add-btn {
+            padding: 8px 16px;
+            background: #1DB954;
+            border: none;
+            border-radius: 20px;
+            color: white;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .add-btn:hover {
+            background: #1ed760;
+        }
+
+        /* Queue Section */
+        .queue-section {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 30px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .queue-section h2 {
+            margin: 0 0 20px 0;
+            color: #1DB954;
+            font-size: 1.2em;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .queue-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .queue-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .queue-item img {
+            width: 50px;
+            height: 50px;
+            border-radius: 4px;
+        }
+
+        .queue-item-info {
+            flex: 1;
+        }
+
+        .queue-item-info .track {
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+
+        .queue-item-info .artist {
+            color: #b3b3b3;
+            font-size: 0.9em;
+        }
+
+        .queue-item .added-by {
+            color: #1DB954;
+            font-size: 0.85em;
+            font-style: italic;
+        }
+
+        .queue-position {
+            width: 30px;
+            height: 30px;
+            background: rgba(29, 185, 84, 0.3);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .empty-queue {
+            text-align: center;
+            padding: 30px;
+            color: #666;
+        }
+
+        /* Status Messages */
+        .status-message {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .status-message.success {
+            background: rgba(29, 185, 84, 0.2);
+            border: 1px solid #1DB954;
+            color: #1DB954;
+            display: block;
+        }
+
+        .status-message.error {
+            background: rgba(255, 82, 82, 0.2);
+            border: 1px solid #ff5252;
+            color: #ff5252;
+            display: block;
+        }
+
+        /* Loading Spinner */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #1DB954;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .track-info {
+                flex-direction: column;
+                text-align: center;
+            }
+
+            .form-row {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <a href="index.html" class="back-link">← Back to Home</a>
+            <h1>🎵 Kaj's Music</h1>
+        </div>
+
+        <!-- Now Playing Section -->
+        <div class="now-playing">
+            <h2>🎧 Now Playing</h2>
+            <div id="now-playing-content">
+                <div class="not-playing">
+                    <div class="loading"></div>
+                    <p>Loading...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add to Queue Section -->
+        <div class="add-queue">
+            <h2>➕ Add to Queue</h2>
+            <div class="search-form">
+                <div class="form-row">
+                    <input type="text" id="your-name" placeholder="Your name" maxlength="30">
+                </div>
+                <div class="form-row">
+                    <input type="text" id="song-search" placeholder="Search for a song...">
+                    <button class="search-btn" id="search-btn">Search</button>
+                </div>
+            </div>
+            <div id="search-results" class="search-results"></div>
+            <div id="status-message" class="status-message"></div>
+        </div>
+
+        <!-- Queue Section -->
+        <div class="queue-section">
+            <h2>📋 Up Next</h2>
+            <ul id="queue-list" class="queue-list">
+                <li class="empty-queue">Loading queue...</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/spotify';
+        let currentSearchResults = [];
+
+        // Fetch currently playing track
+        async function fetchNowPlaying() {
+            try {
+                const response = await fetch(`${API_BASE}/now-playing`);
+                const data = await response.json();
+                
+                const container = document.getElementById('now-playing-content');
+                
+                if (data.is_playing && data.item) {
+                    const track = data.item;
+                    container.innerHTML = `
+                        <div class="track-info">
+                            <img class="album-art" src="${track.album.images[0]?.url || ''}" alt="Album Art">
+                            <div class="track-details">
+                                <p class="track-name">${track.name}</p>
+                                <p class="artist-name">${track.artists.map(a => a.name).join(', ')}</p>
+                                <p class="album-name">${track.album.name}</p>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    container.innerHTML = `
+                        <div class="not-playing">
+                            <p>🔇 Nothing playing right now</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error fetching now playing:', error);
+                document.getElementById('now-playing-content').innerHTML = `
+                    <div class="not-playing">
+                        <p>❌ Could not fetch currently playing track</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Fetch queue
+        async function fetchQueue() {
+            try {
+                const response = await fetch(`${API_BASE}/queue`);
+                const data = await response.json();
+                
+                const queueList = document.getElementById('queue-list');
+                
+                if (data.queue && data.queue.length > 0) {
+                    queueList.innerHTML = data.queue.slice(0, 10).map((track, index) => `
+                        <li class="queue-item">
+                            <span class="queue-position">${index + 1}</span>
+                            <img src="${track.album?.images[2]?.url || track.album?.images[0]?.url || ''}" alt="Album">
+                            <div class="queue-item-info">
+                                <div class="track">${track.name}</div>
+                                <div class="artist">${track.artists.map(a => a.name).join(', ')}</div>
+                            </div>
+                            ${track.added_by ? `<span class="added-by">Added by ${track.added_by}</span>` : ''}
+                        </li>
+                    `).join('');
+                } else {
+                    queueList.innerHTML = '<li class="empty-queue">Queue is empty</li>';
+                }
+            } catch (error) {
+                console.error('Error fetching queue:', error);
+                document.getElementById('queue-list').innerHTML = '<li class="empty-queue">Could not load queue</li>';
+            }
+        }
+
+        // Search for tracks
+        async function searchTracks(query) {
+            try {
+                const response = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
+                const data = await response.json();
+                return data.tracks?.items || [];
+            } catch (error) {
+                console.error('Error searching:', error);
+                return [];
+            }
+        }
+
+        // Add to queue
+        async function addToQueue(trackUri, trackName) {
+            const name = document.getElementById('your-name').value.trim() || 'Anonymous';
+            const statusMessage = document.getElementById('status-message');
+            
+            try {
+                const response = await fetch(`${API_BASE}/add-to-queue`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ uri: trackUri, added_by: name })
+                });
+                
+                if (response.ok) {
+                    statusMessage.className = 'status-message success';
+                    statusMessage.textContent = `✓ "${trackName}" added to queue by ${name}!`;
+                    document.getElementById('search-results').innerHTML = '';
+                    document.getElementById('song-search').value = '';
+                    fetchQueue();
+                } else {
+                    const error = await response.json();
+                    throw new Error(error.message || 'Failed to add to queue');
+                }
+            } catch (error) {
+                statusMessage.className = 'status-message error';
+                statusMessage.textContent = `✗ ${error.message}`;
+            }
+            
+            setTimeout(() => {
+                statusMessage.className = 'status-message';
+            }, 5000);
+        }
+
+        // Display search results
+        function displaySearchResults(tracks) {
+            const container = document.getElementById('search-results');
+            
+            if (tracks.length === 0) {
+                container.innerHTML = '<p style="color: #666; text-align: center;">No results found</p>';
+                return;
+            }
+            
+            container.innerHTML = tracks.map(track => `
+                <div class="search-result-item" data-uri="${track.uri}" data-name="${track.name.replace(/"/g, '&quot;')}">
+                    <img src="${track.album.images[2]?.url || track.album.images[0]?.url || ''}" alt="Album">
+                    <div class="search-result-info">
+                        <div class="track">${track.name}</div>
+                        <div class="artist">${track.artists.map(a => a.name).join(', ')}</div>
+                    </div>
+                    <button class="add-btn">Add</button>
+                </div>
+            `).join('');
+            
+            // Add click listeners
+            container.querySelectorAll('.search-result-item').forEach(item => {
+                item.querySelector('.add-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    addToQueue(item.dataset.uri, item.dataset.name);
+                });
+            });
+        }
+
+        // Event listeners
+        document.getElementById('search-btn').addEventListener('click', async () => {
+            const query = document.getElementById('song-search').value.trim();
+            if (!query) return;
+            
+            const btn = document.getElementById('search-btn');
+            btn.disabled = true;
+            btn.textContent = 'Searching...';
+            
+            const results = await searchTracks(query);
+            displaySearchResults(results);
+            
+            btn.disabled = false;
+            btn.textContent = 'Search';
+        });
+
+        document.getElementById('song-search').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('search-btn').click();
+            }
+        });
+
+        // Initial load
+        fetchNowPlaying();
+        fetchQueue();
+
+        // Refresh now playing every 10 seconds
+        setInterval(fetchNowPlaying, 10000);
+        // Refresh queue every 30 seconds
+        setInterval(fetchQueue, 30000);
+    </script>
+</body>
+</html>
