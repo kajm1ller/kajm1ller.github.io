@@ -116,6 +116,166 @@
         .popup-close:hover {
             opacity: 1;
         }
+
+        /* Music Control Panel */
+        .music-panel {
+            display: none;
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 16px;
+            padding: 20px;
+            width: 90%;
+            max-width: 500px;
+            z-index: 50;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+
+        .music-panel.active {
+            display: block;
+        }
+
+        .music-panel h3 {
+            color: white;
+            margin: 0 0 15px 0;
+            font-family: Arial, sans-serif;
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+        .music-panel .search-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .music-panel input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            color: white;
+            font-size: 14px;
+            font-family: Arial, sans-serif;
+        }
+
+        .music-panel input::placeholder {
+            color: #666;
+        }
+
+        .music-panel input:focus {
+            outline: none;
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+
+        .music-panel button {
+            padding: 10px 20px;
+            background: white;
+            border: none;
+            border-radius: 8px;
+            color: black;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            font-family: Arial, sans-serif;
+        }
+
+        .music-panel button:hover {
+            opacity: 0.8;
+        }
+
+        .music-panel button:disabled {
+            background: #555;
+            color: #888;
+            cursor: not-allowed;
+        }
+
+        .music-panel .search-results {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .music-panel .result-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            margin-bottom: 6px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .music-panel .result-item:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .music-panel .result-item img {
+            width: 40px;
+            height: 40px;
+            border-radius: 4px;
+        }
+
+        .music-panel .result-item .info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .music-panel .result-item .track-name {
+            color: white;
+            font-size: 13px;
+            font-weight: bold;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-family: Arial, sans-serif;
+        }
+
+        .music-panel .result-item .artist-name {
+            color: #888;
+            font-size: 11px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-family: Arial, sans-serif;
+        }
+
+        .music-panel .result-item .add-btn {
+            padding: 6px 12px;
+            font-size: 12px;
+            border-radius: 20px;
+            background: white;
+            color: black;
+        }
+
+        .music-panel .status-msg {
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-top: 10px;
+            font-size: 12px;
+            font-family: Arial, sans-serif;
+            display: none;
+        }
+
+        .music-panel .status-msg.success {
+            display: block;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+        }
+
+        .music-panel .status-msg.error {
+            display: block;
+            background: rgba(255, 82, 82, 0.2);
+            border: 1px solid #ff5252;
+            color: #ff5252;
+        }
     </style>
 </head>
 
@@ -134,6 +294,20 @@
             <h2 id="popup-title"></h2>
             <p id="popup-text"></p>
         </div>
+    </div>
+    
+    <!-- Music Control Panel -->
+    <div class="music-panel" id="music-panel">
+        <h3>➕ Add to Queue</h3>
+        <div class="search-row">
+            <input type="text" id="panel-name" placeholder="Your name" maxlength="30">
+        </div>
+        <div class="search-row">
+            <input type="text" id="panel-search" placeholder="Search for a song...">
+            <button id="panel-search-btn">Search</button>
+        </div>
+        <div class="search-results" id="panel-results"></div>
+        <div class="status-msg" id="panel-status"></div>
     </div>
     
     <canvas id="scene"></canvas>
@@ -318,9 +492,9 @@
     const musicCube = new THREE.Mesh(musicCubeGeometry, new THREE.MeshBasicMaterial({ color: 0x111111, wireframe: true }));
     const musicOuterOpaque = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.FrontSide });
     const musicOuterTransparent = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.FrontSide });
-    // Box face order: +x, -x, +y (top), -y (bottom), +z (front), -z (back)
-    // Front is now -z (facing the main room), back is +z
-    const musicOuterCube = new THREE.Mesh(musicCubeGeometry, [musicOuterOpaque, musicOuterOpaque, musicOuterOpaque, musicOuterOpaque, musicOuterOpaque, musicOuterTransparent]);
+    // Box face order: +x, -x, +y (top), -y (bottom), +z (front/camera side), -z (back)
+    // Front wall (facing camera) = transparent
+    const musicOuterCube = new THREE.Mesh(musicCubeGeometry, [musicOuterOpaque, musicOuterOpaque, musicOuterOpaque, musicOuterOpaque, musicOuterTransparent, musicOuterOpaque]);
     const musicEdges = new THREE.LineSegments(
         new THREE.EdgesGeometry(musicCubeGeometry),
         new THREE.LineBasicMaterial({ color: 0x1DB954, linewidth: 2 })
@@ -430,8 +604,12 @@
     let currentRoom = 'main'; // 'main' or 'music'
     let cameraTransitioning = false;
     let transitionProgress = 0;
-    const transitionDuration = 1500; // ms
+    let transitionDuration = 1500; // ms - will be updated based on audio length
     let transitionStartTime = 0;
+    
+    // Transition audio
+    const bwoowOutAudio = new Audio('./media/mp3/bwoow_out.mp3');
+    const bwoowInAudio = new Audio('./media/mp3/bwoow_in.mp3');
     
     // Camera positions
     const mainRoomCameraPos = isMobile 
@@ -452,6 +630,17 @@
         cameraTransitioning = true;
         transitionStartTime = performance.now();
         currentRoom = toRoom;
+        
+        // Play appropriate audio and set transition duration to match
+        if (toRoom === 'music') {
+            bwoowOutAudio.currentTime = 0;
+            bwoowOutAudio.play();
+            transitionDuration = bwoowOutAudio.duration * 1000 || 1500;
+        } else {
+            bwoowInAudio.currentTime = 0;
+            bwoowInAudio.play();
+            transitionDuration = bwoowInAudio.duration * 1000 || 1500;
+        }
         
         // Update UI
         document.querySelector('.title').textContent = toRoom === 'music' ? 'Kaj Queue' : 'Kaj Services';
@@ -475,6 +664,12 @@
         
         if (transitionProgress >= 1) {
             cameraTransitioning = false;
+            // Show/hide music panel based on room
+            if (currentRoom === 'music') {
+                document.getElementById('music-panel').classList.add('active');
+            } else {
+                document.getElementById('music-panel').classList.remove('active');
+            }
         }
     };
     
@@ -484,7 +679,105 @@
         if (currentRoom === 'main') {
             startCameraTransition('music');
         } else {
+            // Hide panel immediately when going back
+            document.getElementById('music-panel').classList.remove('active');
             startCameraTransition('main');
+        }
+    });
+    
+    // Music Panel Search Functionality
+    const musicPanel = document.getElementById('music-panel');
+    const panelSearchInput = document.getElementById('panel-search');
+    const panelNameInput = document.getElementById('panel-name');
+    const panelSearchBtn = document.getElementById('panel-search-btn');
+    const panelResults = document.getElementById('panel-results');
+    const panelStatus = document.getElementById('panel-status');
+    
+    const searchSpotifyTracks = async (query) => {
+        try {
+            const response = await fetch(`${SPOTIFY_API_BASE}/search?q=${encodeURIComponent(query)}`);
+            const data = await response.json();
+            return data.tracks?.items || [];
+        } catch (error) {
+            console.error('Search error:', error);
+            return [];
+        }
+    };
+    
+    const addToSpotifyQueue = async (trackUri, trackName) => {
+        const name = panelNameInput.value.trim() || 'Anonymous';
+        
+        try {
+            const response = await fetch(`${SPOTIFY_API_BASE}/add-to-queue`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uri: trackUri, added_by: name })
+            });
+            
+            if (response.ok) {
+                panelStatus.className = 'status-msg success';
+                panelStatus.textContent = `✓ "${trackName}" added by ${name}!`;
+                panelResults.innerHTML = '';
+                panelSearchInput.value = '';
+                // Refresh the monitor display
+                setTimeout(updateSpotifyData, 500);
+            } else {
+                const error = await response.json();
+                throw new Error(error.message || 'Failed to add to queue');
+            }
+        } catch (error) {
+            panelStatus.className = 'status-msg error';
+            panelStatus.textContent = `✗ ${error.message}`;
+        }
+        
+        setTimeout(() => {
+            panelStatus.className = 'status-msg';
+        }, 4000);
+    };
+    
+    const displayPanelResults = (tracks) => {
+        if (tracks.length === 0) {
+            panelResults.innerHTML = '<div style="color: #666; text-align: center; padding: 10px;">No results found</div>';
+            return;
+        }
+        
+        panelResults.innerHTML = tracks.slice(0, 6).map(track => `
+            <div class="result-item" data-uri="${track.uri}" data-name="${track.name.replace(/"/g, '&quot;')}">
+                <img src="${track.album.images[2]?.url || track.album.images[0]?.url || ''}" alt="">
+                <div class="info">
+                    <div class="track-name">${track.name}</div>
+                    <div class="artist-name">${track.artists.map(a => a.name).join(', ')}</div>
+                </div>
+                <button class="add-btn">Add</button>
+            </div>
+        `).join('');
+        
+        // Add click listeners
+        panelResults.querySelectorAll('.result-item').forEach(item => {
+            item.querySelector('.add-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                addToSpotifyQueue(item.dataset.uri, item.dataset.name);
+            });
+        });
+    };
+    
+    panelSearchBtn.addEventListener('click', async () => {
+        const query = panelSearchInput.value.trim();
+        if (!query) return;
+        
+        panelSearchBtn.disabled = true;
+        panelSearchBtn.textContent = '...';
+        
+        const results = await searchSpotifyTracks(query);
+        displayPanelResults(results);
+        
+        panelSearchBtn.disabled = false;
+        panelSearchBtn.textContent = 'Search';
+    });
+    
+    panelSearchInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            panelSearchBtn.click();
         }
     });
     
@@ -632,7 +925,7 @@
         ctx.fillStyle = '#1DB954';
         ctx.font = '9px Arial';
         ctx.textAlign = 'center';
-        ctx.fillText('Visit kaj.services/music.html to add songs!', w / 2, h - 5);
+        ctx.fillText('Use the panel below to add songs ↓', w / 2, h - 5);
         ctx.textAlign = 'left';
         
         screenTexture.needsUpdate = true;
@@ -661,9 +954,10 @@
         
         const gifMat = new THREE.MeshBasicMaterial({ map: blissTexture, toneMapped: false, side: THREE.BackSide });
         const floorMat = new THREE.MeshBasicMaterial({ map: floorTexture, toneMapped: false, side: THREE.BackSide });
-        const frontMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.BackSide });
-        // Music room: front is -z, back is +z (opposite of main room)
-        musicCube.material = [gifMat, gifMat, floorMat, floorMat, gifMat, frontMat];
+        const transparentMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.BackSide });
+        // Box face order: +x, -x, +y (top), -y (bottom), +z (front/camera side), -z (back/behind monitor)
+        // Front wall (facing camera) = transparent, Back wall (behind monitor) = bliss gif
+        musicCube.material = [gifMat, gifMat, floorMat, floorMat, transparentMat, gifMat];
     };
     // ========== END MUSIC ROOM SETUP ==========
 
