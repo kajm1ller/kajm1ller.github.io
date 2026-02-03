@@ -225,7 +225,7 @@
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = false;
     controls.enablePan = false;
-    controls.minDistance = 1.2;
+    controls.minDistance = 0.3;
     controls.maxDistance = 12;
     controls.mouseButtons = {
         LEFT: null,
@@ -236,6 +236,21 @@
     
     // Lock camera on both mobile and desktop
     controls.enabled = false;
+    
+    // Toggle camera controls with Ctrl+C
+    let cameraControlsEnabled = false;
+    document.addEventListener('keydown', (e) => {
+        if (e.ctrlKey && e.key === 'c' && !e.shiftKey) {
+            // Only toggle if not selecting text
+            if (window.getSelection().toString() === '') {
+                e.preventDefault();
+                cameraControlsEnabled = !cameraControlsEnabled;
+                controls.enabled = cameraControlsEnabled;
+                controls.mouseButtons.LEFT = cameraControlsEnabled ? THREE.MOUSE.ROTATE : null;
+                console.log('Camera controls:', cameraControlsEnabled ? 'ENABLED' : 'DISABLED');
+            }
+        }
+    });
 
     const light = new THREE.DirectionalLight(0xffffff, 1);
     light.position.set(3, 5, 4);
@@ -407,48 +422,9 @@
     standNeck.position.y = -0.12;
     monitorGroup.add(standNeck);
     
-    monitorGroup.position.set(0, -0.25, musicRoomOffset + 0.1);
+    monitorGroup.position.set(0, -0.15, musicRoomOffset + 0.2);
     monitorGroup.rotation.x = -0.1; // Slight tilt back
     scene.add(monitorGroup);
-    
-    // Create office chair for music room
-    const musicChairGroup = new THREE.Group();
-    const chairMaterialDark = new THREE.MeshBasicMaterial({ color: 0x444444 });
-    const chairMaterialRed = new THREE.MeshBasicMaterial({ color: 0xAA2222 });
-    
-    // Chair seat
-    const chairSeat = new THREE.Mesh(
-        new THREE.BoxGeometry(0.25, 0.04, 0.25),
-        chairMaterialRed
-    );
-    chairSeat.position.y = 0.2;
-    musicChairGroup.add(chairSeat);
-    
-    // Chair back
-    const chairBack = new THREE.Mesh(
-        new THREE.BoxGeometry(0.25, 0.3, 0.03),
-        chairMaterialRed
-    );
-    chairBack.position.set(0, 0.37, -0.11);
-    musicChairGroup.add(chairBack);
-    
-    // Chair base
-    const chairBase = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.02, 0.02, 0.2, 8),
-        chairMaterialDark
-    );
-    chairBase.position.y = 0.1;
-    musicChairGroup.add(chairBase);
-    
-    // Chair wheels base
-    const wheelBase = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.12, 0.12, 0.02, 5),
-        chairMaterialDark
-    );
-    musicChairGroup.add(wheelBase);
-    
-    musicChairGroup.position.set(0, -0.75, musicRoomOffset + 0.55);
-    scene.add(musicChairGroup);
     
     // Camera transition state
     let currentRoom = 'main'; // 'main' or 'music'
@@ -463,7 +439,7 @@
         : new THREE.Vector3(-0.32130409236298296, 0.4362341566543904, 1.0707303305682692);
     const mainRoomTarget = new THREE.Vector3(0, 0, 0);
     
-    const musicRoomCameraPos = new THREE.Vector3(0, 0.1, musicRoomOffset + 1.2);
+    const musicRoomCameraPos = new THREE.Vector3(0.005284875785393904, -0.10952345100673846, -2.3608644793870726);
     const musicRoomTarget = new THREE.Vector3(0, -0.1, musicRoomOffset);
     
     // Smooth camera transition using easing
@@ -1477,7 +1453,7 @@
 
     const animate = () => {
 
-      
+        console.log(camera.position);
         
         const now = performance.now();
         const delta = now - prevTime;
