@@ -240,15 +240,23 @@
     const light = new THREE.DirectionalLight(0xffffff, 1);
     light.position.set(3, 5, 4);
     scene.add(light);
-    scene.add(new THREE.AmbientLight(0x404040));
+    scene.add(new THREE.AmbientLight(0x606060));
     
-    // Additional light for music room
-    const musicLight = new THREE.DirectionalLight(0xffffff, 1);
-    musicLight.position.set(0, 3, -5);
+    // Additional lighting for music room - much brighter
+    const musicLight = new THREE.DirectionalLight(0xffffff, 2);
+    musicLight.position.set(0, 2, -6);
     scene.add(musicLight);
-    const musicAmbient = new THREE.PointLight(0x1DB954, 0.5, 5);
-    musicAmbient.position.set(0, 0, -3);
+    const musicLight2 = new THREE.DirectionalLight(0xffffff, 1.5);
+    musicLight2.position.set(0, 2, 0);
+    musicLight2.target.position.set(0, 0, -3);
+    scene.add(musicLight2);
+    scene.add(musicLight2.target);
+    const musicAmbient = new THREE.PointLight(0xffffff, 2, 8);
+    musicAmbient.position.set(0, 0.5, -3);
     scene.add(musicAmbient);
+    const musicSpotlight = new THREE.PointLight(0x1DB954, 1, 5);
+    musicSpotlight.position.set(0, 0.5, -2.5);
+    scene.add(musicSpotlight);
 
     const geometry = new THREE.BoxGeometry(1.5, 1.5, 1.5);
     const cube = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: 0x111111, wireframe: true }));
@@ -316,7 +324,7 @@
     
     // Create desk
     const deskGroup = new THREE.Group();
-    const deskMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3728, roughness: 0.8 });
+    const deskMaterial = new THREE.MeshBasicMaterial({ color: 0x6a4a35 });
     
     // Desk top
     const deskTop = new THREE.Mesh(
@@ -347,7 +355,7 @@
     const monitorGroup = new THREE.Group();
     
     // Monitor frame/bezel
-    const bezelMaterial = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.3 });
+    const bezelMaterial = new THREE.MeshBasicMaterial({ color: 0x333333 });
     const monitorFrame = new THREE.Mesh(
         new THREE.BoxGeometry(0.55, 0.35, 0.03),
         bezelMaterial
@@ -405,8 +413,8 @@
     
     // Create office chair for music room
     const musicChairGroup = new THREE.Group();
-    const chairMaterialDark = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.6 });
-    const chairMaterialRed = new THREE.MeshStandardMaterial({ color: 0x8B0000, roughness: 0.7 });
+    const chairMaterialDark = new THREE.MeshBasicMaterial({ color: 0x444444 });
+    const chairMaterialRed = new THREE.MeshBasicMaterial({ color: 0xAA2222 });
     
     // Chair seat
     const chairSeat = new THREE.Mesh(
