@@ -519,7 +519,8 @@
                 const queueList = document.getElementById('queue-list');
                 
                 if (data.queue && data.queue.length > 0) {
-                    queueList.innerHTML = data.queue.slice(0, 10).map((track, index) => `
+                    // Show all queued songs, not just 10
+                    queueList.innerHTML = data.queue.map((track, index) => `
                         <li class="queue-item">
                             <span class="queue-position">${index + 1}</span>
                             <img src="${track.album?.images[2]?.url || track.album?.images[0]?.url || ''}" alt="Album">

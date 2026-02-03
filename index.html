@@ -122,7 +122,7 @@
 <body>
     <div class="title">Kaj Services</div>
     <nav class="navbar">
-        <a href="music.html">music</a>
+        <a href="#" id="music-link">music</a>
         <a href="#" data-popup="contact">contact</a>
         <a href="#" data-popup="about">about</a>
         <a href="https://github.com/kajm1ller" target="_blank">github</a>
@@ -241,6 +241,14 @@
     light.position.set(3, 5, 4);
     scene.add(light);
     scene.add(new THREE.AmbientLight(0x404040));
+    
+    // Additional light for music room
+    const musicLight = new THREE.DirectionalLight(0xffffff, 1);
+    musicLight.position.set(0, 3, -5);
+    scene.add(musicLight);
+    const musicAmbient = new THREE.PointLight(0x1DB954, 0.5, 5);
+    musicAmbient.position.set(0, 0, -3);
+    scene.add(musicAmbient);
 
     const geometry = new THREE.BoxGeometry(1.5, 1.5, 1.5);
     const cube = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: 0x111111, wireframe: true }));
@@ -277,6 +285,403 @@
     scene.add(outerCube);
     scene.add(edges);
     scene.add(occupantGroup);
+
+    // ========== MUSIC ROOM SETUP ==========
+    // Create a second room behind the first one (mirrored at z = -1.5)
+    const musicRoomOffset = -3; // Position of music room center
+    
+    // Music room cube (same as main room but offset)
+    const musicCubeGeometry = new THREE.BoxGeometry(1.5, 1.5, 1.5);
+    const musicCube = new THREE.Mesh(musicCubeGeometry, new THREE.MeshBasicMaterial({ color: 0x111111, wireframe: true }));
+    const musicOuterOpaque = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.FrontSide });
+    const musicOuterTransparent = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.FrontSide });
+    // Box face order: +x, -x, +y (top), -y (bottom), +z (front), -z (back)
+    // Front is now -z (facing the main room), back is +z
+    const musicOuterCube = new THREE.Mesh(musicCubeGeometry, [musicOuterOpaque, musicOuterOpaque, musicOuterOpaque, musicOuterOpaque, musicOuterOpaque, musicOuterTransparent]);
+    const musicEdges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(musicCubeGeometry),
+        new THREE.LineBasicMaterial({ color: 0x1DB954, linewidth: 2 })
+    );
+    
+    musicCube.position.z = musicRoomOffset;
+    musicOuterCube.position.z = musicRoomOffset;
+    musicEdges.position.z = musicRoomOffset;
+    musicCube.rotation.y = -0.3;
+    musicOuterCube.rotation.y = -0.3;
+    musicEdges.rotation.y = -0.3;
+    
+    scene.add(musicCube);
+    scene.add(musicOuterCube);
+    scene.add(musicEdges);
+    
+    // Create desk
+    const deskGroup = new THREE.Group();
+    const deskMaterial = new THREE.MeshStandardMaterial({ color: 0x4a3728, roughness: 0.8 });
+    
+    // Desk top
+    const deskTop = new THREE.Mesh(
+        new THREE.BoxGeometry(0.8, 0.04, 0.4),
+        deskMaterial
+    );
+    deskTop.position.y = 0.35;
+    deskGroup.add(deskTop);
+    
+    // Desk legs
+    const legGeometry = new THREE.BoxGeometry(0.04, 0.35, 0.04);
+    const legPositions = [
+        [-0.35, 0.175, -0.15],
+        [0.35, 0.175, -0.15],
+        [-0.35, 0.175, 0.15],
+        [0.35, 0.175, 0.15]
+    ];
+    legPositions.forEach(pos => {
+        const leg = new THREE.Mesh(legGeometry, deskMaterial);
+        leg.position.set(...pos);
+        deskGroup.add(leg);
+    });
+    
+    deskGroup.position.set(0, -0.75, musicRoomOffset + 0.3);
+    scene.add(deskGroup);
+    
+    // Create computer monitor
+    const monitorGroup = new THREE.Group();
+    
+    // Monitor frame/bezel
+    const bezelMaterial = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.3 });
+    const monitorFrame = new THREE.Mesh(
+        new THREE.BoxGeometry(0.55, 0.35, 0.03),
+        bezelMaterial
+    );
+    monitorGroup.add(monitorFrame);
+    
+    // Monitor screen (will have Spotify UI texture)
+    const screenWidth = 0.5;
+    const screenHeight = 0.3;
+    const screenCanvas = document.createElement('canvas');
+    screenCanvas.width = 512;
+    screenCanvas.height = 307;
+    const screenCtx = screenCanvas.getContext('2d');
+    
+    // Initial screen content
+    screenCtx.fillStyle = '#1a1a2e';
+    screenCtx.fillRect(0, 0, screenCanvas.width, screenCanvas.height);
+    screenCtx.fillStyle = '#1DB954';
+    screenCtx.font = 'bold 24px Arial';
+    screenCtx.textAlign = 'center';
+    screenCtx.fillText('🎵 Kaj\'s Music', screenCanvas.width / 2, 40);
+    screenCtx.fillStyle = '#666';
+    screenCtx.font = '14px Arial';
+    screenCtx.fillText('Loading...', screenCanvas.width / 2, screenCanvas.height / 2);
+    
+    const screenTexture = new THREE.CanvasTexture(screenCanvas);
+    screenTexture.needsUpdate = true;
+    
+    const screenMaterial = new THREE.MeshBasicMaterial({ map: screenTexture });
+    const monitorScreen = new THREE.Mesh(
+        new THREE.PlaneGeometry(screenWidth, screenHeight),
+        screenMaterial
+    );
+    monitorScreen.position.z = 0.016;
+    monitorGroup.add(monitorScreen);
+    
+    // Monitor stand
+    const standBase = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.1, 0.02, 16),
+        bezelMaterial
+    );
+    standBase.position.y = -0.19;
+    monitorGroup.add(standBase);
+    
+    const standNeck = new THREE.Mesh(
+        new THREE.BoxGeometry(0.03, 0.12, 0.03),
+        bezelMaterial
+    );
+    standNeck.position.y = -0.12;
+    monitorGroup.add(standNeck);
+    
+    monitorGroup.position.set(0, -0.25, musicRoomOffset + 0.1);
+    monitorGroup.rotation.x = -0.1; // Slight tilt back
+    scene.add(monitorGroup);
+    
+    // Create office chair for music room
+    const musicChairGroup = new THREE.Group();
+    const chairMaterialDark = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.6 });
+    const chairMaterialRed = new THREE.MeshStandardMaterial({ color: 0x8B0000, roughness: 0.7 });
+    
+    // Chair seat
+    const chairSeat = new THREE.Mesh(
+        new THREE.BoxGeometry(0.25, 0.04, 0.25),
+        chairMaterialRed
+    );
+    chairSeat.position.y = 0.2;
+    musicChairGroup.add(chairSeat);
+    
+    // Chair back
+    const chairBack = new THREE.Mesh(
+        new THREE.BoxGeometry(0.25, 0.3, 0.03),
+        chairMaterialRed
+    );
+    chairBack.position.set(0, 0.37, -0.11);
+    musicChairGroup.add(chairBack);
+    
+    // Chair base
+    const chairBase = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.02, 0.02, 0.2, 8),
+        chairMaterialDark
+    );
+    chairBase.position.y = 0.1;
+    musicChairGroup.add(chairBase);
+    
+    // Chair wheels base
+    const wheelBase = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.12, 0.12, 0.02, 5),
+        chairMaterialDark
+    );
+    musicChairGroup.add(wheelBase);
+    
+    musicChairGroup.position.set(0, -0.75, musicRoomOffset + 0.55);
+    scene.add(musicChairGroup);
+    
+    // Camera transition state
+    let currentRoom = 'main'; // 'main' or 'music'
+    let cameraTransitioning = false;
+    let transitionProgress = 0;
+    const transitionDuration = 1500; // ms
+    let transitionStartTime = 0;
+    
+    // Camera positions
+    const mainRoomCameraPos = isMobile 
+        ? new THREE.Vector3(-0.9466522247248941, 0.4868536431089318, 0.5539161449307736)
+        : new THREE.Vector3(-0.32130409236298296, 0.4362341566543904, 1.0707303305682692);
+    const mainRoomTarget = new THREE.Vector3(0, 0, 0);
+    
+    const musicRoomCameraPos = new THREE.Vector3(0, 0.1, musicRoomOffset + 1.2);
+    const musicRoomTarget = new THREE.Vector3(0, -0.1, musicRoomOffset);
+    
+    // Smooth camera transition using easing
+    const easeInOutCubic = (t) => {
+        return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    };
+    
+    const startCameraTransition = (toRoom) => {
+        if (cameraTransitioning || currentRoom === toRoom) return;
+        cameraTransitioning = true;
+        transitionStartTime = performance.now();
+        currentRoom = toRoom;
+        
+        // Update UI
+        document.querySelector('.title').textContent = toRoom === 'music' ? 'Kaj\'s Music' : 'Kaj Services';
+        document.getElementById('music-link').textContent = toRoom === 'music' ? '← back' : 'music';
+    };
+    
+    const updateCameraTransition = (now) => {
+        if (!cameraTransitioning) return;
+        
+        const elapsed = now - transitionStartTime;
+        transitionProgress = Math.min(elapsed / transitionDuration, 1);
+        const easedProgress = easeInOutCubic(transitionProgress);
+        
+        const fromPos = currentRoom === 'music' ? mainRoomCameraPos : musicRoomCameraPos;
+        const toPos = currentRoom === 'music' ? musicRoomCameraPos : mainRoomCameraPos;
+        const fromTarget = currentRoom === 'music' ? mainRoomTarget : musicRoomTarget;
+        const toTarget = currentRoom === 'music' ? musicRoomTarget : mainRoomTarget;
+        
+        camera.position.lerpVectors(fromPos, toPos, easedProgress);
+        controls.target.lerpVectors(fromTarget, toTarget, easedProgress);
+        
+        if (transitionProgress >= 1) {
+            cameraTransitioning = false;
+        }
+    };
+    
+    // Music link click handler
+    document.getElementById('music-link').addEventListener('click', (e) => {
+        e.preventDefault();
+        if (currentRoom === 'main') {
+            startCameraTransition('music');
+        } else {
+            startCameraTransition('main');
+        }
+    });
+    
+    // Spotify API integration for the monitor
+    const SPOTIFY_API_BASE = '/api/spotify';
+    let spotifyData = {
+        nowPlaying: null,
+        queue: [],
+        isPlaying: false
+    };
+    
+    // Fetch Spotify data
+    const fetchSpotifyNowPlaying = async () => {
+        try {
+            const response = await fetch(`${SPOTIFY_API_BASE}/now-playing`);
+            const data = await response.json();
+            spotifyData.nowPlaying = data.item || null;
+            spotifyData.isPlaying = data.is_playing || false;
+        } catch (error) {
+            console.error('Error fetching now playing:', error);
+        }
+    };
+    
+    const fetchSpotifyQueue = async () => {
+        try {
+            const response = await fetch(`${SPOTIFY_API_BASE}/queue`);
+            const data = await response.json();
+            spotifyData.queue = data.queue || [];
+        } catch (error) {
+            console.error('Error fetching queue:', error);
+        }
+    };
+    
+    // Render Spotify UI to canvas
+    const renderSpotifyScreen = () => {
+        const ctx = screenCtx;
+        const w = screenCanvas.width;
+        const h = screenCanvas.height;
+        
+        // Background gradient
+        const gradient = ctx.createLinearGradient(0, 0, w, h);
+        gradient.addColorStop(0, '#1a1a2e');
+        gradient.addColorStop(0.5, '#16213e');
+        gradient.addColorStop(1, '#0f3460');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, w, h);
+        
+        // Title
+        ctx.fillStyle = '#1DB954';
+        ctx.font = 'bold 20px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('🎵 Kaj\'s Music', w / 2, 25);
+        
+        // Now Playing section
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.fillRect(10, 35, w - 20, 70);
+        
+        ctx.fillStyle = '#1DB954';
+        ctx.font = 'bold 10px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillText('NOW PLAYING', 20, 50);
+        
+        if (spotifyData.isPlaying && spotifyData.nowPlaying) {
+            const track = spotifyData.nowPlaying;
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 14px Arial';
+            ctx.fillText(truncateText(track.name, 40), 20, 70);
+            ctx.fillStyle = '#b3b3b3';
+            ctx.font = '11px Arial';
+            ctx.fillText(truncateText(track.artists?.map(a => a.name).join(', ') || '', 45), 20, 85);
+            
+            // EQ Visualizer bars
+            ctx.fillStyle = '#1DB954';
+            const barCount = 15;
+            const barWidth = 6;
+            const barSpacing = 3;
+            const startX = w - 20 - (barCount * (barWidth + barSpacing));
+            for (let i = 0; i < barCount; i++) {
+                const barHeight = 10 + Math.random() * 30;
+                ctx.fillRect(startX + i * (barWidth + barSpacing), 95 - barHeight, barWidth, barHeight);
+            }
+        } else {
+            ctx.fillStyle = '#666';
+            ctx.font = '12px Arial';
+            ctx.fillText('🔇 Nothing playing', 20, 75);
+        }
+        
+        // Queue section
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.fillRect(10, 115, w - 20, h - 125);
+        
+        ctx.fillStyle = '#1DB954';
+        ctx.font = 'bold 10px Arial';
+        ctx.fillText('UP NEXT', 20, 130);
+        
+        if (spotifyData.queue.length > 0) {
+            const maxVisible = 6;
+            const queueToShow = spotifyData.queue.slice(0, maxVisible);
+            queueToShow.forEach((track, index) => {
+                const y = 145 + index * 25;
+                
+                // Position number
+                ctx.fillStyle = 'rgba(29, 185, 84, 0.3)';
+                ctx.beginPath();
+                ctx.arc(25, y + 5, 8, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 9px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(String(index + 1), 25, y + 8);
+                ctx.textAlign = 'left';
+                
+                // Track info
+                ctx.fillStyle = '#fff';
+                ctx.font = '11px Arial';
+                ctx.fillText(truncateText(track.name, 35), 40, y + 5);
+                ctx.fillStyle = '#888';
+                ctx.font = '9px Arial';
+                ctx.fillText(truncateText(track.artists?.map(a => a.name).join(', ') || '', 40), 40, y + 17);
+                
+                // Added by
+                if (track.added_by) {
+                    ctx.fillStyle = '#1DB954';
+                    ctx.font = 'italic 8px Arial';
+                    ctx.textAlign = 'right';
+                    ctx.fillText(track.added_by, w - 20, y + 10);
+                    ctx.textAlign = 'left';
+                }
+            });
+            
+            if (spotifyData.queue.length > maxVisible) {
+                ctx.fillStyle = '#666';
+                ctx.font = '10px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(`+ ${spotifyData.queue.length - maxVisible} more songs...`, w / 2, h - 15);
+                ctx.textAlign = 'left';
+            }
+        } else {
+            ctx.fillStyle = '#666';
+            ctx.font = '12px Arial';
+            ctx.fillText('Queue is empty', 20, 160);
+        }
+        
+        // Add to queue hint
+        ctx.fillStyle = '#1DB954';
+        ctx.font = '9px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('Visit kaj.services/music.html to add songs!', w / 2, h - 5);
+        ctx.textAlign = 'left';
+        
+        screenTexture.needsUpdate = true;
+    };
+    
+    const truncateText = (text, maxLen) => {
+        if (!text) return '';
+        return text.length > maxLen ? text.substring(0, maxLen - 3) + '...' : text;
+    };
+    
+    // Update Spotify data periodically
+    const updateSpotifyData = async () => {
+        await Promise.all([fetchSpotifyNowPlaying(), fetchSpotifyQueue()]);
+        renderSpotifyScreen();
+    };
+    
+    // Initial load and periodic updates
+    updateSpotifyData();
+    setInterval(updateSpotifyData, 5000); // Update every 5 seconds
+    
+    // Update music room materials when textures are ready
+    let musicRoomTexturesApplied = false;
+    const applyMusicRoomTextures = () => {
+        if (musicRoomTexturesApplied || !blissTexture || !floorTexture) return;
+        musicRoomTexturesApplied = true;
+        
+        const gifMat = new THREE.MeshBasicMaterial({ map: blissTexture, toneMapped: false, side: THREE.BackSide });
+        const floorMat = new THREE.MeshBasicMaterial({ map: floorTexture, toneMapped: false, side: THREE.BackSide });
+        const frontMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.BackSide });
+        // Music room: front is -z, back is +z (opposite of main room)
+        musicCube.material = [gifMat, gifMat, floorMat, floorMat, gifMat, frontMat];
+    };
+    // ========== END MUSIC ROOM SETUP ==========
 
     // Physics world setup
     const world = new CANNON.World();
@@ -1069,6 +1474,18 @@
         const now = performance.now();
         const delta = now - prevTime;
         prevTime = now;
+
+        // Update camera transition
+        updateCameraTransition(now);
+        
+        // Apply music room textures once loaded
+        applyMusicRoomTextures();
+        
+        // Animate music room edges color
+        const musicT = now * 0.0003;
+        const musicColor = new THREE.Color();
+        musicColor.setHSL((musicT + 0.4) % 1, 0.8, 0.45);
+        musicEdges.material.color.copy(musicColor);
 
         // Detect camera rotation and apply centrifugal forces
         const currentAngle = controls.getAzimuthalAngle();
