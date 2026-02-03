@@ -109,6 +109,63 @@
             color: #666;
         }
 
+        /* EQ Visualizer */
+        .eq-visualizer {
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            gap: 3px;
+            height: 60px;
+            margin-top: 20px;
+            padding: 10px 0;
+        }
+
+        .eq-bar {
+            width: 4px;
+            background: linear-gradient(to top, #1DB954, #1ed760, #5eff9e);
+            border-radius: 2px;
+            animation: eq-bounce 0.5s ease-in-out infinite alternate;
+            box-shadow: 0 0 10px rgba(29, 185, 84, 0.5);
+        }
+
+        .eq-bar:nth-child(1) { animation-delay: 0.0s; height: 20px; }
+        .eq-bar:nth-child(2) { animation-delay: 0.1s; height: 35px; }
+        .eq-bar:nth-child(3) { animation-delay: 0.2s; height: 25px; }
+        .eq-bar:nth-child(4) { animation-delay: 0.3s; height: 45px; }
+        .eq-bar:nth-child(5) { animation-delay: 0.15s; height: 30px; }
+        .eq-bar:nth-child(6) { animation-delay: 0.25s; height: 50px; }
+        .eq-bar:nth-child(7) { animation-delay: 0.05s; height: 40px; }
+        .eq-bar:nth-child(8) { animation-delay: 0.35s; height: 28px; }
+        .eq-bar:nth-child(9) { animation-delay: 0.12s; height: 55px; }
+        .eq-bar:nth-child(10) { animation-delay: 0.22s; height: 32px; }
+        .eq-bar:nth-child(11) { animation-delay: 0.08s; height: 42px; }
+        .eq-bar:nth-child(12) { animation-delay: 0.28s; height: 38px; }
+        .eq-bar:nth-child(13) { animation-delay: 0.18s; height: 48px; }
+        .eq-bar:nth-child(14) { animation-delay: 0.32s; height: 22px; }
+        .eq-bar:nth-child(15) { animation-delay: 0.02s; height: 36px; }
+        .eq-bar:nth-child(16) { animation-delay: 0.2s; height: 44px; }
+        .eq-bar:nth-child(17) { animation-delay: 0.1s; height: 30px; }
+        .eq-bar:nth-child(18) { animation-delay: 0.25s; height: 52px; }
+        .eq-bar:nth-child(19) { animation-delay: 0.15s; height: 26px; }
+        .eq-bar:nth-child(20) { animation-delay: 0.3s; height: 40px; }
+
+        @keyframes eq-bounce {
+            0% {
+                transform: scaleY(0.3);
+                opacity: 0.7;
+            }
+            100% {
+                transform: scaleY(1);
+                opacity: 1;
+            }
+        }
+
+        .eq-visualizer.paused .eq-bar {
+            animation-play-state: paused;
+            opacity: 0.3;
+            transform: scaleY(0.2);
+        }
+
         /* Add to Queue Section */
         .add-queue {
             background: rgba(255, 255, 255, 0.1);
@@ -422,6 +479,7 @@
                 
                 if (data.is_playing && data.item) {
                     const track = data.item;
+                    const eqBars = Array(20).fill('<div class="eq-bar"></div>').join('');
                     container.innerHTML = `
                         <div class="track-info">
                             <img class="album-art" src="${track.album.images[0]?.url || ''}" alt="Album Art">
@@ -431,12 +489,15 @@
                                 <p class="album-name">${track.album.name}</p>
                             </div>
                         </div>
+                        <div class="eq-visualizer">${eqBars}</div>
                     `;
                 } else {
+                    const eqBars = Array(20).fill('<div class="eq-bar"></div>').join('');
                     container.innerHTML = `
                         <div class="not-playing">
                             <p>🔇 Nothing playing right now</p>
                         </div>
+                        <div class="eq-visualizer paused">${eqBars}</div>
                     `;
                 }
             } catch (error) {

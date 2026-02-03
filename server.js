@@ -9,7 +9,12 @@ app.use(express.static('.'));
 // Spotify API Configuration
 const SPOTIFY_CLIENT_ID = 'bfe4489b510f416da87c51d4661682ba'; // You'll need to add your client ID
 const SPOTIFY_CLIENT_SECRET = '2f968d8555c6413293e8910ee73f0550';
-const SPOTIFY_REDIRECT_URI = 'https://kaj.services/api/spotify/callback';
+
+// Determine if production or local
+const isProductionEnv = fs.existsSync('/etc/letsencrypt/live/kaj.services/privkey.pem');
+const SPOTIFY_REDIRECT_URI = isProductionEnv 
+  ? 'https://kaj.services/api/spotify/callback'
+  : 'http://localhost:3000/api/spotify/callback';
 
 let spotifyAccessToken = null;
 let spotifyRefreshToken = null;
@@ -228,11 +233,25 @@ app.get('/api/spotify/status', (req, res) => {
   });
 });
 
-const options = {
-  key: fs.readFileSync('/etc/letsencrypt/live/kaj.services/privkey.pem'),
-  cert: fs.readFileSync('//etc/letsencrypt/live/kaj.services/fullchain.pem')
-};
+// Check if running on production (has SSL certs) or locally
+const isProduction = fs.existsSync('/etc/letsencrypt/live/kaj.services/privkey.pem');
 
-https.createServer(options, app).listen(443, '0.0.0.0', () => {
-  console.log('HTTPS Server running on port 443');
-});
+if (isProduction) {
+  const options = {
+    key: fs.readFileSync('/etc/letsencrypt/live/kaj.services/privkey.pem'),
+    cert: fs.readFileSync('/etc/letsencrypt/live/kaj.services/fullchain.pem')
+  };
+
+  https.createServer(options, app).listen(443, '0.0.0.0', () => {
+    console.log('HTTPS Server running on port 443');
+  });
+} else {
+  // Local development - use HTTP
+  const http = require('http');
+  const PORT = 3000;
+  
+  http.createServer(app).listen(PORT, () => {
+    console.log(`Development server running on http://localhost:${PORT}`);
+    console.log(`Visit http://localhost:${PORT}/api/spotify/login to authenticate`);
+  });
+}
