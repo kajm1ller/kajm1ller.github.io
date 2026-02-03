@@ -1,1 +1,5 @@
 node_modules/
+# Large binary files
+*.exe
+*.msi
+*.rar
