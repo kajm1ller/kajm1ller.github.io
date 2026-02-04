@@ -761,6 +761,9 @@
             });
             
             if (response.ok) {
+                // Log the addition
+                console.log(`[Queue Add] "${trackName}" added by ${name} at ${new Date().toLocaleString()}`);
+                
                 panelStatus.className = 'status-msg success';
                 panelStatus.textContent = `✓ "${trackName}" added by ${name}!`;
                 panelResults.innerHTML = '';

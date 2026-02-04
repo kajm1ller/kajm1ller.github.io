@@ -198,6 +198,16 @@ app.post('/api/spotify/add-to-queue', ensureToken, async (req, res) => {
   }
   
   try {
+    // Get track info for logging
+    const trackId = uri.split(':').pop();
+    const trackInfoRes = await fetch(
+      `https://api.spotify.com/v1/tracks/${trackId}`,
+      { headers: { 'Authorization': `Bearer ${spotifyAccessToken}` } }
+    );
+    const trackInfo = await trackInfoRes.json();
+    const trackName = trackInfo.name || 'Unknown Track';
+    const artistName = trackInfo.artists?.map(a => a.name).join(', ') || 'Unknown Artist';
+    
     const response = await fetch(
       `https://api.spotify.com/v1/me/player/queue?uri=${encodeURIComponent(uri)}`,
       {
@@ -207,6 +217,10 @@ app.post('/api/spotify/add-to-queue', ensureToken, async (req, res) => {
     );
     
     if (response.ok || response.status === 204) {
+      // Log the addition with timestamp
+      const timestamp = new Date().toISOString();
+      console.log(`[QUEUE ADD] ${timestamp} | "${trackName}" by ${artistName} | Added by: ${added_by || 'Anonymous'}`);
+      
       // Store who added this track
       if (added_by) {
         queueAdditions.set(uri, added_by);
