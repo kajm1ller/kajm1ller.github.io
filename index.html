@@ -835,6 +835,10 @@
         isPlaying: false
     };
     
+    // Album art image cache
+    let albumArtImage = null;
+    let albumArtUrl = null;
+    
     // Fetch Spotify data
     const fetchSpotifyNowPlaying = async () => {
         try {
@@ -842,6 +846,22 @@
             const data = await response.json();
             spotifyData.nowPlaying = data.item || null;
             spotifyData.isPlaying = data.is_playing || false;
+            
+            // Load album art if track changed
+            const newArtUrl = data.item?.album?.images?.[0]?.url;
+            if (newArtUrl && newArtUrl !== albumArtUrl) {
+                albumArtUrl = newArtUrl;
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => {
+                    albumArtImage = img;
+                    renderSpotifyScreen();
+                };
+                img.src = newArtUrl;
+            } else if (!newArtUrl) {
+                albumArtImage = null;
+                albumArtUrl = null;
+            }
         } catch (error) {
             console.error('Error fetching now playing:', error);
         }
@@ -889,12 +909,32 @@
         
         if (spotifyData.isPlaying && spotifyData.nowPlaying) {
             const track = spotifyData.nowPlaying;
+            
+            // Album art
+            const artSize = 45 * s;
+            const artX = 15 * s;
+            const artY = 52 * s;
+            if (albumArtImage) {
+                ctx.drawImage(albumArtImage, artX, artY, artSize, artSize);
+            } else {
+                // Placeholder
+                ctx.fillStyle = '#333';
+                ctx.fillRect(artX, artY, artSize, artSize);
+                ctx.fillStyle = '#666';
+                ctx.font = `${20 * s}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.fillText('♪', artX + artSize / 2, artY + artSize / 2 + 7 * s);
+                ctx.textAlign = 'left';
+            }
+            
+            // Track info (shifted right for album art)
+            const textX = (15 + 50) * s; // After album art
             ctx.fillStyle = '#fff';
             ctx.font = `bold ${14 * s}px Arial`;
-            ctx.fillText(truncateText(track.name, 40), 20 * s, 70 * s);
+            ctx.fillText(truncateText(track.name, 30), textX, 70 * s);
             ctx.fillStyle = '#b3b3b3';
             ctx.font = `${11 * s}px Arial`;
-            ctx.fillText(truncateText(track.artists?.map(a => a.name).join(', ') || '', 45), 20 * s, 85 * s);
+            ctx.fillText(truncateText(track.artists?.map(a => a.name).join(', ') || '', 35), textX, 85 * s);
             
             // EQ Visualizer bars (uses pre-generated heights to avoid lag)
             ctx.fillStyle = '#1DB954';
