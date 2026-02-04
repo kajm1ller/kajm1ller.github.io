@@ -61,6 +61,20 @@
             opacity: 0.7;
         }
 
+        /* Mobile navbar fixes */
+        @media (max-width: 768px) {
+            .navbar {
+                gap: 20px;
+                width: 90%;
+                justify-content: center;
+            }
+            .navbar a {
+                font-size: 14px;
+                min-width: 50px;
+                text-align: center;
+            }
+        }
+
         .popup-overlay {
             display: none;
             position: fixed;
@@ -555,19 +569,31 @@
     const screenWidth = 0.5;
     const screenHeight = 0.3;
     const screenCanvas = document.createElement('canvas');
-    screenCanvas.width = 512;
-    screenCanvas.height = 307;
+    // Higher resolution for sharper text
+    screenCanvas.width = 1024;
+    screenCanvas.height = 614;
     const screenCtx = screenCanvas.getContext('2d');
+    
+    // Font scale factor (larger on mobile)
+    const fontScale = isMobile ? 2.4 : 2.0;
+    
+    // Pre-generate EQ bar heights to avoid lag (update periodically, not every frame)
+    let eqBarHeights = Array(15).fill(0).map(() => 10 + Math.random() * 30);
+    setInterval(() => {
+        if (spotifyData.isPlaying) {
+            eqBarHeights = eqBarHeights.map(() => 10 + Math.random() * 30);
+        }
+    }, 100);
     
     // Initial screen content
     screenCtx.fillStyle = '#1a1a2e';
     screenCtx.fillRect(0, 0, screenCanvas.width, screenCanvas.height);
     screenCtx.fillStyle = '#1DB954';
-    screenCtx.font = 'bold 24px Arial';
+    screenCtx.font = `bold ${24 * fontScale}px Arial`;
     screenCtx.textAlign = 'center';
-    screenCtx.fillText('🎵 Kaj\'s Music', screenCanvas.width / 2, 40);
+    screenCtx.fillText('Kaj\s Spotify Queue (Live!)', screenCanvas.width / 2, 40 * fontScale);
     screenCtx.fillStyle = '#666';
-    screenCtx.font = '14px Arial';
+    screenCtx.font = `${14 * fontScale}px Arial`;
     screenCtx.fillText('Loading...', screenCanvas.width / 2, screenCanvas.height / 2);
     
     const screenTexture = new THREE.CanvasTexture(screenCanvas);
@@ -617,7 +643,9 @@
         : new THREE.Vector3(-0.32130409236298296, 0.4362341566543904, 1.0707303305682692);
     const mainRoomTarget = new THREE.Vector3(0, 0, 0);
     
-    const musicRoomCameraPos = new THREE.Vector3(0.005284875785393904, -0.10952345100673846, -2.3608644793870726);
+    const musicRoomCameraPos = isMobile
+        ? new THREE.Vector3(-0.045221601648126095, -0.10912889554809375, -1.8643641543556457)
+        : new THREE.Vector3(0.005284875785393904, -0.10952345100673846, -2.3608644793870726);
     const musicRoomTarget = new THREE.Vector3(0, -0.1, musicRoomOffset);
     
     // Smooth camera transition using easing
@@ -816,6 +844,7 @@
         const ctx = screenCtx;
         const w = screenCanvas.width;
         const h = screenCanvas.height;
+        const s = fontScale; // Scale factor for fonts and dimensions
         
         // Background gradient
         const gradient = ctx.createLinearGradient(0, 0, w, h);
@@ -826,106 +855,106 @@
         ctx.fillRect(0, 0, w, h);
         
         // Title
-        ctx.fillStyle = '#1DB954';
-        ctx.font = 'bold 20px Arial';
+        ctx.fillStyle = '#00FF5F';
+        ctx.font = `bold ${20 * s}px Arial`;
         ctx.textAlign = 'center';
-        ctx.fillText('🎵 Kaj\'s Music', w / 2, 25);
+        ctx.fillText('Kaj\'s Spotify Queue (Live!)', w / 2, 25 * s);
         
         // Now Playing section
         ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-        ctx.fillRect(10, 35, w - 20, 70);
+        ctx.fillRect(10 * s, 35 * s, w - 20 * s, 70 * s);
         
         ctx.fillStyle = '#1DB954';
-        ctx.font = 'bold 10px Arial';
+        ctx.font = `bold ${10 * s}px Arial`;
         ctx.textAlign = 'left';
-        ctx.fillText('NOW PLAYING', 20, 50);
+        ctx.fillText('NOW PLAYING', 20 * s, 50 * s);
         
         if (spotifyData.isPlaying && spotifyData.nowPlaying) {
             const track = spotifyData.nowPlaying;
             ctx.fillStyle = '#fff';
-            ctx.font = 'bold 14px Arial';
-            ctx.fillText(truncateText(track.name, 40), 20, 70);
+            ctx.font = `bold ${14 * s}px Arial`;
+            ctx.fillText(truncateText(track.name, 40), 20 * s, 70 * s);
             ctx.fillStyle = '#b3b3b3';
-            ctx.font = '11px Arial';
-            ctx.fillText(truncateText(track.artists?.map(a => a.name).join(', ') || '', 45), 20, 85);
+            ctx.font = `${11 * s}px Arial`;
+            ctx.fillText(truncateText(track.artists?.map(a => a.name).join(', ') || '', 45), 20 * s, 85 * s);
             
-            // EQ Visualizer bars
+            // EQ Visualizer bars (uses pre-generated heights to avoid lag)
             ctx.fillStyle = '#1DB954';
             const barCount = 15;
-            const barWidth = 6;
-            const barSpacing = 3;
-            const startX = w - 20 - (barCount * (barWidth + barSpacing));
+            const barWidth = 6 * s;
+            const barSpacing = 3 * s;
+            const startX = w - 20 * s - (barCount * (barWidth + barSpacing));
             for (let i = 0; i < barCount; i++) {
-                const barHeight = 10 + Math.random() * 30;
-                ctx.fillRect(startX + i * (barWidth + barSpacing), 95 - barHeight, barWidth, barHeight);
+                const barHeight = eqBarHeights[i] * s;
+                ctx.fillRect(startX + i * (barWidth + barSpacing), 95 * s - barHeight, barWidth, barHeight);
             }
         } else {
             ctx.fillStyle = '#666';
-            ctx.font = '12px Arial';
-            ctx.fillText('🔇 Nothing playing', 20, 75);
+            ctx.font = `${12 * s}px Arial`;
+            ctx.fillText('🔇 Nothing playing', 20 * s, 75 * s);
         }
         
         // Queue section
         ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-        ctx.fillRect(10, 115, w - 20, h - 125);
+        ctx.fillRect(10 * s, 115 * s, w - 20 * s, h - 125 * s);
         
         ctx.fillStyle = '#1DB954';
-        ctx.font = 'bold 10px Arial';
-        ctx.fillText('UP NEXT', 20, 130);
+        ctx.font = `bold ${10 * s}px Arial`;
+        ctx.fillText('UP NEXT', 20 * s, 130 * s);
         
         if (spotifyData.queue.length > 0) {
             const maxVisible = 6;
             const queueToShow = spotifyData.queue.slice(0, maxVisible);
             queueToShow.forEach((track, index) => {
-                const y = 145 + index * 25;
+                const y = (145 + index * 25) * s;
                 
                 // Position number
                 ctx.fillStyle = 'rgba(29, 185, 84, 0.3)';
                 ctx.beginPath();
-                ctx.arc(25, y + 5, 8, 0, Math.PI * 2);
+                ctx.arc(25 * s, y + 5 * s, 8 * s, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.fillStyle = '#fff';
-                ctx.font = 'bold 9px Arial';
+                ctx.font = `bold ${9 * s}px Arial`;
                 ctx.textAlign = 'center';
-                ctx.fillText(String(index + 1), 25, y + 8);
+                ctx.fillText(String(index + 1), 25 * s, y + 8 * s);
                 ctx.textAlign = 'left';
                 
                 // Track info
                 ctx.fillStyle = '#fff';
-                ctx.font = '11px Arial';
-                ctx.fillText(truncateText(track.name, 35), 40, y + 5);
+                ctx.font = `${11 * s}px Arial`;
+                ctx.fillText(truncateText(track.name, 35), 40 * s, y + 5 * s);
                 ctx.fillStyle = '#888';
-                ctx.font = '9px Arial';
-                ctx.fillText(truncateText(track.artists?.map(a => a.name).join(', ') || '', 40), 40, y + 17);
+                ctx.font = `${9 * s}px Arial`;
+                ctx.fillText(truncateText(track.artists?.map(a => a.name).join(', ') || '', 40), 40 * s, y + 17 * s);
                 
                 // Added by
                 if (track.added_by) {
                     ctx.fillStyle = '#1DB954';
-                    ctx.font = 'italic 8px Arial';
+                    ctx.font = `italic ${8 * s}px Arial`;
                     ctx.textAlign = 'right';
-                    ctx.fillText(track.added_by, w - 20, y + 10);
+                    ctx.fillText(track.added_by, w - 20 * s, y + 10 * s);
                     ctx.textAlign = 'left';
                 }
             });
             
             if (spotifyData.queue.length > maxVisible) {
                 ctx.fillStyle = '#666';
-                ctx.font = '10px Arial';
+                ctx.font = `${10 * s}px Arial`;
                 ctx.textAlign = 'center';
-                ctx.fillText(`+ ${spotifyData.queue.length - maxVisible} more songs...`, w / 2, h - 15);
+                ctx.fillText(`+ ${spotifyData.queue.length - maxVisible} more songs...`, w / 2, h - 15 * s);
                 ctx.textAlign = 'left';
             }
         } else {
             ctx.fillStyle = '#666';
-            ctx.font = '12px Arial';
-            ctx.fillText('Queue is empty', 20, 160);
+            ctx.font = `${12 * s}px Arial`;
+            ctx.fillText('Queue is empty', 20 * s, 160 * s);
         }
         
         // Add to queue hint
         ctx.fillStyle = '#1DB954';
-        ctx.font = '9px Arial';
+        ctx.font = `${9 * s}px Arial`;
         ctx.textAlign = 'center';
-        ctx.fillText('Use the panel below to add songs ↓', w / 2, h - 5);
+        ctx.fillText('Use the panel below to add songs ↓', w / 2, h - 5 * s);
         ctx.textAlign = 'left';
         
         screenTexture.needsUpdate = true;
@@ -1747,7 +1776,7 @@
 
     const animate = () => {
 
-        console.log(camera.position);
+       
         
         const now = performance.now();
         const delta = now - prevTime;
