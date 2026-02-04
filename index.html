@@ -577,13 +577,31 @@
     // Font scale factor (larger on mobile)
     const fontScale = isMobile ? 2.4 : 2.0;
     
-    // Pre-generate EQ bar heights to avoid lag (update periodically, not every frame)
+    // Pre-generate EQ bar heights with smooth animation
     let eqBarHeights = Array(15).fill(0).map(() => 10 + Math.random() * 30);
+    let eqTargetHeights = Array(15).fill(0).map(() => 10 + Math.random() * 30);
+    
+    // Update EQ target heights periodically
     setInterval(() => {
         if (spotifyData.isPlaying) {
-            eqBarHeights = eqBarHeights.map(() => 10 + Math.random() * 30);
+            eqTargetHeights = eqTargetHeights.map(() => 10 + Math.random() * 30);
         }
-    }, 100);
+    }, 150);
+    
+    // Smoothly animate bars toward targets and re-render (called from animation loop)
+    let lastEqUpdate = 0;
+    const updateEqBars = (now) => {
+        if (now - lastEqUpdate < 50) return; // Update at ~20fps
+        lastEqUpdate = now;
+        
+        if (spotifyData.isPlaying) {
+            // Lerp toward target heights
+            for (let i = 0; i < eqBarHeights.length; i++) {
+                eqBarHeights[i] += (eqTargetHeights[i] - eqBarHeights[i]) * 0.3;
+            }
+            renderSpotifyScreen();
+        }
+    };
     
     // Initial screen content
     screenCtx.fillStyle = '#1a1a2e';
@@ -1887,6 +1905,9 @@
         clampBody(chairBody);
         
         updateRagdoll();
+        
+        // Update EQ visualizer bars smoothly
+        updateEqBars(now);
 
         const t = now * 0.0002;
         cycleColor.setHSL(t % 1, 0.9, 0.55);
