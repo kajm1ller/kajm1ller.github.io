@@ -839,6 +839,10 @@
     let albumArtImage = null;
     let albumArtUrl = null;
     
+    // Queue scroll offset
+    let queueScrollOffset = 0;
+    const maxVisibleQueue = 6;
+    
     // Fetch Spotify data
     const fetchSpotifyNowPlaying = async () => {
         try {
@@ -961,12 +965,25 @@
         ctx.fillText('UP NEXT', 20 * s, 130 * s);
         
         if (spotifyData.queue.length > 0) {
-            const maxVisible = 6;
-            const queueToShow = spotifyData.queue.slice(0, maxVisible);
+            const totalItems = spotifyData.queue.length;
+            const maxScroll = Math.max(0, totalItems - maxVisibleQueue);
+            queueScrollOffset = Math.min(queueScrollOffset, maxScroll);
+            
+            // Draw scroll up arrow if scrolled down
+            if (queueScrollOffset > 0) {
+                ctx.fillStyle = '#1DB954';
+                ctx.font = `${12 * s}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.fillText('▲', w / 2, 142 * s);
+                ctx.textAlign = 'left';
+            }
+            
+            const queueToShow = spotifyData.queue.slice(queueScrollOffset, queueScrollOffset + maxVisibleQueue);
             queueToShow.forEach((track, index) => {
-                const y = (145 + index * 25) * s;
+                const displayIndex = queueScrollOffset + index;
+                const y = (150 + index * 25) * s;
                 
-                // Position number
+                // Position number - centered properly
                 ctx.fillStyle = 'rgba(29, 185, 84, 0.3)';
                 ctx.beginPath();
                 ctx.arc(25 * s, y + 5 * s, 8 * s, 0, Math.PI * 2);
@@ -974,16 +991,16 @@
                 ctx.fillStyle = '#fff';
                 ctx.font = `bold ${9 * s}px Arial`;
                 ctx.textAlign = 'center';
-                ctx.fillText(String(index + 1), 25 * s, y + 8 * s);
+                ctx.fillText(String(displayIndex + 1), 25 * s, y + 9 * s);
                 ctx.textAlign = 'left';
                 
                 // Track info
                 ctx.fillStyle = '#fff';
                 ctx.font = `${11 * s}px Arial`;
-                ctx.fillText(truncateText(track.name, 35), 40 * s, y + 5 * s);
+                ctx.fillText(truncateText(track.name, 30), 42 * s, y + 5 * s);
                 ctx.fillStyle = '#888';
                 ctx.font = `${9 * s}px Arial`;
-                ctx.fillText(truncateText(track.artists?.map(a => a.name).join(', ') || '', 40), 40 * s, y + 17 * s);
+                ctx.fillText(truncateText(track.artists?.map(a => a.name).join(', ') || '', 35), 42 * s, y + 17 * s);
                 
                 // Added by
                 if (track.added_by) {
@@ -995,11 +1012,12 @@
                 }
             });
             
-            if (spotifyData.queue.length > maxVisible) {
-                ctx.fillStyle = '#666';
-                ctx.font = `${10 * s}px Arial`;
+            // Draw scroll down arrow if more items below
+            if (queueScrollOffset + maxVisibleQueue < totalItems) {
+                ctx.fillStyle = '#1DB954';
+                ctx.font = `${12 * s}px Arial`;
                 ctx.textAlign = 'center';
-                ctx.fillText(`+ ${spotifyData.queue.length - maxVisible} more songs...`, w / 2, h - 15 * s);
+                ctx.fillText(`▼ ${totalItems - queueScrollOffset - maxVisibleQueue} more`, w / 2, h - 18 * s);
                 ctx.textAlign = 'left';
             }
         } else {
@@ -1022,6 +1040,51 @@
         if (!text) return '';
         return text.length > maxLen ? text.substring(0, maxLen - 3) + '...' : text;
     };
+    
+    // Queue scroll controls
+    const scrollQueue = (direction) => {
+        const maxScroll = Math.max(0, spotifyData.queue.length - maxVisibleQueue);
+        queueScrollOffset = Math.max(0, Math.min(maxScroll, queueScrollOffset + direction));
+        renderSpotifyScreen();
+    };
+    
+    // Arrow key scrolling when in music room
+    document.addEventListener('keydown', (e) => {
+        if (currentRoom === 'music') {
+            if (e.key === 'ArrowUp') {
+                scrollQueue(-1);
+                e.preventDefault();
+            } else if (e.key === 'ArrowDown') {
+                scrollQueue(1);
+                e.preventDefault();
+            }
+        }
+    });
+    
+    // Mouse wheel scrolling when in music room
+    document.addEventListener('wheel', (e) => {
+        if (currentRoom === 'music') {
+            scrollQueue(e.deltaY > 0 ? 1 : -1);
+        }
+    }, { passive: true });
+    
+    // Touch swipe scrolling for mobile
+    let touchStartY = 0;
+    document.addEventListener('touchstart', (e) => {
+        if (currentRoom === 'music') {
+            touchStartY = e.touches[0].clientY;
+        }
+    }, { passive: true });
+    
+    document.addEventListener('touchmove', (e) => {
+        if (currentRoom === 'music') {
+            const deltaY = touchStartY - e.touches[0].clientY;
+            if (Math.abs(deltaY) > 30) {
+                scrollQueue(deltaY > 0 ? 1 : -1);
+                touchStartY = e.touches[0].clientY;
+            }
+        }
+    }, { passive: true });
     
     // Update Spotify data periodically
     const updateSpotifyData = async () => {
