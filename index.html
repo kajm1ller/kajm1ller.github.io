@@ -841,7 +841,7 @@
     
     // Queue scroll offset
     let queueScrollOffset = 0;
-    const maxVisibleQueue = 6;
+    const maxVisibleQueue = 4;
     
     // Fetch Spotify data
     const fetchSpotifyNowPlaying = async () => {
@@ -1030,7 +1030,7 @@
         ctx.fillStyle = '#1DB954';
         ctx.font = `${9 * s}px Arial`;
         ctx.textAlign = 'center';
-        ctx.fillText('Use the panel below to add songs ↓', w / 2, h - 5 * s);
+        
         ctx.textAlign = 'left';
         
         screenTexture.needsUpdate = true;
