@@ -258,10 +258,36 @@ function broadcastPlayerList(wss) {
     x: p.x,
     y: p.y,
     z: p.z,
-    yaw: p.yaw
+    yaw: p.yaw,
+    ragdoll: p.ragdoll || false
   }));
   
   const message = JSON.stringify({ type: 'players', players: playerList });
+  wss.clients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(message);
+    }
+  });
+}
+
+// Map to track WebSocket connections to player IDs
+const wsToPlayerId = new Map();
+const playerIdToWs = new Map();
+
+// Send hit notification to a specific player
+function sendHitNotification(targetId, shooterName, weapon) {
+  const targetWs = playerIdToWs.get(targetId);
+  if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+    targetWs.send(JSON.stringify({
+      type: 'hit',
+      shooterName: shooterName,
+      weapon: weapon
+    }));
+  }
+}
+
+function broadcastVatsEvent(wss, event) {
+  const message = JSON.stringify(event);
   wss.clients.forEach(client => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(message);
@@ -284,6 +310,8 @@ if (isProduction) {
   wss.on('connection', (ws) => {
     const playerId = Math.random().toString(36).substr(2, 9);
     console.log(`Player connected: ${playerId}`);
+    wsToPlayerId.set(ws, playerId);
+    playerIdToWs.set(playerId, ws);
     
     ws.on('message', (data) => {
       try {
@@ -296,7 +324,8 @@ if (isProduction) {
             x: msg.x || 0,
             y: msg.y || 1.7,
             z: msg.z || 0,
-            yaw: msg.yaw || 0
+            yaw: msg.yaw || 0,
+            ragdoll: false
           });
           ws.send(JSON.stringify({ type: 'welcome', id: playerId }));
           broadcastPlayerList(wss);
@@ -312,6 +341,41 @@ if (isProduction) {
             broadcastPlayerList(wss);
           }
         }
+        
+        if (msg.type === 'shoot') {
+          const shooter = players.get(playerId);
+          if (shooter && msg.targetId) {
+            sendHitNotification(msg.targetId, shooter.name, msg.weapon);
+          }
+        }
+        
+        if (msg.type === 'ragdoll') {
+          const player = players.get(playerId);
+          if (player) {
+            player.ragdoll = msg.ragdoll;
+            broadcastPlayerList(wss);
+          }
+        }
+
+        if (msg.type === 'vats') {
+          const shooter = players.get(playerId);
+          if (shooter && msg.targetId) {
+            const event = {
+              type: 'vats',
+              shooterId: playerId,
+              shooterName: shooter.name,
+              targetId: msg.targetId,
+              part: msg.part,
+              shots: msg.shots,
+              weapon: msg.weapon,
+              success: msg.success
+            };
+            if (msg.success) {
+              sendHitNotification(msg.targetId, shooter.name, msg.weapon);
+            }
+            broadcastVatsEvent(wss, event);
+          }
+        }
       } catch (e) {
         console.error('WebSocket message error:', e);
       }
@@ -320,6 +384,8 @@ if (isProduction) {
     ws.on('close', () => {
       console.log(`Player disconnected: ${playerId}`);
       players.delete(playerId);
+      wsToPlayerId.delete(ws);
+      playerIdToWs.delete(playerId);
       broadcastPlayerList(wss);
     });
   });
@@ -338,6 +404,8 @@ if (isProduction) {
   wss.on('connection', (ws) => {
     const playerId = Math.random().toString(36).substr(2, 9);
     console.log(`Player connected: ${playerId}`);
+    wsToPlayerId.set(ws, playerId);
+    playerIdToWs.set(playerId, ws);
     
     ws.on('message', (data) => {
       try {
@@ -350,7 +418,8 @@ if (isProduction) {
             x: msg.x || 0,
             y: msg.y || 1.7,
             z: msg.z || 0,
-            yaw: msg.yaw || 0
+            yaw: msg.yaw || 0,
+            ragdoll: false
           });
           ws.send(JSON.stringify({ type: 'welcome', id: playerId }));
           broadcastPlayerList(wss);
@@ -366,6 +435,41 @@ if (isProduction) {
             broadcastPlayerList(wss);
           }
         }
+        
+        if (msg.type === 'shoot') {
+          const shooter = players.get(playerId);
+          if (shooter && msg.targetId) {
+            sendHitNotification(msg.targetId, shooter.name, msg.weapon);
+          }
+        }
+        
+        if (msg.type === 'ragdoll') {
+          const player = players.get(playerId);
+          if (player) {
+            player.ragdoll = msg.ragdoll;
+            broadcastPlayerList(wss);
+          }
+        }
+
+        if (msg.type === 'vats') {
+          const shooter = players.get(playerId);
+          if (shooter && msg.targetId) {
+            const event = {
+              type: 'vats',
+              shooterId: playerId,
+              shooterName: shooter.name,
+              targetId: msg.targetId,
+              part: msg.part,
+              shots: msg.shots,
+              weapon: msg.weapon,
+              success: msg.success
+            };
+            if (msg.success) {
+              sendHitNotification(msg.targetId, shooter.name, msg.weapon);
+            }
+            broadcastVatsEvent(wss, event);
+          }
+        }
       } catch (e) {
         console.error('WebSocket message error:', e);
       }
@@ -374,6 +478,8 @@ if (isProduction) {
     ws.on('close', () => {
       console.log(`Player disconnected: ${playerId}`);
       players.delete(playerId);
+      wsToPlayerId.delete(ws);
+      playerIdToWs.delete(playerId);
       broadcastPlayerList(wss);
     });
   });
