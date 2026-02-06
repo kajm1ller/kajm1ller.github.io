@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Kaj Simulator</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+            z-index: 100;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: rgb(255, 255, 255);
+            background: rgba(0,0,0,0.8);
+            padding: 20px 40px;
+            border-radius: 10px;
+            font-family: Arial, sans-serif;
+            font-size: 24px;
+            z-index: 200;
+        }
+    </style>
+</head>
+<body>
+    
+    <div id="coords" style="position:absolute;top:10px;right:10px;color:white;background:rgba(0,0,0,0.7);padding:10px;border-radius:5px;font-family:monospace;font-size:14px;z-index:100;">
+        X: 0.00<br>Y: 0.00<br>Z: 0.00
+    </div>
+    <div id="click-to-play" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:white;background:rgba(0,0,0,0.8);padding:30px 50px;border-radius:10px;font-family:Arial,sans-serif;font-size:20px;cursor:pointer;z-index:150;text-align:center;display:none;">
+        Click to Play<br><small style="font-size:14px;color:#aaa;">Click anywhere to enable mouse look</small>
+    </div>
+    <div id="name-input" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:white;background:rgba(0,0,0,0.9);padding:30px 50px;border-radius:10px;font-family:Arial,sans-serif;font-size:20px;z-index:200;text-align:center;">
+        <div style="margin-bottom:15px;">NAME</div>
+        <input type="text" id="player-name" maxlength="20" style="padding:10px;font-size:18px;border:none;border-radius:5px;width:200px;text-align:center;" placeholder="Your Name">
+        <br><br>
+        <button id="join-btn" style="padding:12px 30px;font-size:18px;cursor:pointer;border:none;border-radius:5px;background:#000000;color:white;">Join Game</button>
+    </div>
+    <div id="loading">Loading map...</div>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    
+    <script type="module">
+        import * as THREE from 'three';
+        import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+        import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
+        import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87ceeb); // Sky blue background
+        
+        // Camera setup - human eye level height (~1.7 meters)
+        const playerHeight = 1.7;
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000);
+        camera.position.set(-586.45, 1, -66.97);
+        
+        // Renderer setup
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.body.appendChild(renderer.domElement);
+        
+        // CSS2D Renderer for nametags
+        const labelRenderer = new CSS2DRenderer();
+        labelRenderer.setSize(window.innerWidth, window.innerHeight);
+        labelRenderer.domElement.style.position = 'absolute';
+        labelRenderer.domElement.style.top = '0';
+        labelRenderer.domElement.style.pointerEvents = 'none';
+        document.body.appendChild(labelRenderer.domElement);
+        
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(100, 200, 100);
+        directionalLight.castShadow = true;
+        scene.add(directionalLight);
+        
+        // Add a ground plane as fallback
+        const groundGeometry = new THREE.PlaneGeometry(10000, 10000);
+        const groundMaterial = new THREE.MeshLambertMaterial({ color: 0x3a5f0b });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = -1;
+        scene.add(ground);
+        
+        // Movement controls - slower walking speed
+        const moveSpeed = 0.08;
+        const rotateSpeed = 0.02;
+        const keys = {
+            w: false,
+            a: false,
+            s: false,
+            d: false,
+            space: false
+        };
+        
+        // Jump physics
+        let velocityY = 0;
+        const gravity = 0.008;
+        const jumpStrength = 0.2;
+        const groundLevel = 1; // Y position of the ground
+        
+        // Coordinates display
+        const coordsDiv = document.getElementById('coords');
+        
+        // Multiplayer setup
+        let myPlayerId = null;
+        let myPlayerName = 'Player';
+        let socket = null;
+        const otherPlayers = new Map(); // Map of playerId -> { mesh, label }
+        
+        // Create player model (rectangle/box)
+        function createPlayerModel(color = 0x00ff00) {
+            const group = new THREE.Group();
+            
+            // Body (rectangle)
+            const bodyGeometry = new THREE.BoxGeometry(0.5, 1.5, 0.3);
+            const bodyMaterial = new THREE.MeshLambertMaterial({ color: color });
+            const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+            body.position.y = 0.75;
+            group.add(body);
+            
+            // Head
+            const headGeometry = new THREE.BoxGeometry(0.35, 0.35, 0.35);
+            const headMaterial = new THREE.MeshLambertMaterial({ color: 0xffcc99 });
+            const head = new THREE.Mesh(headGeometry, headMaterial);
+            head.position.y = 1.7;
+            group.add(head);
+            
+            return group;
+        }
+        
+        // Create nametag
+        function createNametag(name) {
+            const div = document.createElement('div');
+            div.className = 'nametag';
+            div.textContent = name;
+            div.style.cssText = 'color:white;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;background:rgba(0,0,0,0.6);padding:2px 8px;border-radius:4px;white-space:nowrap;';
+            const label = new CSS2DObject(div);
+            label.position.set(0, 2.2, 0);
+            return label;
+        }
+        
+        // Add or update other player
+        function updateOtherPlayer(playerData) {
+            if (playerData.id === myPlayerId) return; // Skip self
+            
+            let playerObj = otherPlayers.get(playerData.id);
+            
+            if (!playerObj) {
+                // Create new player
+                const mesh = createPlayerModel(0x3498db); // Blue for other players
+                const label = createNametag(playerData.name);
+                mesh.add(label);
+                scene.add(mesh);
+                playerObj = { mesh, label };
+                otherPlayers.set(playerData.id, playerObj);
+            }
+            
+            // Update position and rotation
+            playerObj.mesh.position.set(playerData.x, 0, playerData.z);
+            playerObj.mesh.rotation.y = playerData.yaw;
+        }
+        
+        // Remove player
+        function removePlayer(playerId) {
+            const playerObj = otherPlayers.get(playerId);
+            if (playerObj) {
+                scene.remove(playerObj.mesh);
+                otherPlayers.delete(playerId);
+            }
+        }
+        
+        // Connect to WebSocket server
+        function connectMultiplayer(playerName) {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            socket = new WebSocket(`${protocol}//${window.location.host}`);
+            
+            socket.onopen = () => {
+                console.log('Connected to multiplayer server');
+                socket.send(JSON.stringify({
+                    type: 'join',
+                    name: playerName,
+                    x: camera.position.x,
+                    y: camera.position.y,
+                    z: camera.position.z,
+                    yaw: cameraYaw
+                }));
+            };
+            
+            socket.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                
+                if (msg.type === 'welcome') {
+                    myPlayerId = msg.id;
+                    console.log('My player ID:', myPlayerId);
+                }
+                
+                if (msg.type === 'players') {
+                    // Get list of current player IDs
+                    const currentIds = new Set(msg.players.map(p => p.id));
+                    
+                    // Remove players who left
+                    for (const [id] of otherPlayers) {
+                        if (!currentIds.has(id)) {
+                            removePlayer(id);
+                        }
+                    }
+                    
+                    // Update/add players
+                    for (const player of msg.players) {
+                        updateOtherPlayer(player);
+                    }
+                }
+            };
+            
+            socket.onclose = () => {
+                console.log('Disconnected from server');
+            };
+        }
+        
+        // Send position updates
+        let lastUpdateTime = 0;
+        function sendPositionUpdate() {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                const now = Date.now();
+                if (now - lastUpdateTime > 50) { // Send max 20 updates per second
+                    socket.send(JSON.stringify({
+                        type: 'update',
+                        x: camera.position.x,
+                        y: camera.position.y,
+                        z: camera.position.z,
+                        yaw: cameraYaw
+                    }));
+                    lastUpdateTime = now;
+                }
+            }
+        }
+        
+        // Camera direction
+        let cameraYaw = 0;
+        let cameraPitch = 0;
+        const mouseSensitivity = 0.002;
+        const maxPitch = Math.PI / 2 - 0.1; // Prevent looking straight up/down
+        
+        // Pointer lock for mouse look
+        const clickToPlay = document.getElementById('click-to-play');
+        const nameInput = document.getElementById('name-input');
+        const playerNameInput = document.getElementById('player-name');
+        const joinBtn = document.getElementById('join-btn');
+        
+        // Join game handler
+        joinBtn.addEventListener('click', () => {
+            myPlayerName = playerNameInput.value.trim() || 'Player';
+            nameInput.style.display = 'none';
+            clickToPlay.style.display = 'block';
+            connectMultiplayer(myPlayerName);
+        });
+        
+        playerNameInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                joinBtn.click();
+            }
+        });
+        
+        clickToPlay.addEventListener('click', () => {
+            renderer.domElement.requestPointerLock();
+        });
+        
+        renderer.domElement.addEventListener('click', () => {
+            if (document.pointerLockElement !== renderer.domElement) {
+                renderer.domElement.requestPointerLock();
+            }
+        });
+        
+        document.addEventListener('pointerlockchange', () => {
+            if (document.pointerLockElement === renderer.domElement) {
+                clickToPlay.style.display = 'none';
+            } else {
+                clickToPlay.style.display = 'block';
+            }
+        });
+        
+        // Mouse movement for looking around
+        document.addEventListener('mousemove', (event) => {
+            if (document.pointerLockElement === renderer.domElement) {
+                cameraYaw -= event.movementX * mouseSensitivity;
+                cameraPitch -= event.movementY * mouseSensitivity;
+                
+                // Clamp pitch to prevent flipping
+                cameraPitch = Math.max(-maxPitch, Math.min(maxPitch, cameraPitch));
+            }
+        });
+        
+        // Key event listeners
+        document.addEventListener('keydown', (event) => {
+            switch(event.key.toLowerCase()) {
+                case 'w': keys.w = true; break;
+                case 'a': keys.a = true; break;
+                case 's': keys.s = true; break;
+                case 'd': keys.d = true; break;
+                case ' ': keys.space = true; event.preventDefault(); break;
+            }
+        });
+        
+        document.addEventListener('keyup', (event) => {
+            switch(event.key.toLowerCase()) {
+                case 'w': keys.w = false; break;
+                case 'a': keys.a = false; break;
+                case 's': keys.s = false; break;
+                case 'd': keys.d = false; break;
+                case ' ': keys.space = false; break;
+            }
+        });
+        
+        // Load map parts
+        const loadingDiv = document.getElementById('loading');
+        const mapParts = [
+            'part0000.obj', 'part0001.obj', 'part0002.obj', 'part0003.obj',
+            'part0004.obj', 'part0005.obj', 'part0006.obj', 'part0007.obj',
+            'part0008.obj', 'part0009.obj', 'part0010.obj', 'part0011.obj',
+            'part0012.obj', 'part0013.obj'
+        ];
+        
+        let loadedCount = 0;
+        const totalParts = mapParts.length;
+        
+        // Load MTL first, then OBJ files
+        const mtlLoader = new MTLLoader();
+        mtlLoader.setPath('/map/');
+        
+        const objLoader = new OBJLoader();
+        objLoader.setPath('/map/');
+        
+        // Load materials first, then load OBJ files with materials applied
+        mtlLoader.load('materials.mtl', 
+            (materials) => {
+                materials.preload();
+                console.log('Materials loaded:', materials);
+                
+                // Set materials on OBJ loader
+                objLoader.setMaterials(materials);
+                
+                // Load each OBJ part with materials
+                function loadMapPart(partName) {
+                    return new Promise((resolve, reject) => {
+                        objLoader.load(
+                            partName,
+                            (object) => {
+                                scene.add(object);
+                                loadedCount++;
+                                loadingDiv.textContent = `Loading map... ${Math.round((loadedCount / totalParts) * 100)}%`;
+                                resolve(object);
+                            },
+                            (progress) => {
+                                // Progress callback
+                            },
+                            (error) => {
+                                console.warn(`Failed to load ${partName}:`, error);
+                                loadedCount++;
+                                resolve(null); // Continue even if one part fails
+                            }
+                        );
+                    });
+                }
+                
+                // Load all map parts sequentially to avoid overwhelming the browser
+                Promise.all(mapParts.map(part => loadMapPart(part)))
+                    .then(() => {
+                        loadingDiv.style.display = 'none';
+                        console.log('Map loaded successfully with textures');
+                    })
+                    .catch((error) => {
+                        console.error('Error loading map:', error);
+                        loadingDiv.textContent = 'Error loading map';
+                    });
+            },
+            (progress) => {
+                loadingDiv.textContent = 'Loading materials...';
+            },
+            (error) => {
+                console.error('Error loading materials:', error);
+                loadingDiv.textContent = 'Loading map without textures...';
+                
+                // Fallback: load without materials
+                const defaultMaterial = new THREE.MeshLambertMaterial({ 
+                    color: 0x888888,
+                    side: THREE.DoubleSide
+                });
+                
+                function loadMapPartNoMaterials(partName) {
+                    return new Promise((resolve) => {
+                        objLoader.load(
+                            partName,
+                            (object) => {
+                                object.traverse((child) => {
+                                    if (child instanceof THREE.Mesh) {
+                                        child.material = defaultMaterial;
+                                    }
+                                });
+                                scene.add(object);
+                                loadedCount++;
+                                loadingDiv.textContent = `Loading map... ${Math.round((loadedCount / totalParts) * 100)}%`;
+                                resolve(object);
+                            },
+                            null,
+                            () => {
+                                loadedCount++;
+                                resolve(null);
+                            }
+                        );
+                    });
+                }
+                
+                Promise.all(mapParts.map(part => loadMapPartNoMaterials(part)))
+                    .then(() => {
+                        loadingDiv.style.display = 'none';
+                    });
+            }
+        );
+        
+        // Update camera movement - with flying
+        function updateCamera() {
+            // Calculate forward direction based on yaw (horizontal only)
+            const forward = new THREE.Vector3(
+                -Math.sin(cameraYaw),
+                0,
+                -Math.cos(cameraYaw)
+            );
+            
+            // Calculate right direction for strafing
+            const right = new THREE.Vector3(
+                Math.cos(cameraYaw),
+                0,
+                -Math.sin(cameraYaw)
+            );
+            
+            // Forward/Backward movement (W/S keys)
+            if (keys.w) {
+                camera.position.add(forward.clone().multiplyScalar(moveSpeed));
+            }
+            if (keys.s) {
+                camera.position.add(forward.clone().multiplyScalar(-moveSpeed));
+            }
+            
+            // Strafe movement (A/D keys)
+            if (keys.a) {
+                camera.position.add(right.clone().multiplyScalar(-moveSpeed));
+            }
+            if (keys.d) {
+                camera.position.add(right.clone().multiplyScalar(moveSpeed));
+            }
+            
+            // Jump (Space key)
+            const isOnGround = camera.position.y <= groundLevel;
+            if (keys.space && isOnGround) {
+                velocityY = jumpStrength;
+            }
+            
+            // Apply gravity
+            velocityY -= gravity;
+            camera.position.y += velocityY;
+            
+            // Prevent falling through ground
+            if (camera.position.y < groundLevel) {
+                camera.position.y = groundLevel;
+                velocityY = 0;
+            }
+            
+            // Update camera rotation (yaw and pitch from mouse)
+            camera.rotation.order = 'YXZ'; // Prevent gimbal lock
+            camera.rotation.y = cameraYaw;
+            camera.rotation.x = cameraPitch;
+            
+            // Update coordinates display
+            coordsDiv.innerHTML = `X: ${camera.position.x.toFixed(2)}<br>Y: ${camera.position.y.toFixed(2)}<br>Z: ${camera.position.z.toFixed(2)}`;
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            labelRenderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            updateCamera();
+            sendPositionUpdate();
+            renderer.render(scene, camera);
+            labelRenderer.render(scene, camera);
+        }
+        
+        animate();
+    </script>
+</body>
+</html>

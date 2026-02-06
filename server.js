@@ -247,6 +247,28 @@ app.get('/api/spotify/status', (req, res) => {
   });
 });
 
+// ============ MULTIPLAYER GAME SERVER ============
+const WebSocket = require('ws');
+const players = new Map();
+
+function broadcastPlayerList(wss) {
+  const playerList = Array.from(players.values()).map(p => ({
+    id: p.id,
+    name: p.name,
+    x: p.x,
+    y: p.y,
+    z: p.z,
+    yaw: p.yaw
+  }));
+  
+  const message = JSON.stringify({ type: 'players', players: playerList });
+  wss.clients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(message);
+    }
+  });
+}
+
 // Check if running on production (has SSL certs) or locally
 const isProduction = fs.existsSync('/etc/letsencrypt/live/kaj.services/privkey.pem');
 
@@ -256,16 +278,109 @@ if (isProduction) {
     cert: fs.readFileSync('/etc/letsencrypt/live/kaj.services/fullchain.pem')
   };
 
-  https.createServer(options, app).listen(443, '0.0.0.0', () => {
-    console.log('HTTPS Server running on port 443');
+  const server = https.createServer(options, app);
+  const wss = new WebSocket.Server({ server });
+  
+  wss.on('connection', (ws) => {
+    const playerId = Math.random().toString(36).substr(2, 9);
+    console.log(`Player connected: ${playerId}`);
+    
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data);
+        
+        if (msg.type === 'join') {
+          players.set(playerId, {
+            id: playerId,
+            name: msg.name || 'Player',
+            x: msg.x || 0,
+            y: msg.y || 1.7,
+            z: msg.z || 0,
+            yaw: msg.yaw || 0
+          });
+          ws.send(JSON.stringify({ type: 'welcome', id: playerId }));
+          broadcastPlayerList(wss);
+        }
+        
+        if (msg.type === 'update') {
+          const player = players.get(playerId);
+          if (player) {
+            player.x = msg.x;
+            player.y = msg.y;
+            player.z = msg.z;
+            player.yaw = msg.yaw;
+            broadcastPlayerList(wss);
+          }
+        }
+      } catch (e) {
+        console.error('WebSocket message error:', e);
+      }
+    });
+    
+    ws.on('close', () => {
+      console.log(`Player disconnected: ${playerId}`);
+      players.delete(playerId);
+      broadcastPlayerList(wss);
+    });
+  });
+  
+  server.listen(443, '0.0.0.0', () => {
+    console.log('HTTPS Server running on port 443 with WebSocket support');
   });
 } else {
   // Local development - use HTTP
   const http = require('http');
   const PORT = 3000;
   
-  http.createServer(app).listen(PORT, () => {
+  const server = http.createServer(app);
+  const wss = new WebSocket.Server({ server });
+  
+  wss.on('connection', (ws) => {
+    const playerId = Math.random().toString(36).substr(2, 9);
+    console.log(`Player connected: ${playerId}`);
+    
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data);
+        
+        if (msg.type === 'join') {
+          players.set(playerId, {
+            id: playerId,
+            name: msg.name || 'Player',
+            x: msg.x || 0,
+            y: msg.y || 1.7,
+            z: msg.z || 0,
+            yaw: msg.yaw || 0
+          });
+          ws.send(JSON.stringify({ type: 'welcome', id: playerId }));
+          broadcastPlayerList(wss);
+        }
+        
+        if (msg.type === 'update') {
+          const player = players.get(playerId);
+          if (player) {
+            player.x = msg.x;
+            player.y = msg.y;
+            player.z = msg.z;
+            player.yaw = msg.yaw;
+            broadcastPlayerList(wss);
+          }
+        }
+      } catch (e) {
+        console.error('WebSocket message error:', e);
+      }
+    });
+    
+    ws.on('close', () => {
+      console.log(`Player disconnected: ${playerId}`);
+      players.delete(playerId);
+      broadcastPlayerList(wss);
+    });
+  });
+  
+  server.listen(PORT, () => {
     console.log(`Development server running on http://localhost:${PORT}`);
+    console.log(`WebSocket server running on ws://localhost:${PORT}`);
     console.log(`Visit http://localhost:${PORT}/api/spotify/login to authenticate`);
   });
 }
