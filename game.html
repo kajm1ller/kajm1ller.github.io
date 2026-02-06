@@ -7,6 +7,7 @@
         body { 
             margin: 0; 
             overflow: hidden;
+            cursor: crosshair;
         }
         #info {
             position: absolute;
@@ -32,33 +33,6 @@
             font-size: 24px;
             z-index: 200;
         }
-        #crosshair {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 20px;
-            height: 20px;
-            pointer-events: none;
-            z-index: 99;
-        }
-        #crosshair::before, #crosshair::after {
-            content: '';
-            position: absolute;
-            background: white;
-        }
-        #crosshair::before {
-            width: 2px;
-            height: 20px;
-            left: 9px;
-            top: 0;
-        }
-        #crosshair::after {
-            width: 20px;
-            height: 2px;
-            left: 0;
-            top: 9px;
-        }
         #ragdoll-overlay {
             position: absolute;
             top: 0;
@@ -80,6 +54,9 @@
             font-size: 32px;
             text-shadow: 2px 2px 4px black;
         }
+        canvas {
+            cursor: crosshair;
+        }
     </style>
 </head>
 <body>
@@ -94,8 +71,35 @@
         <button id="join-btn" style="padding:12px 30px;font-size:18px;cursor:pointer;border:none;border-radius:5px;background:#000000;color:white;">Join Game</button>
     </div>
     <div id="loading">Loading map...</div>
-    <div id="crosshair"></div>
     <div id="ragdoll-overlay"><div id="ragdoll-text"></div></div>
+    <div id="transition-overlay" style="position:absolute;top:0;left:0;width:100%;height:100%;background:black;opacity:0;pointer-events:none;z-index:150;transition:opacity 0.5s ease-in-out;"></div>
+    <div id="pole-dialog" style="display:none;position:absolute;bottom:50px;left:50%;transform:translateX(-50%);width:600px;background:rgba(0,0,0,0.85);border:2px solid #444;border-radius:10px;padding:20px;font-family:Arial,sans-serif;z-index:160;">
+        <div style="color:#fff;font-size:16px;line-height:1.5;margin-bottom:20px;">A young boy stands before a broken telephone pole. He asks you "Should we call emergency services?"</div>
+        <div id="dialog-options">
+            <div class="dialog-option" data-option="1" style="color:#7cff7c;padding:10px;margin:5px 0;cursor:pointer;border:1px solid #444;border-radius:5px;transition:background 0.2s;">1. Call emergency services</div>
+            <div class="dialog-option" data-option="2" style="color:#7cff7c;padding:10px;margin:5px 0;cursor:pointer;border:1px solid #444;border-radius:5px;transition:background 0.2s;">2. "I'll give you a dollar if you grab the wire with both hands"</div>
+            <div class="dialog-option" data-option="3" style="color:#7cff7c;padding:10px;margin:5px 0;cursor:pointer;border:1px solid #444;border-radius:5px;transition:background 0.2s;">3. Touch the wire yourself</div>
+        </div>
+    </div>
+    <div id="no-answer-dialog" style="display:none;position:absolute;bottom:50px;left:50%;transform:translateX(-50%);width:600px;background:rgba(0,0,0,0.85);border:2px solid #444;border-radius:10px;padding:20px;font-family:Arial,sans-serif;z-index:160;">
+        <div style="color:#fff;font-size:16px;line-height:1.5;margin-bottom:20px;">No one picked up.</div>
+        <div id="no-answer-continue" style="color:#7cff7c;padding:10px;margin:5px 0;cursor:pointer;border:1px solid #444;border-radius:5px;transition:background 0.2s;text-align:center;">Continue</div>
+    </div>
+    <div id="remoro-dialog" style="display:none;position:absolute;bottom:50px;left:50%;transform:translateX(-50%);width:600px;background:rgba(0,0,0,0.85);border:2px solid #444;border-radius:10px;padding:20px;font-family:Arial,sans-serif;z-index:160;">
+        <div style="color:#ff8c00;font-size:14px;margin-bottom:5px;">Remoro</div>
+        <div style="color:#fff;font-size:16px;line-height:1.5;margin-bottom:20px;">"Lmfao get fucked"</div>
+        <div id="remoro-continue" style="color:#7cff7c;padding:10px;margin:5px 0;cursor:pointer;border:1px solid #444;border-radius:5px;transition:background 0.2s;text-align:center;">Continue</div>
+    </div>
+    <div id="remoro-talk-dialog" style="display:none;position:absolute;bottom:50px;left:50%;transform:translateX(-50%);width:600px;background:rgba(0,0,0,0.85);border:2px solid #444;border-radius:10px;padding:20px;font-family:Arial,sans-serif;z-index:160;">
+        <div style="color:#ff8c00;font-size:14px;margin-bottom:5px;">Remoro</div>
+        <div id="remoro-talk-text" style="color:#fff;font-size:16px;line-height:1.5;margin-bottom:20px;"></div>
+        <div id="remoro-talk-continue" style="color:#7cff7c;padding:10px;margin:5px 0;cursor:pointer;border:1px solid #444;border-radius:5px;transition:background 0.2s;text-align:center;">Continue</div>
+    </div>
+    <style>
+        .dialog-option:hover {
+            background: rgba(124, 255, 124, 0.2);
+        }
+    </style>
     
     <script type="importmap">
         {
@@ -117,10 +121,27 @@
         scene.background = new THREE.Color(0x87ceeb); // Sky blue background
         scene.fog = new THREE.Fog(0x87ceeb, 100, 450); // Add fog to hide draw distance
         
-        // Camera setup - human eye level height (~1.7 meters)
-        const playerHeight = 1.7;
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 500);
-        camera.position.set(-586.45, 1, -66.97);
+        // Isometric camera setup
+        let cameraZoom = 50; // Controls both height and distance
+        const minZoom = 15;
+        const maxZoom = 150;
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 500);
+        
+        // Player starting position
+        const playerStartPos = new THREE.Vector3(-586.45, 0, -66.97);
+        
+        // Create local player model
+        let localPlayerMesh = null;
+        const playerMoveSpeed = 0.15;
+        let targetPosition = null;
+        const myPosition = new THREE.Vector3();
+        
+        // Raycaster for click-to-move
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        
+        // Click indicator
+        let clickIndicator = null;
         
         // Renderer setup - optimized for performance
         const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
@@ -151,26 +172,12 @@
         const ground = new THREE.Mesh(groundGeometry, groundMaterial);
         ground.rotation.x = -Math.PI / 2;
         ground.position.y = -1;
+        ground.name = 'ground';
         scene.add(ground);
         
-        // Movement controls - slower walking speed
-        const moveSpeed = 0.08;
-        const rotateSpeed = 0.02;
-        const keys = {
-            w: false,
-            a: false,
-            s: false,
-            d: false,
-            space: false
-        };
-        
-        // Jump physics
-        let velocityY = 0;
-        const gravity = 0.008;
-        const jumpStrength = 0.2;
-        const groundLevel = 1; // Y position of the ground
+        // Movement controls - click to move
+        const moveSpeed = 0.15;
         let timeScale = 1;
-        const myPosition = new THREE.Vector3();
         
         // Weapons system
         const weapons = [
@@ -191,147 +198,446 @@
         // Projectiles for visual effects
         const projectiles = [];
         
-        // First-person weapon models
-        let weaponGroup = new THREE.Group();
-        let currentWeaponMesh = null;
+        // No first-person weapon models in isometric view
         
-        // Create weapon models
-        function createWeaponModels() {
-            const weaponMeshes = [];
-            
-            // Pistol - small handgun
-            const pistolGroup = new THREE.Group();
-            const pistolBody = new THREE.Mesh(
-                new THREE.BoxGeometry(0.05, 0.12, 0.2),
-                new THREE.MeshLambertMaterial({ color: 0x333333 })
-            );
-            const pistolGrip = new THREE.Mesh(
-                new THREE.BoxGeometry(0.04, 0.1, 0.06),
-                new THREE.MeshLambertMaterial({ color: 0x222222 })
-            );
-            pistolGrip.position.set(0, -0.08, 0.05);
-            pistolGrip.rotation.x = -0.3;
-            pistolGroup.add(pistolBody);
-            pistolGroup.add(pistolGrip);
-            weaponMeshes.push(pistolGroup);
-            
-            // Rifle - long gun
-            const rifleGroup = new THREE.Group();
-            const rifleBody = new THREE.Mesh(
-                new THREE.BoxGeometry(0.06, 0.08, 0.6),
-                new THREE.MeshLambertMaterial({ color: 0x444444 })
-            );
-            const rifleStock = new THREE.Mesh(
-                new THREE.BoxGeometry(0.05, 0.1, 0.15),
-                new THREE.MeshLambertMaterial({ color: 0x654321 })
-            );
-            rifleStock.position.set(0, -0.02, 0.35);
-            const rifleGrip = new THREE.Mesh(
-                new THREE.BoxGeometry(0.04, 0.1, 0.05),
-                new THREE.MeshLambertMaterial({ color: 0x222222 })
-            );
-            rifleGrip.position.set(0, -0.08, 0.1);
-            rifleGrip.rotation.x = -0.3;
-            const rifleMag = new THREE.Mesh(
-                new THREE.BoxGeometry(0.03, 0.12, 0.04),
-                new THREE.MeshLambertMaterial({ color: 0x333333 })
-            );
-            rifleMag.position.set(0, -0.1, 0);
-            rifleGroup.add(rifleBody);
-            rifleGroup.add(rifleStock);
-            rifleGroup.add(rifleGrip);
-            rifleGroup.add(rifleMag);
-            weaponMeshes.push(rifleGroup);
-            
-            // RPG - rocket launcher
-            const rpgGroup = new THREE.Group();
-            const rpgTube = new THREE.Mesh(
-                new THREE.CylinderGeometry(0.06, 0.06, 0.8, 8),
-                new THREE.MeshLambertMaterial({ color: 0x556b2f })
-            );
-            rpgTube.rotation.x = Math.PI / 2;
-            const rpgSight = new THREE.Mesh(
-                new THREE.BoxGeometry(0.02, 0.08, 0.05),
-                new THREE.MeshLambertMaterial({ color: 0x333333 })
-            );
-            rpgSight.position.set(0, 0.08, -0.1);
-            const rpgGrip = new THREE.Mesh(
-                new THREE.BoxGeometry(0.04, 0.12, 0.05),
-                new THREE.MeshLambertMaterial({ color: 0x222222 })
-            );
-            rpgGrip.position.set(0, -0.1, 0.15);
-            const rpgRocket = new THREE.Mesh(
-                new THREE.ConeGeometry(0.04, 0.15, 8),
-                new THREE.MeshLambertMaterial({ color: 0x8b0000 })
-            );
-            rpgRocket.rotation.x = -Math.PI / 2;
-            rpgRocket.position.set(0, 0, -0.45);
-            rpgGroup.add(rpgTube);
-            rpgGroup.add(rpgSight);
-            rpgGroup.add(rpgGrip);
-            rpgGroup.add(rpgRocket);
-            weaponMeshes.push(rpgGroup);
-            
-            // Shotgun - pump action
-            const shotgunGroup = new THREE.Group();
-            const shotgunBarrel = new THREE.Mesh(
-                new THREE.CylinderGeometry(0.025, 0.025, 0.5, 8),
-                new THREE.MeshLambertMaterial({ color: 0x333333 })
-            );
-            shotgunBarrel.rotation.x = Math.PI / 2;
-            shotgunBarrel.position.set(0, 0.02, -0.1);
-            const shotgunBody = new THREE.Mesh(
-                new THREE.BoxGeometry(0.06, 0.08, 0.35),
-                new THREE.MeshLambertMaterial({ color: 0x444444 })
-            );
-            shotgunBody.position.set(0, 0, 0.1);
-            const shotgunPump = new THREE.Mesh(
-                new THREE.BoxGeometry(0.05, 0.05, 0.12),
-                new THREE.MeshLambertMaterial({ color: 0x654321 })
-            );
-            shotgunPump.position.set(0, -0.04, -0.1);
-            const shotgunStock = new THREE.Mesh(
-                new THREE.BoxGeometry(0.05, 0.1, 0.18),
-                new THREE.MeshLambertMaterial({ color: 0x654321 })
-            );
-            shotgunStock.position.set(0, -0.02, 0.35);
-            const shotgunGrip = new THREE.Mesh(
-                new THREE.BoxGeometry(0.04, 0.1, 0.05),
-                new THREE.MeshLambertMaterial({ color: 0x222222 })
-            );
-            shotgunGrip.position.set(0, -0.08, 0.15);
-            shotgunGrip.rotation.x = -0.3;
-            shotgunGroup.add(shotgunBarrel);
-            shotgunGroup.add(shotgunBody);
-            shotgunGroup.add(shotgunPump);
-            shotgunGroup.add(shotgunStock);
-            shotgunGroup.add(shotgunGrip);
-            weaponMeshes.push(shotgunGroup);
-            
-            return weaponMeshes;
+        // No first-person weapon models in isometric view
+        
+        // Create click indicator (circle on ground where player clicks)
+        function createClickIndicator() {
+            const geometry = new THREE.RingGeometry(0.3, 0.5, 32);
+            const material = new THREE.MeshBasicMaterial({ 
+                color: 0x00ff00, 
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.7
+            });
+            const indicator = new THREE.Mesh(geometry, material);
+            indicator.rotation.x = -Math.PI / 2;
+            indicator.visible = false;
+            scene.add(indicator);
+            return indicator;
         }
         
-        const weaponMeshes = createWeaponModels();
+        // Create local player model
+        function createLocalPlayer() {
+            const group = new THREE.Group();
+            
+            // Body (rectangle)
+            const bodyGeometry = new THREE.BoxGeometry(0.5, 1.5, 0.3);
+            const bodyMaterial = new THREE.MeshLambertMaterial({ color: 0x00ff00 }); // Green for local player
+            const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+            body.position.y = 0.75;
+            group.add(body);
+            
+            // Head
+            const headGeometry = new THREE.BoxGeometry(0.35, 0.35, 0.35);
+            const headMaterial = new THREE.MeshLambertMaterial({ color: 0xffcc99 });
+            const head = new THREE.Mesh(headGeometry, headMaterial);
+            head.position.y = 1.7;
+            group.add(head);
+            
+            return group;
+        }
         
-        // Switch weapon model
-        function switchWeaponModel(index) {
-            if (currentWeaponMesh) {
-                weaponGroup.remove(currentWeaponMesh);
+        // Create Remoro companion
+        let remoroMesh = null;
+        const remoroFollowDistance = 2.5; // How far behind Remoro follows
+        const remoroMoveSpeed = 0.12;
+        
+        function createRemoro() {
+            const group = new THREE.Group();
+            
+            // Body (rectangle) - Orange
+            const bodyGeometry = new THREE.BoxGeometry(0.5, 1.5, 0.3);
+            const bodyMaterial = new THREE.MeshLambertMaterial({ color: 0xff8c00 }); // Orange body
+            const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+            body.position.y = 0.75;
+            group.add(body);
+            
+            // Head - African American skin tone
+            const headGeometry = new THREE.BoxGeometry(0.35, 0.35, 0.35);
+            const headMaterial = new THREE.MeshLambertMaterial({ color: 0x8d5524 }); // African American skin tone
+            const head = new THREE.Mesh(headGeometry, headMaterial);
+            head.position.y = 1.7;
+            group.add(head);
+            
+            // Add nametag
+            const label = createNametag('Remoro');
+            label.position.set(0, 2.8, 0); // Position higher above head
+            group.add(label);
+            
+            return group;
+        }
+        
+        // Update Remoro to follow player
+        function updateRemoro() {
+            if (!remoroMesh || !localPlayerMesh) return;
+            
+            const remoroPos = remoroMesh.position;
+            const targetPos = myPosition.clone();
+            
+            // Calculate direction from Remoro to player
+            const direction = targetPos.clone().sub(remoroPos);
+            const distance = direction.length();
+            
+            // Only move if farther than follow distance
+            if (distance > remoroFollowDistance) {
+                direction.normalize();
+                const moveAmount = Math.min(remoroMoveSpeed * timeScale, distance - remoroFollowDistance + 0.5);
+                remoroPos.add(direction.clone().multiplyScalar(moveAmount));
+                
+                // Rotate Remoro to face movement direction
+                const remoroYaw = Math.atan2(-direction.x, -direction.z);
+                remoroMesh.rotation.y = remoroYaw;
             }
-            currentWeaponMesh = weaponMeshes[index].clone();
-            weaponGroup.add(currentWeaponMesh);
+        }
+
+        // Telephone pole event
+        const poleEventLocation = new THREE.Vector3(-521, 0, -93.26);
+        const poleEventTriggerDistance = 8;
+        let isFirstPersonMode = false;
+        let isTransitioning = false;
+        let poleStarerMesh = null;
+        let brokenPoleMesh = null;
+        let poleDialogShown = false;
+        const transitionOverlay = document.getElementById('transition-overlay');
+        const poleDialog = document.getElementById('pole-dialog');
+        
+        // First person controls
+        let fpCameraYaw = 0;
+        let fpCameraPitch = 0;
+        const fpMouseSensitivity = 0.002;
+        const fpMaxPitch = Math.PI / 2 - 0.1;
+        const fpMoveSpeed = 0.1;
+        const fpKeys = { w: false, a: false, s: false, d: false };
+        
+        // Create pole starer NPC
+        function createPoleStarer() {
+            const group = new THREE.Group();
+            
+            // Body - dark grey coat
+            const bodyGeometry = new THREE.BoxGeometry(0.5, 1.5, 0.3);
+            const bodyMaterial = new THREE.MeshLambertMaterial({ color: 0x2f2f2f });
+            const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+            body.position.y = 0.75;
+            group.add(body);
+            
+            // Head - pale skin
+            const headGeometry = new THREE.BoxGeometry(0.35, 0.35, 0.35);
+            const headMaterial = new THREE.MeshLambertMaterial({ color: 0xd4b896 });
+            const head = new THREE.Mesh(headGeometry, headMaterial);
+            head.position.y = 1.7;
+            group.add(head);
+            
+            // Exclamation point above head
+            const exclamationGroup = new THREE.Group();
+            
+            // Exclamation body (vertical bar)
+            const exclamationBodyGeo = new THREE.BoxGeometry(0.15, 0.5, 0.15);
+            const exclamationMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+            const exclamationBody = new THREE.Mesh(exclamationBodyGeo, exclamationMat);
+            exclamationBody.position.y = 0.35;
+            exclamationGroup.add(exclamationBody);
+            
+            // Exclamation dot
+            const exclamationDotGeo = new THREE.BoxGeometry(0.15, 0.15, 0.15);
+            const exclamationDot = new THREE.Mesh(exclamationDotGeo, exclamationMat);
+            exclamationDot.position.y = 0;
+            exclamationGroup.add(exclamationDot);
+            
+            exclamationGroup.position.y = 2.3;
+            group.add(exclamationGroup);
+            
+            return group;
         }
         
-        // Setup weapon view (attached to camera)
-        function setupWeaponView() {
-            // Position weapon in lower right of view
-            weaponGroup.position.set(0.25, -0.2, -0.4);
-            camera.add(weaponGroup);
-            scene.add(camera);
-            switchWeaponModel(0);
+        // Create broken telephone pole
+        function createBrokenPole() {
+            const group = new THREE.Group();
+            
+            // Main pole (tilted)
+            const poleGeometry = new THREE.CylinderGeometry(0.15, 0.2, 6, 8);
+            const poleMaterial = new THREE.MeshLambertMaterial({ color: 0x4a3728 });
+            const pole = new THREE.Mesh(poleGeometry, poleMaterial);
+            pole.position.y = 2.5;
+            pole.rotation.z = 0.3; // Tilted
+            pole.rotation.x = 0.1;
+            group.add(pole);
+            
+            // Cross beam (broken/dangling)
+            const beamGeometry = new THREE.BoxGeometry(2, 0.1, 0.1);
+            const beam = new THREE.Mesh(beamGeometry, poleMaterial);
+            beam.position.set(0.5, 4.5, 0);
+            beam.rotation.z = 0.5; // Dangling angle
+            group.add(beam);
+            
+            // Dangling wires
+            const wireGeometry = new THREE.CylinderGeometry(0.02, 0.02, 3, 4);
+            const wireMaterial = new THREE.MeshLambertMaterial({ color: 0x111111 });
+            const wire1 = new THREE.Mesh(wireGeometry, wireMaterial);
+            wire1.position.set(1, 3, 0);
+            wire1.rotation.z = 0.8;
+            group.add(wire1);
+            
+            const wire2 = new THREE.Mesh(wireGeometry, wireMaterial);
+            wire2.position.set(-0.5, 3.5, 0);
+            wire2.rotation.z = -0.6;
+            group.add(wire2);
+            
+            return group;
         }
         
-        setupWeaponView();
+        // Initialize pole event scene objects
+        function initPoleEvent() {
+            // Create and position the broken pole
+            brokenPoleMesh = createBrokenPole();
+            brokenPoleMesh.position.set(poleEventLocation.x + 3, 0, poleEventLocation.z);
+            scene.add(brokenPoleMesh);
+            
+            // Create and position the starer, looking at the pole
+            poleStarerMesh = createPoleStarer();
+            poleStarerMesh.position.set(poleEventLocation.x, 0, poleEventLocation.z);
+            // Face the pole
+            poleStarerMesh.rotation.y = Math.PI / 2; // Facing the pole
+            scene.add(poleStarerMesh);
+        }
+        
+        // Check if player is near pole event
+        function checkPoleEventProximity() {
+            const distToEvent = myPosition.distanceTo(poleEventLocation);
+            
+            if (distToEvent < poleEventTriggerDistance && !isFirstPersonMode && !isTransitioning) {
+                // Start transition to first person mode
+                isTransitioning = true;
+                transitionOverlay.style.opacity = '1';
+                
+                // Set initial FP camera direction to face the starer NPC
+                const toStarer = poleStarerMesh.position.clone().sub(myPosition);
+                fpCameraYaw = Math.atan2(-toStarer.x, -toStarer.z);
+                fpCameraPitch = 0;
+                
+                setTimeout(() => {
+                    isFirstPersonMode = true;
+                    if (localPlayerMesh) localPlayerMesh.visible = false;
+                    renderer.domElement.requestPointerLock();
+                    
+                    setTimeout(() => {
+                        transitionOverlay.style.opacity = '0';
+                        isTransitioning = false;
+                        
+                        // Show dialog after transition completes
+                        if (!poleDialogShown) {
+                            poleDialogShown = true;
+                            poleDialog.style.display = 'block';
+                            document.exitPointerLock();
+                        }
+                    }, 100);
+                }, 500);
+            } else if (distToEvent >= poleEventTriggerDistance + 2 && isFirstPersonMode && !isTransitioning) {
+                // Start transition out of first person mode
+                isTransitioning = true;
+                transitionOverlay.style.opacity = '1';
+                document.exitPointerLock();
+                poleDialog.style.display = 'none';
+                
+                setTimeout(() => {
+                    isFirstPersonMode = false;
+                    if (localPlayerMesh) localPlayerMesh.visible = true;
+                    
+                    setTimeout(() => {
+                        transitionOverlay.style.opacity = '0';
+                        isTransitioning = false;
+                    }, 100);
+                }, 500);
+            }
+        }
+        
+        // Dialog option handlers
+        const noAnswerDialog = document.getElementById('no-answer-dialog');
+        const remoroDialog = document.getElementById('remoro-dialog');
+        let bloodPool = null;
+        
+        // Create blood pool
+        function createBloodPool(position) {
+            const geometry = new THREE.CircleGeometry(0.8, 16);
+            const material = new THREE.MeshBasicMaterial({ color: 0x8b0000, side: THREE.DoubleSide });
+            const pool = new THREE.Mesh(geometry, material);
+            pool.rotation.x = -Math.PI / 2;
+            pool.position.set(position.x, 0.01, position.z);
+            scene.add(pool);
+            return pool;
+        }
+        
+        // Boy explosion and death sequence
+        function playBoyDeathSequence() {
+            if (!poleStarerMesh) return;
+            
+            // Play explosion sound
+            playSound(explosionSound);
+            
+            // Create explosion effect at boy's position
+            const boyPos = poleStarerMesh.position.clone();
+            const explosion = new THREE.Mesh(
+                new THREE.SphereGeometry(1, 16, 16),
+                new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.8 })
+            );
+            explosion.position.copy(boyPos).add(new THREE.Vector3(0, 1, 0));
+            scene.add(explosion);
+            
+            // Animate explosion
+            let scale = 0.1;
+            const expandExplosion = () => {
+                scale += 0.2;
+                explosion.scale.set(scale, scale, scale);
+                explosion.material.opacity -= 0.1;
+                if (explosion.material.opacity > 0) {
+                    requestAnimationFrame(expandExplosion);
+                } else {
+                    scene.remove(explosion);
+                }
+            };
+            expandExplosion();
+            
+            // Make the boy fall over (ragdoll)
+            poleStarerMesh.rotation.x = -Math.PI / 2;
+            poleStarerMesh.position.y = 0.3;
+            
+            // Remove exclamation point (last child)
+            const exclamation = poleStarerMesh.children.find(c => c.type === 'Group');
+            if (exclamation) poleStarerMesh.remove(exclamation);
+            
+            // Create blood pool
+            bloodPool = createBloodPool(boyPos);
+            
+            // Expand blood pool over time
+            let poolScale = 0.3;
+            const expandPool = () => {
+                poolScale += 0.05;
+                if (bloodPool && poolScale < 1.5) {
+                    bloodPool.scale.set(poolScale, poolScale, 1);
+                    requestAnimationFrame(expandPool);
+                }
+            };
+            expandPool();
+            
+            // After a delay, pan camera to Remoro
+            setTimeout(() => {
+                panCameraToRemoro();
+            }, 1500);
+        }
+        
+        // Pan camera to Remoro and show dialog
+        function panCameraToRemoro() {
+            if (!remoroMesh) return;
+            
+            // Calculate direction to face Remoro
+            const toRemoro = remoroMesh.position.clone().sub(myPosition);
+            const targetYaw = Math.atan2(-toRemoro.x, -toRemoro.z);
+            
+            // Animate camera rotation to face Remoro
+            const startYaw = fpCameraYaw;
+            const startPitch = fpCameraPitch;
+            const duration = 1000;
+            const startTime = performance.now();
+            
+            const animateCamera = () => {
+                const elapsed = performance.now() - startTime;
+                const t = Math.min(elapsed / duration, 1);
+                const easeT = t * t * (3 - 2 * t); // Smoothstep
+                
+                fpCameraYaw = startYaw + (targetYaw - startYaw) * easeT;
+                fpCameraPitch = startPitch + (0 - startPitch) * easeT;
+                
+                if (t < 1) {
+                    requestAnimationFrame(animateCamera);
+                } else {
+                    // Show Remoro's dialog
+                    document.exitPointerLock();
+                    remoroDialog.style.display = 'block';
+                }
+            };
+            animateCamera();
+        }
+        
+        document.querySelectorAll('.dialog-option').forEach(option => {
+            option.addEventListener('click', (e) => {
+                const choice = e.target.dataset.option;
+                poleDialog.style.display = 'none';
+                
+                // Handle different choices
+                if (choice === '1') {
+                    // Show "no one picked up" dialog
+                    noAnswerDialog.style.display = 'block';
+                } else if (choice === '2') {
+                    // Boy grabs wire and explodes
+                    renderer.domElement.requestPointerLock();
+                    playBoyDeathSequence();
+                } else if (choice === '3') {
+                    renderer.domElement.requestPointerLock();
+                    console.log('You reach for the wire...');
+                }
+            });
+        });
+        
+        // No answer dialog continue button
+        document.getElementById('no-answer-continue').addEventListener('click', () => {
+            noAnswerDialog.style.display = 'none';
+            renderer.domElement.requestPointerLock();
+        });
+        
+        // Remoro dialog continue button
+        document.getElementById('remoro-continue').addEventListener('click', () => {
+            remoroDialog.style.display = 'none';
+            renderer.domElement.requestPointerLock();
+        });
+        
+        // Remoro random speech system
+        const remoroTalkDialog = document.getElementById('remoro-talk-dialog');
+        const remoroTalkText = document.getElementById('remoro-talk-text');
+        const remoroQuotes = [
+            "The FBI Killed Martin Luther King",
+            "Fuck you",
+            "You owe me 73 dollars for the Gas Bill",
+            "Why are we here. Just to suffer"
+        ];
+        
+        // Check if player is facing Remoro
+        function isFacingRemoro() {
+            if (!remoroMesh || !isFirstPersonMode) return false;
+            
+            // Get direction player is facing
+            const playerDir = new THREE.Vector3(
+                -Math.sin(fpCameraYaw),
+                0,
+                -Math.cos(fpCameraYaw)
+            ).normalize();
+            
+            // Get direction to Remoro
+            const toRemoro = remoroMesh.position.clone().sub(myPosition);
+            const distToRemoro = toRemoro.length();
+            toRemoro.y = 0;
+            toRemoro.normalize();
+            
+            // Check dot product (facing direction) and distance
+            const dot = playerDir.dot(toRemoro);
+            return dot > 0.7 && distToRemoro < 5; // Facing within ~45 degrees and within 5 units
+        }
+        
+        // Talk to Remoro
+        function talkToRemoro() {
+            if (!isFacingRemoro()) return;
+            
+            const randomQuote = remoroQuotes[Math.floor(Math.random() * remoroQuotes.length)];
+            remoroTalkText.textContent = '"' + randomQuote + '"';
+            remoroTalkDialog.style.display = 'block';
+            document.exitPointerLock();
+        }
+        
+        // Remoro talk dialog continue button
+        document.getElementById('remoro-talk-continue').addEventListener('click', () => {
+            remoroTalkDialog.style.display = 'none';
+            renderer.domElement.requestPointerLock();
+        });
 
         // Weapon audio
         const pistolFireSound = new Audio('/media/mp3/pistol_fire3.mp3');
@@ -362,7 +668,7 @@
 
         function getPlayerPositionById(playerId) {
             if (playerId === myPlayerId) {
-                return myPosition.clone();
+                return myPosition.clone().add(new THREE.Vector3(0, 1.7, 0));
             }
             const other = otherPlayers.get(playerId);
             if (!other) return null;
@@ -375,7 +681,7 @@
             for (const [playerId, playerObj] of otherPlayers) {
                 if (playerObj.ragdoll) continue;
                 const targetPos = playerObj.mesh.position.clone().add(new THREE.Vector3(0, 1.2, 0));
-                const dist = targetPos.distanceTo(camera.position);
+                const dist = targetPos.distanceTo(myPosition);
                 if (dist < closestDist && dist < 120) {
                     closestDist = dist;
                     closest = { id: playerId, mesh: playerObj.mesh, distance: dist };
@@ -428,7 +734,7 @@
                 exitVats();
                 return;
             }
-            const distance = target.mesh.position.distanceTo(camera.position);
+            const distance = target.mesh.position.distanceTo(myPosition);
             const chances = computeVatsChances(distance);
             const headPercent = Math.round(chances.head * 100);
             const bodyPercent = Math.round(chances.body * 100);
@@ -477,9 +783,7 @@
             timeScale = 0.2;
             cinematicRestore = {
                 position: camera.position.clone(),
-                rotation: camera.rotation.clone(),
-                yaw: cameraYaw,
-                pitch: cameraPitch
+                rotation: camera.rotation.clone()
             };
 
             const weaponName = data.weapon;
@@ -506,11 +810,9 @@
         function endVatsCinematic() {
             cinematicActive = false;
             timeScale = 1;
-            if (cinematicRestore) {
-                camera.position.copy(cinematicRestore.position);
-                camera.rotation.copy(cinematicRestore.rotation);
-                cameraYaw = cinematicRestore.yaw;
-                cameraPitch = cinematicRestore.pitch;
+            // Reset camera to isometric follow position
+            if (localPlayerMesh) {
+                updateCameraPosition();
             }
             cinematicData = null;
             cinematicRestore = null;
@@ -540,7 +842,7 @@
                 exitVats();
                 return;
             }
-            const distance = target.mesh.position.distanceTo(camera.position);
+            const distance = target.mesh.position.distanceTo(myPosition);
             const chances = computeVatsChances(distance);
             const chance = vatsTargetPart === 'head' ? chances.head : chances.body;
             let hits = 0;
@@ -570,12 +872,6 @@
                 success: success
             });
             exitVats();
-        }
-        
-        // Update weapon model
-        function updateWeaponDisplay() {
-            const weapon = weapons[currentWeaponIndex];
-            switchWeaponModel(currentWeaponIndex);
         }
         
         // Coordinates display
@@ -727,9 +1023,12 @@
             }
         }
         
-        // Shoot weapon
+        // Player facing direction (yaw)
+        let playerYaw = 0;
+        
+        // Shoot weapon (in isometric, shoot toward closest enemy or last move direction)
         function shoot() {
-            if (isRagdoll) return;
+            if (isRagdoll || !localPlayerMesh) return;
             
             const now = Date.now();
             const weapon = weapons[currentWeaponIndex];
@@ -745,9 +1044,12 @@
                 }
             }
             
-            // Calculate shooting direction from camera
-            const direction = new THREE.Vector3(0, 0, -1);
-            direction.applyQuaternion(camera.quaternion);
+            // Calculate shooting direction from player facing direction
+            const direction = new THREE.Vector3(
+                -Math.sin(playerYaw),
+                0,
+                -Math.cos(playerYaw)
+            ).normalize();
             
             const pelletCount = weapon.pellets || 1;
             
@@ -755,12 +1057,12 @@
                 // Apply spread
                 const spreadDir = direction.clone();
                 spreadDir.x += (Math.random() - 0.5) * weapon.spread * 2;
-                spreadDir.y += (Math.random() - 0.5) * weapon.spread * 2;
                 spreadDir.z += (Math.random() - 0.5) * weapon.spread * 2;
                 spreadDir.normalize();
                 
-                // Create projectile visual
-                const startPos = camera.position.clone();
+                // Create projectile visual from player position
+                const startPos = myPosition.clone();
+                startPos.y = 1; // Chest height
                 startPos.add(direction.clone().multiplyScalar(0.5)); // Start slightly in front
                 const projectile = createProjectile(startPos, spreadDir, weapon);
                 projectiles.push(projectile);
@@ -771,11 +1073,11 @@
                 socket.send(JSON.stringify({
                     type: 'fire',
                     weapon: weapon.name,
-                    x: camera.position.x,
-                    y: camera.position.y,
-                    z: camera.position.z,
-                    yaw: cameraYaw,
-                    pitch: cameraPitch
+                    x: myPosition.x,
+                    y: myPosition.y + 1,
+                    z: myPosition.z,
+                    yaw: playerYaw,
+                    pitch: 0
                 }));
             }
         }
@@ -870,10 +1172,10 @@
                 socket.send(JSON.stringify({
                     type: 'join',
                     name: playerName,
-                    x: camera.position.x,
-                    y: camera.position.y,
-                    z: camera.position.z,
-                    yaw: cameraYaw
+                    x: myPosition.x,
+                    y: myPosition.y + 1.7,
+                    z: myPosition.z,
+                    yaw: playerYaw
                 }));
             };
             
@@ -925,23 +1227,17 @@
                 if (now - lastUpdateTime > 50) { // Send max 20 updates per second
                     socket.send(JSON.stringify({
                         type: 'update',
-                        x: camera.position.x,
-                        y: camera.position.y,
-                        z: camera.position.z,
-                        yaw: cameraYaw
+                        x: myPosition.x,
+                        y: myPosition.y + 1.7,
+                        z: myPosition.z,
+                        yaw: playerYaw
                     }));
                     lastUpdateTime = now;
                 }
             }
         }
         
-        // Camera direction
-        let cameraYaw = 0;
-        let cameraPitch = 0;
-        const mouseSensitivity = 0.002;
-        const maxPitch = Math.PI / 2 - 0.1; // Prevent looking straight up/down
-        
-        // Pointer lock for mouse look
+        // Input handling
         const nameInput = document.getElementById('name-input');
         const playerNameInput = document.getElementById('player-name');
         const joinBtn = document.getElementById('join-btn');
@@ -950,6 +1246,9 @@
         joinBtn.addEventListener('click', () => {
             myPlayerName = playerNameInput.value.trim() || 'Player';
             nameInput.style.display = 'none';
+            
+            // Initialize player and camera after joining
+            initializePlayer();
             connectMultiplayer(myPlayerName);
         });
         
@@ -959,22 +1258,79 @@
             }
         });
         
-        renderer.domElement.addEventListener('click', () => {
-            if (document.pointerLockElement !== renderer.domElement) {
-                renderer.domElement.requestPointerLock();
+        // Initialize player model and click indicator
+        function initializePlayer() {
+            // Create local player model
+            localPlayerMesh = createLocalPlayer();
+            localPlayerMesh.position.copy(playerStartPos);
+            myPosition.copy(playerStartPos);
+            scene.add(localPlayerMesh);
+            
+            // Create Remoro companion (positioned behind player)
+            remoroMesh = createRemoro();
+            remoroMesh.position.copy(playerStartPos.clone().add(new THREE.Vector3(remoroFollowDistance, 0, remoroFollowDistance)));
+            scene.add(remoroMesh);
+            
+            // Initialize pole event scene
+            initPoleEvent();
+            
+            // Create click indicator
+            clickIndicator = createClickIndicator();
+            
+            // Position camera for isometric view
+            updateCameraPosition();
+        }
+        
+        // Handle mouse click for movement
+        renderer.domElement.addEventListener('click', (event) => {
+            if (!localPlayerMesh) return;
+            if (isRagdoll) return;
+            if (isFirstPersonMode) return; // Disable click-to-move in first person
+            
+            // Calculate mouse position in normalized device coordinates
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            // Raycast to find ground position
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(ground);
+            
+            if (intersects.length > 0) {
+                const point = intersects[0].point;
+                targetPosition = new THREE.Vector3(point.x, 0, point.z);
+                
+                // Show click indicator
+                if (clickIndicator) {
+                    clickIndicator.position.set(point.x, 0.1, point.z);
+                    clickIndicator.visible = true;
+                    
+                    // Fade out indicator after a moment
+                    setTimeout(() => {
+                        if (clickIndicator) clickIndicator.visible = false;
+                    }, 500);
+                }
             }
         });
         
-        // Mouse movement for looking around
-        document.addEventListener('mousemove', (event) => {
-            if (document.pointerLockElement === renderer.domElement) {
-                cameraYaw -= event.movementX * mouseSensitivity;
-                cameraPitch -= event.movementY * mouseSensitivity;
-                
-                // Clamp pitch to prevent flipping
-                cameraPitch = Math.max(-maxPitch, Math.min(maxPitch, cameraPitch));
-            }
+        // Right click to shoot
+        renderer.domElement.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            shoot();
         });
+        
+        // Mouse scroll to zoom
+        renderer.domElement.addEventListener('wheel', (event) => {
+            event.preventDefault();
+            const zoomSpeed = 5;
+            if (event.deltaY > 0) {
+                // Scroll down - zoom out
+                cameraZoom = Math.min(maxZoom, cameraZoom + zoomSpeed);
+            } else {
+                // Scroll up - zoom in
+                cameraZoom = Math.max(minZoom, cameraZoom - zoomSpeed);
+            }
+            updateCameraPosition();
+        }, { passive: false });
         
         // Key event listeners
         document.addEventListener('keydown', (event) => {
@@ -1005,35 +1361,40 @@
                 }
                 return;
             }
-
-            switch(event.key.toLowerCase()) {
-                case 'w': keys.w = true; break;
-                case 'a': keys.a = true; break;
-                case 's': keys.s = true; break;
-                case 'd': keys.d = true; break;
-                case ' ': keys.space = true; event.preventDefault(); break;
-            }
+            
             // Weapon switching with number keys
             if (event.key >= '1' && event.key <= '4') {
                 currentWeaponIndex = parseInt(event.key) - 1;
-                updateWeaponDisplay();
+            }
+            
+            // First person WASD controls
+            if (isFirstPersonMode) {
+                switch(event.key.toLowerCase()) {
+                    case 'w': fpKeys.w = true; break;
+                    case 'a': fpKeys.a = true; break;
+                    case 's': fpKeys.s = true; break;
+                    case 'd': fpKeys.d = true; break;
+                    case 'e': talkToRemoro(); break;
+                }
             }
         });
         
         document.addEventListener('keyup', (event) => {
+            // First person WASD controls
             switch(event.key.toLowerCase()) {
-                case 'w': keys.w = false; break;
-                case 'a': keys.a = false; break;
-                case 's': keys.s = false; break;
-                case 'd': keys.d = false; break;
-                case ' ': keys.space = false; break;
+                case 'w': fpKeys.w = false; break;
+                case 'a': fpKeys.a = false; break;
+                case 's': fpKeys.s = false; break;
+                case 'd': fpKeys.d = false; break;
             }
         });
         
-        // Shooting with mouse click
-        document.addEventListener('mousedown', (event) => {
-            if (event.button === 0 && document.pointerLockElement === renderer.domElement) {
-                shoot();
+        // Mouse look for first person mode
+        document.addEventListener('mousemove', (event) => {
+            if (isFirstPersonMode && document.pointerLockElement === renderer.domElement) {
+                fpCameraYaw -= event.movementX * fpMouseSensitivity;
+                fpCameraPitch -= event.movementY * fpMouseSensitivity;
+                fpCameraPitch = Math.max(-fpMaxPitch, Math.min(fpMaxPitch, fpCameraPitch));
             }
         });
         
@@ -1154,65 +1515,81 @@
             }
         );
         
-        // Update camera movement - with flying
-        function updateCamera() {
-            // Calculate forward direction based on yaw (horizontal only)
-            const forward = new THREE.Vector3(
-                -Math.sin(cameraYaw),
-                0,
-                -Math.cos(cameraYaw)
-            );
-            
-            // Calculate right direction for strafing
-            const right = new THREE.Vector3(
-                Math.cos(cameraYaw),
-                0,
-                -Math.sin(cameraYaw)
-            );
-
-            const scaledMoveSpeed = moveSpeed * timeScale;
-            
-            // Forward/Backward movement (W/S keys)
-            if (keys.w) {
-                camera.position.add(forward.clone().multiplyScalar(scaledMoveSpeed));
+        // Update isometric camera position to follow player
+        function updateCameraPosition() {
+            if (isFirstPersonMode) {
+                // First person WASD movement
+                const forward = new THREE.Vector3(
+                    -Math.sin(fpCameraYaw),
+                    0,
+                    -Math.cos(fpCameraYaw)
+                );
+                const right = new THREE.Vector3(
+                    Math.cos(fpCameraYaw),
+                    0,
+                    -Math.sin(fpCameraYaw)
+                );
+                
+                if (fpKeys.w) myPosition.add(forward.clone().multiplyScalar(fpMoveSpeed));
+                if (fpKeys.s) myPosition.add(forward.clone().multiplyScalar(-fpMoveSpeed));
+                if (fpKeys.a) myPosition.add(right.clone().multiplyScalar(-fpMoveSpeed));
+                if (fpKeys.d) myPosition.add(right.clone().multiplyScalar(fpMoveSpeed));
+                
+                // Update player mesh position (even though invisible)
+                if (localPlayerMesh) localPlayerMesh.position.copy(myPosition);
+                
+                // First person camera - at player eye level with mouse look
+                camera.position.copy(myPosition).add(new THREE.Vector3(0, 1.7, 0));
+                camera.rotation.order = 'YXZ';
+                camera.rotation.y = fpCameraYaw;
+                camera.rotation.x = fpCameraPitch;
+                camera.rotation.z = 0; // Ensure no roll
+            } else {
+                // Isometric camera offset - positioned above and behind player at 45 degree angle
+                const cameraOffset = new THREE.Vector3(cameraZoom, cameraZoom, cameraZoom);
+                camera.position.copy(myPosition).add(cameraOffset);
+                camera.lookAt(myPosition.clone().add(new THREE.Vector3(0, 1, 0)));
             }
-            if (keys.s) {
-                camera.position.add(forward.clone().multiplyScalar(-scaledMoveSpeed));
+        }
+        
+        // Update player movement (click-to-move)
+        function updatePlayer() {
+            if (!localPlayerMesh || isRagdoll) return;
+            
+            // Move toward target position
+            if (targetPosition) {
+                const direction = targetPosition.clone().sub(myPosition);
+                const distance = direction.length();
+                
+                if (distance > 0.2) {
+                    // Move player
+                    direction.normalize();
+                    const moveAmount = Math.min(moveSpeed * timeScale, distance);
+                    myPosition.add(direction.clone().multiplyScalar(moveAmount));
+                    
+                    // Update player mesh position
+                    localPlayerMesh.position.copy(myPosition);
+                    
+                    // Rotate player to face movement direction
+                    playerYaw = Math.atan2(-direction.x, -direction.z);
+                    localPlayerMesh.rotation.y = playerYaw;
+                } else {
+                    // Arrived at target
+                    targetPosition = null;
+                }
             }
             
-            // Strafe movement (A/D keys)
-            if (keys.a) {
-                camera.position.add(right.clone().multiplyScalar(-scaledMoveSpeed));
-            }
-            if (keys.d) {
-                camera.position.add(right.clone().multiplyScalar(scaledMoveSpeed));
-            }
+            // Update camera to follow player
+            updateCameraPosition();
             
-            // Jump (Space key)
-            const isOnGround = camera.position.y <= groundLevel;
-            if (keys.space && isOnGround) {
-                velocityY = jumpStrength;
-            }
+            // Check for pole event proximity
+            checkPoleEventProximity();
             
-            // Apply gravity
-            velocityY -= gravity * timeScale;
-            camera.position.y += velocityY * timeScale;
-            
-            // Prevent falling through ground
-            if (camera.position.y < groundLevel) {
-                camera.position.y = groundLevel;
-                velocityY = 0;
-            }
-            
-            // Update camera rotation (yaw and pitch from mouse)
-            camera.rotation.order = 'YXZ'; // Prevent gimbal lock
-            camera.rotation.y = cameraYaw;
-            camera.rotation.x = cameraPitch;
+            // Update Remoro companion
+            updateRemoro();
             
             // Update coordinates display
-            coordsDiv.innerHTML = `X: ${camera.position.x.toFixed(2)}<br>Y: ${camera.position.y.toFixed(2)}<br>Z: ${camera.position.z.toFixed(2)}`;
-
-            myPosition.copy(camera.position);
+            coordsDiv.innerHTML = `X: ${myPosition.x.toFixed(2)}<br>Y: ${myPosition.y.toFixed(2)}<br>Z: ${myPosition.z.toFixed(2)}`;
         }
         
         // Handle window resize
@@ -1229,7 +1606,7 @@
             if (cinematicActive) {
                 updateVatsCinematic();
             } else {
-                updateCamera();
+                updatePlayer();
             }
             if (vatsActive) {
                 updateVatsDisplay();
