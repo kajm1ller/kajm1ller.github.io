@@ -95,7 +95,7 @@
     </div>
     <div id="loading">Loading map...</div>
     <div id="crosshair"></div>
-    <div id="ragdoll-overlay"><div id="ragdoll-text">Getting up...</div></div>
+    <div id="ragdoll-overlay"><div id="ragdoll-text"></div></div>
     
     <script type="importmap">
         {
@@ -835,8 +835,7 @@
             if (isRagdoll) return;
             
             isRagdoll = true;
-            ragdollOverlay.style.display = 'block';
-            ragdollText.textContent = `Hit by ${shooterName}'s ${weaponName}! Getting up...`;
+           
             
             // Send ragdoll state to server
             if (socket && socket.readyState === WebSocket.OPEN) {
