@@ -64,6 +64,9 @@
     <div id="coords" style="position:absolute;top:10px;right:10px;color:white;background:rgba(0,0,0,0.7);padding:10px;border-radius:5px;font-family:monospace;font-size:14px;z-index:100;">
         X: 0.00<br>Y: 0.00<br>Z: 0.00
     </div>
+    <div id="status-hud" style="position:absolute;top:10px;left:10px;color:white;background:rgba(0,0,0,0.7);padding:10px;border-radius:5px;font-family:Arial,sans-serif;font-size:14px;z-index:100;">
+        HP: <span id="player-hp">120</span> | Kaj Coins: <span id="kaj-coins">0</span>
+    </div>
     <div id="name-input" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:white;background:rgba(0,0,0,0.9);padding:30px 50px;border-radius:10px;font-family:Arial,sans-serif;font-size:20px;z-index:200;text-align:center;">
         <div style="margin-bottom:15px;">NAME</div>
         <input type="text" id="player-name" maxlength="20" style="padding:10px;font-size:18px;border:none;border-radius:5px;width:200px;text-align:center;" placeholder="Your Name">
@@ -72,6 +75,8 @@
     </div>
     <div id="loading">Loading map...</div>
     <div id="ragdoll-overlay"><div id="ragdoll-text"></div></div>
+    <div id="hurt-flash" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,0,0,0.35);z-index:180;pointer-events:none;"></div>
+    <div id="death-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#000 url('/media/deathstuff/deathscreen.jpg') center center / cover no-repeat;z-index:999;pointer-events:none;"></div>
     <div id="transition-overlay" style="position:absolute;top:0;left:0;width:100%;height:100%;background:black;opacity:0;pointer-events:none;z-index:150;transition:opacity 0.5s ease-in-out;"></div>
     <div id="pole-dialog" style="display:none;position:absolute;bottom:50px;left:50%;transform:translateX(-50%);width:600px;background:rgba(0,0,0,0.85);border:2px solid #444;border-radius:10px;padding:20px;font-family:Arial,sans-serif;z-index:160;">
         <div style="color:#fff;font-size:16px;line-height:1.5;margin-bottom:20px;">A young boy stands before a broken telephone pole. He asks you "Should we call emergency services?"</div>
@@ -94,6 +99,51 @@
         <div style="color:#ff8c00;font-size:14px;margin-bottom:5px;">Remoro</div>
         <div id="remoro-talk-text" style="color:#fff;font-size:16px;line-height:1.5;margin-bottom:20px;"></div>
         <div id="remoro-talk-continue" style="color:#7cff7c;padding:10px;margin:5px 0;cursor:pointer;border:1px solid #444;border-radius:5px;transition:background 0.2s;text-align:center;">Continue</div>
+    </div>
+    <div id="dead-boy-dialog" style="display:none;position:absolute;bottom:50px;left:50%;transform:translateX(-50%);width:600px;background:rgba(0,0,0,0.85);border:2px solid #444;border-radius:10px;padding:20px;font-family:Arial,sans-serif;z-index:160;">
+        <div style="color:#fff;font-size:16px;line-height:1.5;margin-bottom:20px;">His burnt corpse lies motionless in the street. On top of his remains lies a crumpled dollar bill.</div>
+        <div id="dead-boy-continue" style="color:#7cff7c;padding:10px;margin:5px 0;cursor:pointer;border:1px solid #444;border-radius:5px;transition:background 0.2s;text-align:center;">Continue</div>
+    </div>
+    <div id="talk-indicator" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#7cff7c;font-family:Arial,sans-serif;font-size:18px;font-weight:bold;background:rgba(0,0,0,0.6);padding:8px 16px;border-radius:5px;z-index:100;pointer-events:none;">(E) Talk</div>
+    <div id="crosshair" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:100;pointer-events:none;">
+        <div style="position:absolute;width:20px;height:2px;background:rgba(255,255,255,0.8);left:-10px;top:-1px;"></div>
+        <div style="position:absolute;width:2px;height:20px;background:rgba(255,255,255,0.8);left:-1px;top:-10px;"></div>
+    </div>
+    <div id="weapon-display" style="display:none;position:absolute;bottom:20px;right:20px;color:white;background:rgba(0,0,0,0.7);padding:15px 20px;border-radius:5px;font-family:Arial,sans-serif;font-size:16px;z-index:100;pointer-events:none;">
+        <span id="weapon-name">Pistol</span>
+    </div>
+    <div id="house-dialog" style="display:none;position:absolute;bottom:40px;left:50%;transform:translateX(-50%);width:640px;background:rgba(0,0,0,0.85);border:2px solid #444;border-radius:10px;padding:20px;font-family:Arial,sans-serif;z-index:170;">
+        <div style="color:#fff;font-size:16px;line-height:1.5;margin-bottom:20px;" id="house-dialog-text"></div>
+        <div style="display:flex;gap:10px;">
+            <button id="house-leave" style="flex:1;padding:10px 12px;cursor:pointer;border:none;border-radius:5px;background:#222;color:white;">Leave</button>
+            <button id="house-attack" style="flex:1;padding:10px 12px;cursor:pointer;border:none;border-radius:5px;background:#5a1f1f;color:white;">Attack</button>
+        </div>
+    </div>
+    <div id="corpse-dialog" style="display:none;position:absolute;bottom:40px;left:50%;transform:translateX(-50%);width:640px;background:rgba(0,0,0,0.85);border:2px solid #444;border-radius:10px;padding:20px;font-family:Arial,sans-serif;z-index:175;">
+        <div style="color:#fff;font-size:16px;line-height:1.5;margin-bottom:20px;" id="corpse-dialog-text">The owner is dead. What do you do?</div>
+        <div style="display:flex;gap:10px;">
+            <button id="corpse-loot" style="flex:1;padding:10px 12px;cursor:pointer;border:none;border-radius:5px;background:#244a2f;color:white;">Loot Corpse</button>
+            <button id="corpse-eat" style="flex:1;padding:10px 12px;cursor:pointer;border:none;border-radius:5px;background:#5a2f1f;color:white;">Eat Corpse</button>
+            <button id="corpse-remoro" style="flex:1;padding:10px 12px;cursor:pointer;border:none;border-radius:5px;background:#3b2a5a;color:white;">Remoro's Choice</button>
+            <button id="corpse-leave" style="flex:1;padding:10px 12px;cursor:pointer;border:none;border-radius:5px;background:#222;color:white;">Leave</button>
+        </div>
+    </div>
+    <div id="exit-indicator" style="display:none;position:absolute;top:60%;left:50%;transform:translate(-50%,-50%);color:#7cff7c;font-family:Arial,sans-serif;font-size:18px;font-weight:bold;background:rgba(0,0,0,0.6);padding:8px 16px;border-radius:5px;z-index:140;pointer-events:none;">(E) Exit</div>
+    <div id="bed-indicator" style="display:none;position:absolute;top:65%;left:50%;transform:translate(-50%,-50%);color:#7cff7c;font-family:Arial,sans-serif;font-size:18px;font-weight:bold;background:rgba(0,0,0,0.6);padding:8px 16px;border-radius:5px;z-index:140;pointer-events:none;">(E) Lay Down</div>
+    <div id="combat-ui" style="display:none;position:absolute;top:20px;left:50%;transform:translateX(-50%);width:720px;background:rgba(0,0,0,0.8);border:2px solid #333;border-radius:10px;padding:20px;font-family:Arial,sans-serif;z-index:180;">
+        <div style="color:#fff;font-size:18px;margin-bottom:10px;">Combat</div>
+        <div style="display:flex;gap:12px;margin-bottom:12px;">
+            <div style="flex:1;color:#9ef59e;">You: <span id="combat-player-hp"></span></div>
+            <div style="flex:1;color:#ffb36b;">Remoro: <span id="combat-remoro-hp"></span></div>
+            <div style="flex:1;color:#ff6b6b;">Owner: <span id="combat-enemy-hp"></span></div>
+        </div>
+        <div id="combat-log" style="height:120px;overflow:auto;background:rgba(0,0,0,0.5);padding:10px;border-radius:6px;color:#ddd;font-size:14px;margin-bottom:12px;"></div>
+        <div id="combat-actions" style="display:flex;gap:10px;">
+            <button id="combat-attack" style="flex:1;padding:10px;cursor:pointer;border:none;border-radius:5px;background:#2a5a2a;color:white;">Attack</button>
+            <button id="combat-talk" style="flex:1;padding:10px;cursor:pointer;border:none;border-radius:5px;background:#3f3f3f;color:white;">Talk</button>
+            <button id="combat-defend" style="flex:1;padding:10px;cursor:pointer;border:none;border-radius:5px;background:#2a2a5a;color:white;">Defend</button>
+            <button id="combat-flee" style="flex:1;padding:10px;cursor:pointer;border:none;border-radius:5px;background:#5a2a2a;color:white;">Flee</button>
+        </div>
     </div>
     <style>
         .dialog-option:hover {
@@ -142,6 +192,10 @@
         
         // Click indicator
         let clickIndicator = null;
+        
+        // Collision detection
+        const collisionMeshes = [];
+        const playerRadius = 0.4; // Player collision radius
         
         // Renderer setup - optimized for performance
         const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
@@ -198,9 +252,1031 @@
         // Projectiles for visual effects
         const projectiles = [];
         
-        // No first-person weapon models in isometric view
+        // First-person viewmodel system
+        let viewmodelScene = null;
+        let viewmodelCamera = null;
+        let viewmodelArms = null;
+        let viewmodelWeapons = [];
+        let currentViewmodelWeapon = null;
+        let viewmodelBobTime = 0;
+        let viewmodelRecoil = 0;
+
+        // House interior and combat system
+        let inHouse = false;
+        let houseScene = null;
+        let houseCamera = null;
+        let houseFurniture = [];
+        let houseNPC = null;
+        let houseBounds = null;
+        let lastOutsidePosition = new THREE.Vector3();
+        let houseEntryCooldown = 0;
+        let houseCombatActive = false;
+        let playerDefending = false;
+        let combatActionsDisabled = false;
+        let currentHouseId = null;
+        let currentHouseIsKaj = false;
+        let kajHouseId = null;
+        let kajHouseBedZone = null;
+        const houseDefeated = new Set();
+        let houseExitZone = null;
+        let isPlayerDead = false;
+
+        const houseDialogLines = [
+            "What are you doing inside my house?",
+            "Why are you here? You need to leave.",
+            "This is private property. Explain yourself.",
+            "Who let you in? Get out.",
+            "You're not supposed to be here."
+        ];
+
+        const combatState = {
+            player: { name: "You", maxHp: 120, hp: 120, atkMin: 12, atkMax: 20 },
+            remoro: { name: "Remoro", maxHp: 100, hp: 100, atkMin: 10, atkMax: 18 },
+            enemy: { name: "Owner", maxHp: 140, hp: 140, atkMin: 16, atkMax: 32 }
+        };
+
+        const houseDialogEl = document.getElementById('house-dialog');
+        const houseDialogTextEl = document.getElementById('house-dialog-text');
+        const houseLeaveBtn = document.getElementById('house-leave');
+        const houseAttackBtn = document.getElementById('house-attack');
+        const corpseDialogEl = document.getElementById('corpse-dialog');
+        const corpseDialogTextEl = document.getElementById('corpse-dialog-text');
+        const corpseLootBtn = document.getElementById('corpse-loot');
+        const corpseEatBtn = document.getElementById('corpse-eat');
+        const corpseRemoroBtn = document.getElementById('corpse-remoro');
+        const corpseLeaveBtn = document.getElementById('corpse-leave');
+        const exitIndicatorEl = document.getElementById('exit-indicator');
+        const bedIndicatorEl = document.getElementById('bed-indicator');
+        const combatUiEl = document.getElementById('combat-ui');
+        const combatLogEl = document.getElementById('combat-log');
+        const combatPlayerHpEl = document.getElementById('combat-player-hp');
+        const combatRemoroHpEl = document.getElementById('combat-remoro-hp');
+        const combatEnemyHpEl = document.getElementById('combat-enemy-hp');
+        const combatAttackBtn = document.getElementById('combat-attack');
+        const combatTalkBtn = document.getElementById('combat-talk');
+        const combatDefendBtn = document.getElementById('combat-defend');
+        const combatFleeBtn = document.getElementById('combat-flee');
+        const statusHpEl = document.getElementById('player-hp');
+        const statusCoinsEl = document.getElementById('kaj-coins');
+        const deathScreenEl = document.getElementById('death-screen');
+        const hurtFlashEl = document.getElementById('hurt-flash');
+        let kajCoins = 0;
+        const deathAudioFiles = [
+            '/media/deathstuff/death_message.oga',
+            '/media/deathstuff/death_message1.oga',
+            '/media/deathstuff/death_message2.oga',
+            '/media/deathstuff/death_message3.oga'
+        ];
+        const combatTalkLines = [
+            'Fuck you',
+            "I'm going to fahsion your skin into a handbag",
+            "This is a nice place you've got here",
+            'Im going to cut your dick off with a hacksaw'
+        ];
+        const remoroLootLines = [
+            'Those are some fresh ass foams let me snatch them',
+            'Gold Teeth! Payday',
+            'These fingernails will look nice in my collection',
+            'Free Clothes dont mind if I do',
+            "Well its not like they'll be needing these versace handbags anyways"
+        ];
+        const remoroEatLines = [
+            'Damn im hungry',
+            'They lookin real tasty rn',
+            "Looks like meats back on the menu",
+            "Im not even going to sugarcoat it we're going to eat this person",
+            'Pass the salt bro'
+        ];
+
+        function randomRange(min, max) {
+            return min + Math.random() * (max - min);
+        }
+
+        function getHouseIdFromBox(box) {
+            return `${box.min.x.toFixed(2)}|${box.min.z.toFixed(2)}|${box.max.x.toFixed(2)}|${box.max.z.toFixed(2)}`;
+        }
+
+        function createHouseLabel(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            div.style.cssText = 'color:#ffd966;font-family:Arial,sans-serif;font-size:16px;font-weight:bold;background:rgba(0,0,0,0.75);padding:4px 10px;border-radius:6px;white-space:nowrap;';
+            return new CSS2DObject(div);
+        }
+
+        function setupKajHouseLabel() {
+            if (collisionMeshes.length === 0) return;
+            let best = null;
+            let bestDist = Infinity;
+            for (const mesh of collisionMeshes) {
+                const box = mesh.userData.worldBox;
+                const height = mesh.userData.height || 0;
+                if (!box || height < 2.5) continue;
+                const sizeX = box.max.x - box.min.x;
+                const sizeZ = box.max.z - box.min.z;
+                if (sizeX < 3 || sizeZ < 3) continue;
+                const center = new THREE.Vector3(
+                    (box.min.x + box.max.x) * 0.5,
+                    (box.min.y + box.max.y) * 0.5,
+                    (box.min.z + box.max.z) * 0.5
+                );
+                const dist = center.distanceTo(playerStartPos);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    best = { box, center };
+                }
+            }
+            if (!best) return;
+            kajHouseId = getHouseIdFromBox(best.box);
+            const anchor = new THREE.Object3D();
+            anchor.position.set(best.center.x, best.box.max.y + 1.5, best.center.z);
+            anchor.add(createHouseLabel('KAJ HOUSE'));
+            scene.add(anchor);
+        }
+
+        function updateStatusHud() {
+            if (statusHpEl) {
+                statusHpEl.textContent = `${combatState.player.hp}`;
+            }
+            if (statusCoinsEl) {
+                statusCoinsEl.textContent = `${kajCoins}`;
+            }
+        }
+
+        function addKajCoins(amount) {
+            kajCoins += amount;
+            updateStatusHud();
+        }
+
+        function restoreHealth(amount) {
+            combatState.player.hp = Math.min(combatState.player.maxHp, combatState.player.hp + amount);
+            updateCombatUI();
+            updateStatusHud();
+        }
+
+        function flashHurt() {
+            if (!hurtFlashEl) return;
+            hurtFlashEl.style.display = 'block';
+            setTimeout(() => {
+                hurtFlashEl.style.display = 'none';
+            }, 120);
+        }
+
+        function triggerPlayerDeath(reason) {
+            if (isPlayerDead) return;
+            isPlayerDead = true;
+            houseCombatActive = false;
+            combatActionsDisabled = true;
+            document.exitPointerLock();
+
+            houseDialogEl.style.display = 'none';
+            corpseDialogEl.style.display = 'none';
+            combatUiEl.style.display = 'none';
+            document.getElementById('crosshair').style.display = 'none';
+            document.getElementById('weapon-display').style.display = 'none';
+            exitIndicatorEl.style.display = 'none';
+            talkIndicator.style.display = 'none';
+
+            if (deathScreenEl) {
+                deathScreenEl.style.display = 'block';
+            }
+
+            const audioSrc = deathAudioFiles[Math.floor(Math.random() * deathAudioFiles.length)];
+            const deathAudio = new Audio(audioSrc);
+            deathAudio.volume = 0.8;
+            deathAudio.play().catch(() => {});
+
+            setTimeout(() => {
+                window.location.reload();
+            }, 15000);
+        }
+
+        function createHouseInterior(isKajHouse = false) {
+            houseScene = new THREE.Scene();
+            houseScene.background = new THREE.Color(0x222222);
+            houseCamera = camera;
+
+            const light = new THREE.PointLight(0xffffff, 0.9);
+            light.position.set(0, 3, 0);
+            houseScene.add(light);
+
+            const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+            houseScene.add(ambient);
+
+            // Simple rectangular room
+            const roomWidth = 12;
+            const roomDepth = 10;
+            const roomHeight = 4;
+            houseBounds = {
+                minX: -roomWidth / 2 + 0.5,
+                maxX: roomWidth / 2 - 0.5,
+                minZ: -roomDepth / 2 + 0.5,
+                maxZ: roomDepth / 2 - 0.5
+            };
+
+            const floor = new THREE.Mesh(
+                new THREE.PlaneGeometry(roomWidth, roomDepth),
+                new THREE.MeshLambertMaterial({ color: 0x3a3a3a })
+            );
+            floor.rotation.x = -Math.PI / 2;
+            houseScene.add(floor);
+
+            const wallMat = new THREE.MeshLambertMaterial({ color: 0x444444 });
+            const wallGeo = new THREE.BoxGeometry(roomWidth, roomHeight, 0.2);
+            const wall1 = new THREE.Mesh(wallGeo, wallMat);
+            wall1.position.set(0, roomHeight / 2, -roomDepth / 2);
+            houseScene.add(wall1);
+            const wall2 = new THREE.Mesh(wallGeo, wallMat);
+            wall2.position.set(0, roomHeight / 2, roomDepth / 2);
+            houseScene.add(wall2);
+
+            const sideWallGeo = new THREE.BoxGeometry(0.2, roomHeight, roomDepth);
+            const wall3 = new THREE.Mesh(sideWallGeo, wallMat);
+            wall3.position.set(-roomWidth / 2, roomHeight / 2, 0);
+            houseScene.add(wall3);
+            const wall4 = new THREE.Mesh(sideWallGeo, wallMat);
+            wall4.position.set(roomWidth / 2, roomHeight / 2, 0);
+            houseScene.add(wall4);
+
+            // Exit door
+            const exitDoor = new THREE.Mesh(
+                new THREE.BoxGeometry(2.2, 2.6, 0.15),
+                new THREE.MeshLambertMaterial({ color: 0x2d2d2d })
+            );
+            exitDoor.position.set(0, 1.3, roomDepth / 2 - 0.08);
+            houseScene.add(exitDoor);
+            houseExitZone = {
+                minX: -1.1,
+                maxX: 1.1,
+                minZ: roomDepth / 2 - 0.9,
+                maxZ: roomDepth / 2 - 0.1
+            };
+
+            houseFurniture = [];
+            houseNPC = null;
+            kajHouseBedZone = null;
+
+            if (isKajHouse) {
+                const bedGroup = new THREE.Group();
+                const frameMat = new THREE.MeshLambertMaterial({ color: 0x3a2a1a });
+                const mattressMat = new THREE.MeshLambertMaterial({ color: 0xb0b0b0 });
+                const pillowMat = new THREE.MeshLambertMaterial({ color: 0xe5e5e5 });
+
+                const bedFrame = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.35, 1.6), frameMat);
+                bedFrame.position.y = 0.18;
+                bedGroup.add(bedFrame);
+
+                const mattress = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.25, 1.4), mattressMat);
+                mattress.position.y = 0.42;
+                bedGroup.add(mattress);
+
+                const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.15, 0.45), pillowMat);
+                pillow.position.set(-0.8, 0.55, -0.45);
+                bedGroup.add(pillow);
+
+                bedGroup.position.set(-3.2, 0, -2.8);
+                houseScene.add(bedGroup);
+                houseFurniture.push({ mesh: bedGroup, halfW: 1.6, halfD: 0.9 });
+                kajHouseBedZone = {
+                    minX: bedGroup.position.x - 1.2,
+                    maxX: bedGroup.position.x + 1.2,
+                    minZ: bedGroup.position.z - 0.6,
+                    maxZ: bedGroup.position.z + 0.6,
+                    layPosition: new THREE.Vector3(bedGroup.position.x, 0, bedGroup.position.z + 0.2)
+                };
+
+                const cigPack = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.2, 0.05, 0.12),
+                    new THREE.MeshLambertMaterial({ color: 0xf2f2f2 })
+                );
+                cigPack.position.set(-1.6, 0.03, -1.4);
+                houseScene.add(cigPack);
+
+                const gunPile = new THREE.Group();
+                const gunMat = new THREE.MeshLambertMaterial({ color: 0x2b2b2b });
+                for (let i = 0; i < 6; i++) {
+                    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 0.18), gunMat);
+                    gun.position.set((Math.random() - 0.5) * 0.6, 0.05 + i * 0.03, (Math.random() - 0.5) * 0.6);
+                    gun.rotation.y = Math.random() * Math.PI;
+                    gunPile.add(gun);
+                }
+                gunPile.position.set(2.6, 0, -2.2);
+                houseScene.add(gunPile);
+                houseFurniture.push({ mesh: gunPile, halfW: 1.2, halfD: 1.2 });
+                return;
+            }
+
+            // Random furniture
+            const furnitureCount = 6 + Math.floor(Math.random() * 4);
+            const furnitureMat = new THREE.MeshLambertMaterial({ color: 0x5a4a3a });
+            for (let i = 0; i < furnitureCount; i++) {
+                const w = randomRange(0.6, 1.6);
+                const h = randomRange(0.5, 1.4);
+                const d = randomRange(0.6, 1.4);
+                const furniture = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), furnitureMat);
+                furniture.position.set(
+                    randomRange(houseBounds.minX + 1, houseBounds.maxX - 1),
+                    h / 2,
+                    randomRange(houseBounds.minZ + 1, houseBounds.maxZ - 1)
+                );
+                houseScene.add(furniture);
+                houseFurniture.push({ mesh: furniture, halfW: w / 2 + 0.3, halfD: d / 2 + 0.3 });
+            }
+
+            // House NPC
+            const npc = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.5, 0.3), new THREE.MeshLambertMaterial({ color: 0xaa4444 }));
+            body.position.y = 0.75;
+            npc.add(body);
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 0.35), new THREE.MeshLambertMaterial({ color: 0xd4b896 }));
+            head.position.y = 1.7;
+            npc.add(head);
+            npc.position.set(0, 0, -2.5);
+            houseScene.add(npc);
+            houseNPC = npc;
+        }
+
+        function checkHouseCollision(newPosition) {
+            if (!houseBounds) return false;
+            if (newPosition.x < houseBounds.minX || newPosition.x > houseBounds.maxX) return true;
+            if (newPosition.z < houseBounds.minZ || newPosition.z > houseBounds.maxZ) return true;
+
+            for (const item of houseFurniture) {
+                const dx = Math.abs(newPosition.x - item.mesh.position.x);
+                const dz = Math.abs(newPosition.z - item.mesh.position.z);
+                if (dx < item.halfW && dz < item.halfD) return true;
+            }
+            return false;
+        }
+
+        function isNearExit() {
+            if (!houseExitZone) return false;
+            return (
+                myPosition.x >= houseExitZone.minX && myPosition.x <= houseExitZone.maxX &&
+                myPosition.z >= houseExitZone.minZ && myPosition.z <= houseExitZone.maxZ
+            );
+        }
+
+        function updateExitIndicator() {
+            if (!inHouse || houseCombatActive || houseDialogEl.style.display === 'block' || corpseDialogEl.style.display === 'block') {
+                exitIndicatorEl.style.display = 'none';
+                return;
+            }
+            exitIndicatorEl.style.display = isNearExit() ? 'block' : 'none';
+        }
+
+        function isNearBed() {
+            if (!kajHouseBedZone) return false;
+            return (
+                myPosition.x >= kajHouseBedZone.minX && myPosition.x <= kajHouseBedZone.maxX &&
+                myPosition.z >= kajHouseBedZone.minZ && myPosition.z <= kajHouseBedZone.maxZ
+            );
+        }
+
+        function updateBedIndicator() {
+            if (!bedIndicatorEl || !currentHouseIsKaj || !inHouse || houseCombatActive) {
+                if (bedIndicatorEl) bedIndicatorEl.style.display = 'none';
+                return;
+            }
+            bedIndicatorEl.style.display = isNearBed() ? 'block' : 'none';
+        }
+
+        function layInBed() {
+            if (!kajHouseBedZone) return;
+            myPosition.copy(kajHouseBedZone.layPosition);
+            fpCameraPitch = 0.35;
+        }
+
+        function setHouseNpcCorpse() {
+            if (!houseNPC) return;
+            houseNPC.rotation.x = -Math.PI / 2;
+            houseNPC.position.y = 0.3;
+        }
+
+        function enterHouse(defeatedAlready, isKajHouse = false) {
+            if (inHouse || houseEntryCooldown > 0) return;
+            inHouse = true;
+            houseEntryCooldown = 120;
+            lastOutsidePosition.copy(myPosition);
+            currentHouseIsKaj = isKajHouse;
+
+            // Reset and build a fresh interior
+            createHouseInterior(isKajHouse);
+
+            // Teleport inside
+            myPosition.set(0, 0, 3.5);
+            isFirstPersonMode = true;
+            if (localPlayerMesh) localPlayerMesh.visible = false;
+            renderer.domElement.requestPointerLock();
+
+            // Show UI
+            document.getElementById('crosshair').style.display = 'block';
+            document.getElementById('weapon-display').style.display = 'block';
+            updateWeaponDisplay();
+
+            // Show dialog
+            houseCombatActive = false;
+            houseDialogEl.style.display = 'none';
+            corpseDialogEl.style.display = 'none';
+            corpseLootBtn.disabled = false;
+            corpseEatBtn.disabled = false;
+            corpseRemoroBtn.disabled = false;
+            if (isKajHouse) {
+                houseAttackBtn.disabled = true;
+                updateExitIndicator();
+                updateBedIndicator();
+                return;
+            }
+            if (defeatedAlready) {
+                setHouseNpcCorpse();
+                corpseDialogTextEl.textContent = 'You\'ve already killed this person. You can\'t kill them again, you fucking lunatic.';
+                corpseDialogEl.style.display = 'block';
+                houseAttackBtn.disabled = true;
+            } else {
+                const line = houseDialogLines[Math.floor(Math.random() * houseDialogLines.length)];
+                houseDialogTextEl.textContent = line;
+                houseDialogEl.style.display = 'block';
+                houseAttackBtn.disabled = false;
+            }
+            updateExitIndicator();
+        }
+
+        function exitHouse() {
+            inHouse = false;
+            houseCombatActive = false;
+            houseScene = null;
+            houseFurniture = [];
+            houseNPC = null;
+            houseBounds = null;
+            houseExitZone = null;
+            kajHouseBedZone = null;
+            myPosition.copy(lastOutsidePosition);
+            if (localPlayerMesh) localPlayerMesh.visible = true;
+            isFirstPersonMode = false;
+            targetPosition = null;
+            document.exitPointerLock();
+            houseDialogEl.style.display = 'none';
+            combatUiEl.style.display = 'none';
+            corpseDialogEl.style.display = 'none';
+            document.getElementById('crosshair').style.display = 'none';
+            document.getElementById('weapon-display').style.display = 'none';
+            exitIndicatorEl.style.display = 'none';
+            bedIndicatorEl.style.display = 'none';
+            houseEntryCooldown = 240;
+            currentHouseId = null;
+            currentHouseIsKaj = false;
+        }
+
+        function checkHouseEntry() {
+            if (inHouse || houseEntryCooldown > 0 || isFirstPersonMode) return;
+            const entryDistance = 2.2;
+            for (const mesh of collisionMeshes) {
+                const box = mesh.userData.worldBox;
+                const height = mesh.userData.height || 0;
+                if (!box || height < 2.5) continue;
+                if (
+                    myPosition.x > box.min.x - entryDistance && myPosition.x < box.max.x + entryDistance &&
+                    myPosition.z > box.min.z - entryDistance && myPosition.z < box.max.z + entryDistance
+                ) {
+                    const houseId = getHouseIdFromBox(box);
+                    currentHouseId = houseId;
+                    enterHouse(houseDefeated.has(houseId), houseId === kajHouseId);
+                    break;
+                }
+            }
+        }
+
+        function updateHouseMovement() {
+            if (!isFirstPersonMode) return;
+
+            if (houseCombatActive) {
+                camera.position.copy(myPosition).add(new THREE.Vector3(0, 1.7, 0));
+                camera.rotation.order = 'YXZ';
+                camera.rotation.y = fpCameraYaw;
+                camera.rotation.x = fpCameraPitch;
+                camera.rotation.z = 0;
+                updateExitIndicator();
+                updateBedIndicator();
+                return;
+            }
+
+            const forward = new THREE.Vector3(
+                -Math.sin(fpCameraYaw),
+                0,
+                -Math.cos(fpCameraYaw)
+            );
+            const right = new THREE.Vector3(
+                Math.cos(fpCameraYaw),
+                0,
+                -Math.sin(fpCameraYaw)
+            );
+
+            const newPos = myPosition.clone();
+            if (fpKeys.w) newPos.add(forward.clone().multiplyScalar(fpMoveSpeed));
+            if (fpKeys.s) newPos.add(forward.clone().multiplyScalar(-fpMoveSpeed));
+            if (fpKeys.a) newPos.add(right.clone().multiplyScalar(-fpMoveSpeed));
+            if (fpKeys.d) newPos.add(right.clone().multiplyScalar(fpMoveSpeed));
+
+            if (!checkHouseCollision(newPos)) {
+                myPosition.copy(newPos);
+            }
+
+            camera.position.copy(myPosition).add(new THREE.Vector3(0, 1.7, 0));
+            camera.rotation.order = 'YXZ';
+            camera.rotation.y = fpCameraYaw;
+            camera.rotation.x = fpCameraPitch;
+            camera.rotation.z = 0;
+
+            updateExitIndicator();
+            updateBedIndicator();
+            if (isNearExit() && houseDialogEl.style.display !== 'block' && corpseDialogEl.style.display !== 'block') {
+                exitHouse();
+            }
+        }
+
+        function logCombat(text) {
+            const line = document.createElement('div');
+            line.textContent = text;
+            combatLogEl.appendChild(line);
+            combatLogEl.scrollTop = combatLogEl.scrollHeight;
+        }
+
+        function playCombatAttackSound(isPlayer) {
+            if (isPlayer) {
+                const weapon = weapons[currentWeaponIndex];
+                if (!weapon.explosive) {
+                    if (weapon.name === 'Pistol') {
+                        playSound(pistolFireSound);
+                    } else if (weapon.name === 'Rifle' || weapon.name === 'Shotgun') {
+                        playSound(smgFireSound);
+                    }
+                } else {
+                    playSound(explosionSound);
+                }
+            } else {
+                playSound(smgFireSound);
+            }
+        }
+
+        function animateNpcHit() {
+            if (!houseNPC) return;
+            const start = performance.now();
+            const duration = 140;
+            const originalPos = houseNPC.position.clone();
+            const flashMeshes = [];
+            houseNPC.traverse((child) => {
+                if (child.isMesh) {
+                    flashMeshes.push({ mesh: child, color: child.material.color.getHex() });
+                    child.material.color.setHex(0xff6666);
+                }
+            });
+
+            const animate = () => {
+                const t = (performance.now() - start) / duration;
+                if (t < 1) {
+                    houseNPC.position.x = originalPos.x + (Math.random() - 0.5) * 0.08;
+                    houseNPC.position.z = originalPos.z + (Math.random() - 0.5) * 0.08;
+                    requestAnimationFrame(animate);
+                } else {
+                    houseNPC.position.copy(originalPos);
+                    flashMeshes.forEach((item) => item.mesh.material.color.setHex(item.color));
+                }
+            };
+            animate();
+        }
+
+        function updateCombatUI() {
+            combatPlayerHpEl.textContent = `${combatState.player.hp}/${combatState.player.maxHp}`;
+            combatRemoroHpEl.textContent = `${combatState.remoro.hp}/${combatState.remoro.maxHp}`;
+            combatEnemyHpEl.textContent = `${combatState.enemy.hp}/${combatState.enemy.maxHp}`;
+            updateStatusHud();
+        }
+
+        function startCombat() {
+            houseCombatActive = true;
+            combatUiEl.style.display = 'block';
+            houseDialogEl.style.display = 'none';
+            corpseDialogEl.style.display = 'none';
+            combatLogEl.innerHTML = '';
+            combatState.player.hp = combatState.player.maxHp;
+            combatState.remoro.hp = combatState.remoro.maxHp;
+            combatState.enemy.hp = combatState.enemy.maxHp;
+            playerDefending = false;
+            combatActionsDisabled = false;
+            combatAttackBtn.disabled = false;
+            combatTalkBtn.disabled = false;
+            combatDefendBtn.disabled = false;
+            combatFleeBtn.disabled = false;
+            updateCombatUI();
+            logCombat('Combat begins.');
+        }
+
+        function endCombat(victory) {
+            houseCombatActive = false;
+            combatActionsDisabled = true;
+            combatAttackBtn.disabled = true;
+            combatTalkBtn.disabled = true;
+            combatDefendBtn.disabled = true;
+            combatFleeBtn.disabled = true;
+            logCombat(victory ? 'You won the fight.' : 'You were defeated.');
+            if (victory && houseNPC) {
+                setHouseNpcCorpse();
+            }
+            setTimeout(() => {
+                combatUiEl.style.display = 'none';
+                if (victory) {
+                    if (currentHouseId) {
+                        houseDefeated.add(currentHouseId);
+                    }
+                    corpseDialogTextEl.textContent = 'The owner is dead. What do you do?';
+                    corpseDialogEl.style.display = 'block';
+                    updateExitIndicator();
+                } else {
+                    exitHouse();
+                }
+            }, 1200);
+        }
+
+        function rollDamage(min, max) {
+            return Math.floor(randomRange(min, max + 1));
+        }
+
+        function enemyAttack() {
+            const dmg = rollDamage(combatState.enemy.atkMin, combatState.enemy.atkMax);
+            const finalDmg = playerDefending ? Math.floor(dmg * 0.5) : dmg;
+            combatState.player.hp = Math.max(0, combatState.player.hp - finalDmg);
+            playerDefending = false;
+            flashHurt();
+            logCombat(`Owner hits you for ${finalDmg}.`);
+            updateCombatUI();
+            if (combatState.player.hp <= 0) {
+                triggerPlayerDeath('combat');
+            }
+        }
+
+        function remoroAttack() {
+            const dmg = rollDamage(combatState.remoro.atkMin, combatState.remoro.atkMax);
+            combatState.enemy.hp = Math.max(0, combatState.enemy.hp - dmg);
+            playCombatAttackSound(false);
+            animateNpcHit();
+            logCombat(`Remoro hits Owner for ${dmg}.`);
+            updateCombatUI();
+        }
+
+        function playerAttack() {
+            const dmg = rollDamage(combatState.player.atkMin, combatState.player.atkMax);
+            combatState.enemy.hp = Math.max(0, combatState.enemy.hp - dmg);
+            playCombatAttackSound(true);
+            animateNpcHit();
+            logCombat(`You hit Owner for ${dmg}.`);
+            updateCombatUI();
+        }
+
+        function handlePlayerAction(action) {
+            if (!houseCombatActive) return;
+            if (combatActionsDisabled) return;
+            if (combatState.player.hp <= 0 || combatState.enemy.hp <= 0) return;
+
+            combatActionsDisabled = true;
+            combatAttackBtn.disabled = true;
+            combatTalkBtn.disabled = true;
+            combatDefendBtn.disabled = true;
+            combatFleeBtn.disabled = true;
+
+            if (action === 'attack') {
+                playerAttack();
+            } else if (action === 'talk') {
+                const line = combatTalkLines[Math.floor(Math.random() * combatTalkLines.length)];
+                logCombat(`You: ${line}`);
+            } else if (action === 'defend') {
+                playerDefending = true;
+                logCombat('You brace for impact.');
+            } else if (action === 'flee') {
+                logCombat('You flee the house.');
+                endCombat(false);
+                return;
+            }
+
+            if (combatState.enemy.hp <= 0) {
+                endCombat(true);
+                return;
+            }
+
+            setTimeout(() => {
+                remoroAttack();
+                if (combatState.enemy.hp <= 0) {
+                    endCombat(true);
+                    return;
+                }
+
+                setTimeout(() => {
+                    enemyAttack();
+                    if (combatState.player.hp <= 0) return;
+                    if (houseCombatActive) {
+                        combatActionsDisabled = false;
+                        combatAttackBtn.disabled = false;
+                        combatTalkBtn.disabled = false;
+                        combatDefendBtn.disabled = false;
+                        combatFleeBtn.disabled = false;
+                    }
+                }, 450);
+            }, 350);
+        }
         
-        // No first-person weapon models in isometric view
+        // Create viewmodel scene (rendered on top of main scene)
+        function initViewmodelScene() {
+            viewmodelScene = new THREE.Scene();
+            viewmodelCamera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 10);
+            
+            // Add lighting to viewmodel scene
+            const vmAmbient = new THREE.AmbientLight(0xffffff, 0.8);
+            viewmodelScene.add(vmAmbient);
+            const vmDirectional = new THREE.DirectionalLight(0xffffff, 0.6);
+            vmDirectional.position.set(1, 1, 1);
+            viewmodelScene.add(vmDirectional);
+            
+            // Create arms
+            viewmodelArms = createViewmodelArms();
+            viewmodelScene.add(viewmodelArms);
+            
+            // Create weapon models
+            viewmodelWeapons = [
+                createPistolViewmodel(),
+                createRifleViewmodel(),
+                createRPGViewmodel(),
+                createShotgunViewmodel()
+            ];
+            
+            // Add all weapons to scene but hide them initially
+            viewmodelWeapons.forEach((weapon, index) => {
+                weapon.visible = index === 0;
+                viewmodelScene.add(weapon);
+            });
+            currentViewmodelWeapon = viewmodelWeapons[0];
+        }
+        
+        // Create arm models
+        function createViewmodelArms() {
+            const group = new THREE.Group();
+            const skinColor = 0xffcc99;
+            const sleeveColor = 0x2d5a27; // Green sleeve
+            
+            // Right arm
+            const rightArm = new THREE.Group();
+            
+            // Upper arm (sleeve)
+            const upperArmGeo = new THREE.BoxGeometry(0.08, 0.2, 0.08);
+            const sleeveMat = new THREE.MeshLambertMaterial({ color: sleeveColor });
+            const upperArm = new THREE.Mesh(upperArmGeo, sleeveMat);
+            upperArm.position.set(0, -0.1, 0);
+            rightArm.add(upperArm);
+            
+            // Forearm (skin)
+            const forearmGeo = new THREE.BoxGeometry(0.07, 0.18, 0.07);
+            const skinMat = new THREE.MeshLambertMaterial({ color: skinColor });
+            const forearm = new THREE.Mesh(forearmGeo, skinMat);
+            forearm.position.set(0, -0.25, 0);
+            rightArm.add(forearm);
+            
+            // Hand
+            const handGeo = new THREE.BoxGeometry(0.08, 0.08, 0.06);
+            const hand = new THREE.Mesh(handGeo, skinMat);
+            hand.position.set(0, -0.38, 0);
+            rightArm.add(hand);
+            
+            rightArm.position.set(0.2, -0.15, -0.3);
+            rightArm.rotation.x = Math.PI / 2.2;
+            group.add(rightArm);
+            
+            // Left arm (supporting)
+            const leftArm = new THREE.Group();
+            
+            const leftUpperArm = new THREE.Mesh(upperArmGeo, sleeveMat);
+            leftUpperArm.position.set(0, -0.1, 0);
+            leftArm.add(leftUpperArm);
+            
+            const leftForearm = new THREE.Mesh(forearmGeo, skinMat);
+            leftForearm.position.set(0, -0.25, 0);
+            leftArm.add(leftForearm);
+            
+            const leftHand = new THREE.Mesh(handGeo, skinMat);
+            leftHand.position.set(0, -0.38, 0);
+            leftArm.add(leftHand);
+            
+            leftArm.position.set(-0.15, -0.2, -0.4);
+            leftArm.rotation.x = Math.PI / 2;
+            leftArm.rotation.z = 0.3;
+            group.add(leftArm);
+            
+            return group;
+        }
+        
+        // Create pistol viewmodel
+        function createPistolViewmodel() {
+            const group = new THREE.Group();
+            const metalColor = 0x333333;
+            const metalMat = new THREE.MeshLambertMaterial({ color: metalColor });
+            const gripMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+            
+            // Slide (top part)
+            const slideGeo = new THREE.BoxGeometry(0.04, 0.05, 0.18);
+            const slide = new THREE.Mesh(slideGeo, metalMat);
+            slide.position.set(0, 0.025, 0);
+            group.add(slide);
+            
+            // Frame/grip
+            const gripGeo = new THREE.BoxGeometry(0.035, 0.12, 0.08);
+            const grip = new THREE.Mesh(gripGeo, gripMat);
+            grip.position.set(0, -0.05, 0.04);
+            grip.rotation.x = -0.2;
+            group.add(grip);
+            
+            // Barrel
+            const barrelGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.08, 8);
+            const barrel = new THREE.Mesh(barrelGeo, metalMat);
+            barrel.rotation.x = Math.PI / 2;
+            barrel.position.set(0, 0.02, -0.12);
+            group.add(barrel);
+            
+            // Trigger guard
+            const guardGeo = new THREE.TorusGeometry(0.02, 0.005, 8, 8, Math.PI);
+            const guard = new THREE.Mesh(guardGeo, metalMat);
+            guard.position.set(0, -0.02, 0.02);
+            guard.rotation.y = Math.PI / 2;
+            group.add(guard);
+            
+            group.position.set(0.18, -0.18, -0.35);
+            group.rotation.y = -0.1;
+            return group;
+        }
+        
+        // Create rifle viewmodel
+        function createRifleViewmodel() {
+            const group = new THREE.Group();
+            const metalMat = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
+            const woodMat = new THREE.MeshLambertMaterial({ color: 0x4a3728 });
+            
+            // Receiver
+            const receiverGeo = new THREE.BoxGeometry(0.06, 0.08, 0.35);
+            const receiver = new THREE.Mesh(receiverGeo, metalMat);
+            group.add(receiver);
+            
+            // Barrel
+            const barrelGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.4, 8);
+            const barrel = new THREE.Mesh(barrelGeo, metalMat);
+            barrel.rotation.x = Math.PI / 2;
+            barrel.position.set(0, 0.01, -0.35);
+            group.add(barrel);
+            
+            // Stock
+            const stockGeo = new THREE.BoxGeometry(0.05, 0.1, 0.2);
+            const stock = new THREE.Mesh(stockGeo, woodMat);
+            stock.position.set(0, -0.02, 0.25);
+            group.add(stock);
+            
+            // Magazine
+            const magGeo = new THREE.BoxGeometry(0.04, 0.15, 0.06);
+            const mag = new THREE.Mesh(magGeo, metalMat);
+            mag.position.set(0, -0.1, 0.05);
+            group.add(mag);
+            
+            // Scope rail
+            const railGeo = new THREE.BoxGeometry(0.03, 0.02, 0.15);
+            const rail = new THREE.Mesh(railGeo, metalMat);
+            rail.position.set(0, 0.05, -0.05);
+            group.add(rail);
+            
+            group.position.set(0.15, -0.2, -0.4);
+            group.rotation.y = -0.05;
+            return group;
+        }
+        
+        // Create RPG viewmodel
+        function createRPGViewmodel() {
+            const group = new THREE.Group();
+            const tubeMat = new THREE.MeshLambertMaterial({ color: 0x3d5c3d });
+            const metalMat = new THREE.MeshLambertMaterial({ color: 0x444444 });
+            const warheadMat = new THREE.MeshLambertMaterial({ color: 0x556b2f });
+            
+            // Main tube
+            const tubeGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.7, 12);
+            const tube = new THREE.Mesh(tubeGeo, tubeMat);
+            tube.rotation.x = Math.PI / 2;
+            group.add(tube);
+            
+            // Front sight
+            const sightGeo = new THREE.BoxGeometry(0.02, 0.06, 0.02);
+            const sight = new THREE.Mesh(sightGeo, metalMat);
+            sight.position.set(0, 0.07, -0.25);
+            group.add(sight);
+            
+            // Warhead (sticking out front)
+            const warheadGeo = new THREE.ConeGeometry(0.04, 0.15, 8);
+            const warhead = new THREE.Mesh(warheadGeo, warheadMat);
+            warhead.rotation.x = -Math.PI / 2;
+            warhead.position.set(0, 0, -0.45);
+            group.add(warhead);
+            
+            // Grip
+            const gripGeo = new THREE.BoxGeometry(0.04, 0.12, 0.06);
+            const grip = new THREE.Mesh(gripGeo, metalMat);
+            grip.position.set(0, -0.08, 0.1);
+            group.add(grip);
+            
+            group.position.set(0.2, -0.15, -0.35);
+            return group;
+        }
+        
+        // Create shotgun viewmodel
+        function createShotgunViewmodel() {
+            const group = new THREE.Group();
+            const metalMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+            const woodMat = new THREE.MeshLambertMaterial({ color: 0x5c4033 });
+            
+            // Barrel (double barrel)
+            const barrelGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.5, 8);
+            const barrel1 = new THREE.Mesh(barrelGeo, metalMat);
+            barrel1.rotation.x = Math.PI / 2;
+            barrel1.position.set(0.015, 0.02, -0.1);
+            group.add(barrel1);
+            
+            const barrel2 = new THREE.Mesh(barrelGeo, metalMat);
+            barrel2.rotation.x = Math.PI / 2;
+            barrel2.position.set(-0.015, 0.02, -0.1);
+            group.add(barrel2);
+            
+            // Receiver
+            const receiverGeo = new THREE.BoxGeometry(0.07, 0.08, 0.12);
+            const receiver = new THREE.Mesh(receiverGeo, metalMat);
+            receiver.position.set(0, 0, 0.15);
+            group.add(receiver);
+            
+            // Stock
+            const stockGeo = new THREE.BoxGeometry(0.06, 0.1, 0.25);
+            const stock = new THREE.Mesh(stockGeo, woodMat);
+            stock.position.set(0, -0.02, 0.32);
+            group.add(stock);
+            
+            // Forend (pump grip area)
+            const forendGeo = new THREE.BoxGeometry(0.06, 0.05, 0.12);
+            const forend = new THREE.Mesh(forendGeo, woodMat);
+            forend.position.set(0, -0.02, -0.05);
+            group.add(forend);
+            
+            group.position.set(0.15, -0.2, -0.4);
+            group.rotation.y = -0.05;
+            return group;
+        }
+        
+        // Update viewmodel (called every frame when in first person)
+        function updateViewmodel() {
+            if (!isFirstPersonMode || !viewmodelScene) return;
+            
+            // Switch weapon models if needed
+            if (currentViewmodelWeapon !== viewmodelWeapons[currentWeaponIndex]) {
+                if (currentViewmodelWeapon) currentViewmodelWeapon.visible = false;
+                currentViewmodelWeapon = viewmodelWeapons[currentWeaponIndex];
+                currentViewmodelWeapon.visible = true;
+            }
+            
+            // Bob animation based on movement
+            const isMoving = fpKeys.w || fpKeys.a || fpKeys.s || fpKeys.d;
+            if (isMoving) {
+                viewmodelBobTime += 0.15;
+            }
+            
+            const bobX = Math.sin(viewmodelBobTime) * 0.01;
+            const bobY = Math.abs(Math.cos(viewmodelBobTime)) * 0.008;
+            
+            // Apply bob to arms and weapon
+            if (viewmodelArms) {
+                viewmodelArms.position.x = bobX;
+                viewmodelArms.position.y = bobY - 0.1;
+            }
+            if (currentViewmodelWeapon) {
+                const basePos = currentViewmodelWeapon.userData.basePosition || currentViewmodelWeapon.position.clone();
+                if (!currentViewmodelWeapon.userData.basePosition) {
+                    currentViewmodelWeapon.userData.basePosition = basePos.clone();
+                }
+                currentViewmodelWeapon.position.x = basePos.x + bobX;
+                currentViewmodelWeapon.position.y = basePos.y + bobY - viewmodelRecoil * 0.1;
+                currentViewmodelWeapon.position.z = basePos.z + viewmodelRecoil * 0.05;
+                currentViewmodelWeapon.rotation.x = viewmodelRecoil * 0.3;
+            }
+            
+            // Decay recoil
+            viewmodelRecoil *= 0.85;
+            if (viewmodelRecoil < 0.01) viewmodelRecoil = 0;
+        }
+        
+        // Trigger viewmodel recoil animation
+        function triggerViewmodelRecoil() {
+            const weapon = weapons[currentWeaponIndex];
+            // Different recoil amounts per weapon
+            if (weapon.name === 'Pistol') viewmodelRecoil = 0.3;
+            else if (weapon.name === 'Rifle') viewmodelRecoil = 0.15;
+            else if (weapon.name === 'RPG') viewmodelRecoil = 0.8;
+            else if (weapon.name === 'Shotgun') viewmodelRecoil = 0.6;
+        }
         
         // Create click indicator (circle on ground where player clicks)
         function createClickIndicator() {
@@ -421,6 +1497,11 @@
                     if (localPlayerMesh) localPlayerMesh.visible = false;
                     renderer.domElement.requestPointerLock();
                     
+                    // Show FPS UI elements
+                    document.getElementById('crosshair').style.display = 'block';
+                    document.getElementById('weapon-display').style.display = 'block';
+                    updateWeaponDisplay();
+                    
                     setTimeout(() => {
                         transitionOverlay.style.opacity = '0';
                         isTransitioning = false;
@@ -440,6 +1521,10 @@
                 document.exitPointerLock();
                 poleDialog.style.display = 'none';
                 
+                // Hide FPS UI elements
+                document.getElementById('crosshair').style.display = 'none';
+                document.getElementById('weapon-display').style.display = 'none';
+                
                 setTimeout(() => {
                     isFirstPersonMode = false;
                     if (localPlayerMesh) localPlayerMesh.visible = true;
@@ -452,10 +1537,69 @@
             }
         }
         
+        // Update weapon display UI
+        function updateWeaponDisplay() {
+            const weaponNameEl = document.getElementById('weapon-name');
+            if (weaponNameEl) {
+                weaponNameEl.textContent = weapons[currentWeaponIndex].name;
+            }
+        }
+
+        houseLeaveBtn.addEventListener('click', () => {
+            houseDialogEl.style.display = 'none';
+            exitHouse();
+        });
+
+        houseAttackBtn.addEventListener('click', () => {
+            startCombat();
+        });
+
+        corpseLootBtn.addEventListener('click', () => {
+            const coins = Math.floor(randomRange(10, 60));
+            addKajCoins(coins);
+            corpseDialogTextEl.innerHTML = `You loot the corpse. It feels wrong.<br>+${coins} Kaj Coins.`;
+            corpseLootBtn.disabled = true;
+        });
+
+        corpseEatBtn.addEventListener('click', () => {
+            const heal = Math.floor(randomRange(10, 30));
+            restoreHealth(heal);
+            corpseDialogTextEl.innerHTML = `You stare at the body and eat. Disgusting.<br>+${heal} HP.`;
+            corpseEatBtn.disabled = true;
+        });
+
+        corpseRemoroBtn.addEventListener('click', () => {
+            const chooseLoot = Math.random() < 0.5;
+            if (chooseLoot) {
+                const line = remoroLootLines[Math.floor(Math.random() * remoroLootLines.length)];
+                const coins = Math.floor(randomRange(15, 75));
+                addKajCoins(coins);
+                corpseDialogTextEl.innerHTML = `Remoro: "${line}"<br>+${coins} Kaj Coins.`;
+            } else {
+                const line = remoroEatLines[Math.floor(Math.random() * remoroEatLines.length)];
+                const heal = Math.floor(randomRange(10, 25));
+                restoreHealth(heal);
+                corpseDialogTextEl.innerHTML = `Remoro: "${line}"<br>+${heal} HP.`;
+            }
+            corpseRemoroBtn.disabled = true;
+        });
+
+        corpseLeaveBtn.addEventListener('click', () => {
+            exitHouse();
+        });
+
+        combatAttackBtn.addEventListener('click', () => handlePlayerAction('attack'));
+        combatTalkBtn.addEventListener('click', () => handlePlayerAction('talk'));
+        combatDefendBtn.addEventListener('click', () => handlePlayerAction('defend'));
+        combatFleeBtn.addEventListener('click', () => handlePlayerAction('flee'));
+        
         // Dialog option handlers
         const noAnswerDialog = document.getElementById('no-answer-dialog');
         const remoroDialog = document.getElementById('remoro-dialog');
+        const deadBoyDialog = document.getElementById('dead-boy-dialog');
+        const talkIndicator = document.getElementById('talk-indicator');
         let bloodPool = null;
+        let boyIsDead = false;
         
         // Create blood pool
         function createBloodPool(position) {
@@ -520,6 +1664,9 @@
             };
             expandPool();
             
+            // Mark boy as dead
+            boyIsDead = true;
+            
             // After a delay, pan camera to Remoro
             setTimeout(() => {
                 panCameraToRemoro();
@@ -574,7 +1721,11 @@
                     playBoyDeathSequence();
                 } else if (choice === '3') {
                     renderer.domElement.requestPointerLock();
-                    console.log('You reach for the wire...');
+                    const blastPos = poleStarerMesh ? poleStarerMesh.position.clone() : myPosition.clone();
+                    createExplosion(blastPos, 3);
+                    setTimeout(() => {
+                        triggerPlayerDeath('wire');
+                    }, 600);
                 }
             });
         });
@@ -638,6 +1789,56 @@
             remoroTalkDialog.style.display = 'none';
             renderer.domElement.requestPointerLock();
         });
+        
+        // Dead boy dialog continue button
+        document.getElementById('dead-boy-continue').addEventListener('click', () => {
+            deadBoyDialog.style.display = 'none';
+            renderer.domElement.requestPointerLock();
+        });
+        
+        // Check if player is facing dead boy
+        function isFacingDeadBoy() {
+            if (!poleStarerMesh || !isFirstPersonMode || !boyIsDead) return false;
+            
+            // Get direction player is facing
+            const playerDir = new THREE.Vector3(
+                -Math.sin(fpCameraYaw),
+                0,
+                -Math.cos(fpCameraYaw)
+            ).normalize();
+            
+            // Get direction to dead boy
+            const toBoy = poleStarerMesh.position.clone().sub(myPosition);
+            const distToBoy = toBoy.length();
+            toBoy.y = 0;
+            toBoy.normalize();
+            
+            // Check dot product (facing direction) and distance
+            const dot = playerDir.dot(toBoy);
+            return dot > 0.7 && distToBoy < 5; // Facing within ~45 degrees and within 5 units
+        }
+        
+        // Talk to dead boy
+        function talkToDeadBoy() {
+            if (!isFacingDeadBoy()) return;
+            
+            deadBoyDialog.style.display = 'block';
+            document.exitPointerLock();
+        }
+        
+        // Update talk indicator visibility
+        function updateTalkIndicator() {
+            if (!isFirstPersonMode) {
+                talkIndicator.style.display = 'none';
+                return;
+            }
+            
+            if (isFacingRemoro() || isFacingDeadBoy()) {
+                talkIndicator.style.display = 'block';
+            } else {
+                talkIndicator.style.display = 'none';
+            }
+        }
 
         // Weapon audio
         const pistolFireSound = new Audio('/media/mp3/pistol_fire3.mp3');
@@ -1026,7 +2227,7 @@
         // Player facing direction (yaw)
         let playerYaw = 0;
         
-        // Shoot weapon (in isometric, shoot toward closest enemy or last move direction)
+        // Shoot weapon
         function shoot() {
             if (isRagdoll || !localPlayerMesh) return;
             
@@ -1044,12 +2245,28 @@
                 }
             }
             
-            // Calculate shooting direction from player facing direction
-            const direction = new THREE.Vector3(
-                -Math.sin(playerYaw),
-                0,
-                -Math.cos(playerYaw)
-            ).normalize();
+            // Trigger viewmodel recoil in first person
+            if (isFirstPersonMode) {
+                triggerViewmodelRecoil();
+            }
+            
+            // Calculate shooting direction based on view mode
+            let direction;
+            if (isFirstPersonMode) {
+                // First person: shoot where camera is looking
+                direction = new THREE.Vector3(
+                    -Math.sin(fpCameraYaw) * Math.cos(fpCameraPitch),
+                    Math.sin(fpCameraPitch),
+                    -Math.cos(fpCameraYaw) * Math.cos(fpCameraPitch)
+                ).normalize();
+            } else {
+                // Isometric: shoot in player facing direction
+                direction = new THREE.Vector3(
+                    -Math.sin(playerYaw),
+                    0,
+                    -Math.cos(playerYaw)
+                ).normalize();
+            }
             
             const pelletCount = weapon.pellets || 1;
             
@@ -1057,12 +2274,15 @@
                 // Apply spread
                 const spreadDir = direction.clone();
                 spreadDir.x += (Math.random() - 0.5) * weapon.spread * 2;
+                if (isFirstPersonMode) {
+                    spreadDir.y += (Math.random() - 0.5) * weapon.spread * 2;
+                }
                 spreadDir.z += (Math.random() - 0.5) * weapon.spread * 2;
                 spreadDir.normalize();
                 
                 // Create projectile visual from player position
                 const startPos = myPosition.clone();
-                startPos.y = 1; // Chest height
+                startPos.y = isFirstPersonMode ? 1.7 : 1; // Eye level in FP, chest in isometric
                 startPos.add(direction.clone().multiplyScalar(0.5)); // Start slightly in front
                 const projectile = createProjectile(startPos, spreadDir, weapon);
                 projectiles.push(projectile);
@@ -1076,8 +2296,8 @@
                     x: myPosition.x,
                     y: myPosition.y + 1,
                     z: myPosition.z,
-                    yaw: playerYaw,
-                    pitch: 0
+                    yaw: isFirstPersonMode ? fpCameraYaw : playerYaw,
+                    pitch: isFirstPersonMode ? fpCameraPitch : 0
                 }));
             }
         }
@@ -1277,15 +2497,27 @@
             // Create click indicator
             clickIndicator = createClickIndicator();
             
+            // Initialize viewmodel scene for first-person
+            initViewmodelScene();
+            
             // Position camera for isometric view
             updateCameraPosition();
+
+            updateStatusHud();
         }
         
         // Handle mouse click for movement
         renderer.domElement.addEventListener('click', (event) => {
             if (!localPlayerMesh) return;
             if (isRagdoll) return;
-            if (isFirstPersonMode) return; // Disable click-to-move in first person
+            if (isPlayerDead) return;
+            if (inHouse && (houseDialogEl.style.display === 'block' || corpseDialogEl.style.display === 'block' || houseCombatActive)) return;
+            
+            // In first person mode, click to shoot
+            if (isFirstPersonMode) {
+                shoot();
+                return;
+            }
             
             // Calculate mouse position in normalized device coordinates
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -1315,6 +2547,8 @@
         // Right click to shoot
         renderer.domElement.addEventListener('contextmenu', (event) => {
             event.preventDefault();
+            if (isPlayerDead) return;
+            if (inHouse && (houseDialogEl.style.display === 'block' || corpseDialogEl.style.display === 'block' || houseCombatActive)) return;
             shoot();
         });
         
@@ -1334,6 +2568,7 @@
         
         // Key event listeners
         document.addEventListener('keydown', (event) => {
+            if (isPlayerDead) return;
             if (event.key.toLowerCase() === 'v') {
                 if (vatsActive) {
                     exitVats();
@@ -1365,6 +2600,7 @@
             // Weapon switching with number keys
             if (event.key >= '1' && event.key <= '4') {
                 currentWeaponIndex = parseInt(event.key) - 1;
+                updateWeaponDisplay();
             }
             
             // First person WASD controls
@@ -1374,7 +2610,21 @@
                     case 'a': fpKeys.a = true; break;
                     case 's': fpKeys.s = true; break;
                     case 'd': fpKeys.d = true; break;
-                    case 'e': talkToRemoro(); break;
+                    case 'e': 
+                        if (inHouse && currentHouseIsKaj && isNearBed()) {
+                            layInBed();
+                            break;
+                        }
+                        if (inHouse && isNearExit() && houseDialogEl.style.display !== 'block' && corpseDialogEl.style.display !== 'block') {
+                            exitHouse();
+                            break;
+                        }
+                        if (isFacingDeadBoy()) {
+                            talkToDeadBoy();
+                        } else {
+                            talkToRemoro();
+                        }
+                        break;
                 }
             }
         });
@@ -1438,6 +2688,18 @@
                                         child.frustumCulled = true;
                                         child.matrixAutoUpdate = false;
                                         child.updateMatrix();
+                                        // Only add to collision meshes if tall enough to be a wall (not floor/road)
+                                        child.geometry.computeBoundingBox();
+                                        const bbox = child.geometry.boundingBox;
+                                        if (bbox) {
+                                            const height = bbox.max.y - bbox.min.y;
+                                            if (height > 1.5) { // Only collide with meshes taller than 1.5 units
+                                                child.updateMatrixWorld(true);
+                                                child.userData.worldBox = bbox.clone().applyMatrix4(child.matrixWorld);
+                                                child.userData.height = height;
+                                                collisionMeshes.push(child);
+                                            }
+                                        }
                                     }
                                 });
                                 scene.add(object);
@@ -1461,6 +2723,7 @@
                 Promise.all(mapParts.map(part => loadMapPart(part)))
                     .then(() => {
                         loadingDiv.style.display = 'none';
+                        setupKajHouseLabel();
                         console.log('Map loaded successfully with textures');
                     })
                     .catch((error) => {
@@ -1492,6 +2755,18 @@
                                         child.frustumCulled = true;
                                         child.matrixAutoUpdate = false;
                                         child.updateMatrix();
+                                        // Only add to collision meshes if tall enough to be a wall (not floor/road)
+                                        child.geometry.computeBoundingBox();
+                                        const bbox = child.geometry.boundingBox;
+                                        if (bbox) {
+                                            const height = bbox.max.y - bbox.min.y;
+                                            if (height > 1.5) { // Only collide with meshes taller than 1.5 units
+                                                child.updateMatrixWorld(true);
+                                                child.userData.worldBox = bbox.clone().applyMatrix4(child.matrixWorld);
+                                                child.userData.height = height;
+                                                collisionMeshes.push(child);
+                                            }
+                                        }
                                     }
                                 });
                                 scene.add(object);
@@ -1511,9 +2786,46 @@
                 Promise.all(mapParts.map(part => loadMapPartNoMaterials(part)))
                     .then(() => {
                         loadingDiv.style.display = 'none';
+                        setupKajHouseLabel();
                     });
             }
         );
+        
+        // Check collision with buildings using raycasting
+        function checkCollision(newPosition) {
+            if (collisionMeshes.length === 0) return false;
+            
+            // Cast rays in 8 directions from player position at different heights
+            const directions = [
+                new THREE.Vector3(1, 0, 0),
+                new THREE.Vector3(-1, 0, 0),
+                new THREE.Vector3(0, 0, 1),
+                new THREE.Vector3(0, 0, -1),
+                new THREE.Vector3(1, 0, 1).normalize(),
+                new THREE.Vector3(1, 0, -1).normalize(),
+                new THREE.Vector3(-1, 0, 1).normalize(),
+                new THREE.Vector3(-1, 0, -1).normalize()
+            ];
+            
+            // Check at multiple heights (feet, waist, chest)
+            const heights = [0.2, 0.8, 1.4];
+            
+            for (const height of heights) {
+                const origin = newPosition.clone();
+                origin.y += height;
+                
+                for (const dir of directions) {
+                    const ray = new THREE.Raycaster(origin, dir, 0, playerRadius);
+                    const intersects = ray.intersectObjects(collisionMeshes, false);
+                    
+                    if (intersects.length > 0) {
+                        return true; // Collision detected
+                    }
+                }
+            }
+            
+            return false;
+        }
         
         // Update isometric camera position to follow player
         function updateCameraPosition() {
@@ -1530,10 +2842,40 @@
                     -Math.sin(fpCameraYaw)
                 );
                 
-                if (fpKeys.w) myPosition.add(forward.clone().multiplyScalar(fpMoveSpeed));
-                if (fpKeys.s) myPosition.add(forward.clone().multiplyScalar(-fpMoveSpeed));
-                if (fpKeys.a) myPosition.add(right.clone().multiplyScalar(-fpMoveSpeed));
-                if (fpKeys.d) myPosition.add(right.clone().multiplyScalar(fpMoveSpeed));
+                // Calculate new position with collision check
+                const newPos = myPosition.clone();
+                if (fpKeys.w) newPos.add(forward.clone().multiplyScalar(fpMoveSpeed));
+                if (fpKeys.s) newPos.add(forward.clone().multiplyScalar(-fpMoveSpeed));
+                if (fpKeys.a) newPos.add(right.clone().multiplyScalar(-fpMoveSpeed));
+                if (fpKeys.d) newPos.add(right.clone().multiplyScalar(fpMoveSpeed));
+                
+                // Only move if no collision
+                const hasCollision = inHouse ? checkHouseCollision(newPos) : checkCollision(newPos);
+                if (!hasCollision) {
+                    myPosition.copy(newPos);
+                } else {
+                    // Try sliding along walls - check each axis separately
+                    const newPosX = myPosition.clone();
+                    const newPosZ = myPosition.clone();
+                    
+                    if (fpKeys.w || fpKeys.s) {
+                        const fwdMove = fpKeys.w ? fpMoveSpeed : -fpMoveSpeed;
+                        newPosX.add(new THREE.Vector3(forward.x * fwdMove, 0, 0));
+                        newPosZ.add(new THREE.Vector3(0, 0, forward.z * fwdMove));
+                    }
+                    if (fpKeys.a || fpKeys.d) {
+                        const sideMove = fpKeys.d ? fpMoveSpeed : -fpMoveSpeed;
+                        newPosX.add(new THREE.Vector3(right.x * sideMove, 0, 0));
+                        newPosZ.add(new THREE.Vector3(0, 0, right.z * sideMove));
+                    }
+                    
+                    if (!(inHouse ? checkHouseCollision(newPosX) : checkCollision(newPosX))) {
+                        myPosition.x = newPosX.x;
+                    }
+                    if (!(inHouse ? checkHouseCollision(newPosZ) : checkCollision(newPosZ))) {
+                        myPosition.z = newPosZ.z;
+                    }
+                }
                 
                 // Update player mesh position (even though invisible)
                 if (localPlayerMesh) localPlayerMesh.position.copy(myPosition);
@@ -1554,7 +2896,13 @@
         
         // Update player movement (click-to-move)
         function updatePlayer() {
-            if (!localPlayerMesh || isRagdoll) return;
+            if (!localPlayerMesh || isRagdoll || isPlayerDead) return;
+
+            if (inHouse) {
+                updateHouseMovement();
+                if (houseEntryCooldown > 0) houseEntryCooldown--;
+                return;
+            }
             
             // Move toward target position
             if (targetPosition) {
@@ -1565,7 +2913,27 @@
                     // Move player
                     direction.normalize();
                     const moveAmount = Math.min(moveSpeed * timeScale, distance);
-                    myPosition.add(direction.clone().multiplyScalar(moveAmount));
+                    const newPos = myPosition.clone().add(direction.clone().multiplyScalar(moveAmount));
+                    
+                    // Check collision before moving
+                    if (!checkCollision(newPos)) {
+                        myPosition.copy(newPos);
+                    } else {
+                        // Try sliding along walls
+                        const newPosX = myPosition.clone();
+                        newPosX.x += direction.x * moveAmount;
+                        const newPosZ = myPosition.clone();
+                        newPosZ.z += direction.z * moveAmount;
+                        
+                        if (!checkCollision(newPosX)) {
+                            myPosition.x = newPosX.x;
+                        } else if (!checkCollision(newPosZ)) {
+                            myPosition.z = newPosZ.z;
+                        } else {
+                            // Completely blocked, cancel movement
+                            targetPosition = null;
+                        }
+                    }
                     
                     // Update player mesh position
                     localPlayerMesh.position.copy(myPosition);
@@ -1584,12 +2952,20 @@
             
             // Check for pole event proximity
             checkPoleEventProximity();
+
+            // Check for house entry
+            checkHouseEntry();
             
             // Update Remoro companion
             updateRemoro();
             
+            // Update talk indicator
+            updateTalkIndicator();
+            
             // Update coordinates display
             coordsDiv.innerHTML = `X: ${myPosition.x.toFixed(2)}<br>Y: ${myPosition.y.toFixed(2)}<br>Z: ${myPosition.z.toFixed(2)}`;
+
+            if (houseEntryCooldown > 0) houseEntryCooldown--;
         }
         
         // Handle window resize
@@ -1598,6 +2974,10 @@
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
             labelRenderer.setSize(window.innerWidth, window.innerHeight);
+            if (viewmodelCamera) {
+                viewmodelCamera.aspect = window.innerWidth / window.innerHeight;
+                viewmodelCamera.updateProjectionMatrix();
+            }
         });
         
         // Animation loop
@@ -1613,8 +2993,24 @@
             }
             updateProjectiles();
             sendPositionUpdate();
-            renderer.render(scene, camera);
-            labelRenderer.render(scene, camera);
+            
+            // Update and render viewmodel in first person mode
+            updateViewmodel();
+
+            if (inHouse && houseScene) {
+                renderer.render(houseScene, camera);
+            } else {
+                renderer.render(scene, camera);
+                labelRenderer.render(scene, camera);
+            }
+            
+            // Render viewmodel on top (only in first person)
+            if (isFirstPersonMode && viewmodelScene && viewmodelCamera) {
+                renderer.autoClear = false;
+                renderer.clearDepth();
+                renderer.render(viewmodelScene, viewmodelCamera);
+                renderer.autoClear = true;
+            }
         }
         
         animate();
