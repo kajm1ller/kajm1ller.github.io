@@ -462,6 +462,63 @@
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // Cap pixel ratio for performance
         document.body.appendChild(renderer.domElement);
         
+        // Mobile touch swipe for first-person camera look
+        if (isMobile) {
+            const fpTouchState = { active: false, touchId: null, startX: 0, startY: 0 };
+            const fpTouchSensitivity = 0.003; // radians per pixel
+            
+            renderer.domElement.addEventListener('touchstart', (e) => {
+                // Only handle camera rotation in first-person mode
+                if (!isFirstPersonMode) return;
+                
+                // Check if touch is not on joystick or buttons
+                const touch = e.changedTouches[0];
+                const target = e.target;
+                if (target.closest('#joystick-zone') || target.closest('#mobile-buttons')) return;
+                
+                e.preventDefault();
+                fpTouchState.active = true;
+                fpTouchState.touchId = touch.identifier;
+                fpTouchState.startX = touch.clientX;
+                fpTouchState.startY = touch.clientY;
+            }, { passive: false });
+            
+            renderer.domElement.addEventListener('touchmove', (e) => {
+                if (!fpTouchState.active || !isFirstPersonMode) return;
+                
+                for (const touch of e.changedTouches) {
+                    if (touch.identifier === fpTouchState.touchId) {
+                        e.preventDefault();
+                        const deltaX = touch.clientX - fpTouchState.startX;
+                        const deltaY = touch.clientY - fpTouchState.startY;
+                        
+                        fpCameraYaw -= deltaX * fpTouchSensitivity;
+                        fpCameraPitch -= deltaY * fpTouchSensitivity;
+                        fpCameraPitch = Math.max(-fpMaxPitch, Math.min(fpMaxPitch, fpCameraPitch));
+                        
+                        // Normalize yaw to [-PI, PI] to prevent floating-point precision issues
+                        while (fpCameraYaw > Math.PI) fpCameraYaw -= 2 * Math.PI;
+                        while (fpCameraYaw < -Math.PI) fpCameraYaw += 2 * Math.PI;
+                        
+                        fpTouchState.startX = touch.clientX;
+                        fpTouchState.startY = touch.clientY;
+                        break;
+                    }
+                }
+            }, { passive: false });
+            
+            const endFpTouch = (e) => {
+                for (const touch of e.changedTouches) {
+                    if (touch.identifier === fpTouchState.touchId) {
+                        fpTouchState.active = false;
+                        fpTouchState.touchId = null;
+                    }
+                }
+            };
+            renderer.domElement.addEventListener('touchend', endFpTouch, { passive: false });
+            renderer.domElement.addEventListener('touchcancel', endFpTouch, { passive: false });
+        }
+        
         // CSS2D Renderer for nametags
         const labelRenderer = new CSS2DRenderer();
         labelRenderer.setSize(window.innerWidth, window.innerHeight);
@@ -911,6 +968,41 @@
             houseNPC.position.y = 0.3;
         }
 
+        function startCameraPan(targetYaw, targetPitch) {
+            cameraPanActive = true;
+            cameraPanStartTime = performance.now();
+            cameraPanStartYaw = fpCameraYaw;
+            cameraPanStartPitch = fpCameraPitch;
+            
+            // Handle angle wrapping: ensure we take the shortest path
+            let angleDiff = targetYaw - fpCameraYaw;
+            while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+            while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+            
+            cameraPanTargetYaw = fpCameraYaw + angleDiff;
+            cameraPanTargetPitch = targetPitch;
+        }
+
+        function updateCameraPan(currentTime) {
+            if (!cameraPanActive) return;
+            
+            const elapsed = currentTime - cameraPanStartTime;
+            const t = Math.min(elapsed / cameraPanDuration, 1.0);
+            
+            // Use easeOutCubic for smooth deceleration
+            const easeT = 1 - Math.pow(1 - t, 3);
+            
+            fpCameraYaw = cameraPanStartYaw + (cameraPanTargetYaw - cameraPanStartYaw) * easeT;
+            fpCameraPitch = cameraPanStartPitch + (cameraPanTargetPitch - cameraPanStartPitch) * easeT;
+            
+            if (t >= 1.0) {
+                cameraPanActive = false;
+                // Normalize final yaw angle
+                while (fpCameraYaw > Math.PI) fpCameraYaw -= 2 * Math.PI;
+                while (fpCameraYaw < -Math.PI) fpCameraYaw += 2 * Math.PI;
+            }
+        }
+
         function enterHouse(defeatedAlready, isKajHouse = false) {
             if (inHouse || houseEntryCooldown > 0) return;
             inHouse = true;
@@ -926,10 +1018,19 @@
             isFirstPersonMode = true;
             if (localPlayerMesh) localPlayerMesh.visible = false;
             if (!isMobile) renderer.domElement.requestPointerLock();
-            // On mobile, set a fixed forward-looking camera angle
-            if (isMobile) {
-                fpCameraYaw = Math.PI;
-                fpCameraPitch = 0;
+            
+            // Set initial camera angle and start pan animation to NPC
+            fpCameraYaw = Math.PI;
+            fpCameraPitch = 0;
+            
+            // Pan camera to look at NPC (if not Kaj's house)
+            if (!isKajHouse && houseNPC) {
+                // Calculate angle to NPC from player position
+                const toNpc = new THREE.Vector3().subVectors(houseNPC.position, myPosition);
+                const targetYaw = Math.atan2(-toNpc.x, -toNpc.z);
+                const distance = Math.sqrt(toNpc.x * toNpc.x + toNpc.z * toNpc.z);
+                const targetPitch = Math.atan2(toNpc.y + 0.7, distance); // +0.7 to aim at NPC head height
+                startCameraPan(targetYaw, targetPitch);
             }
 
             // Show UI
@@ -1721,6 +1822,15 @@
         const fpMaxPitch = Math.PI / 2 - 0.1;
         const fpMoveSpeed = 0.1;
         const fpKeys = { w: false, a: false, s: false, d: false };
+        
+        // Camera pan animation state for building entry
+        let cameraPanActive = false;
+        let cameraPanStartTime = 0;
+        let cameraPanDuration = 1000; // milliseconds
+        let cameraPanStartYaw = 0;
+        let cameraPanStartPitch = 0;
+        let cameraPanTargetYaw = 0;
+        let cameraPanTargetPitch = 0;
         
         // Dev fly mode
         let devMode = false;
@@ -3077,10 +3187,16 @@
                     fpCameraYaw -= event.movementX * fpMouseSensitivity;
                     fpCameraPitch -= event.movementY * fpMouseSensitivity;
                     fpCameraPitch = Math.max(-fpMaxPitch, Math.min(fpMaxPitch, fpCameraPitch));
+                    // Normalize yaw to [-PI, PI]
+                    while (fpCameraYaw > Math.PI) fpCameraYaw -= 2 * Math.PI;
+                    while (fpCameraYaw < -Math.PI) fpCameraYaw += 2 * Math.PI;
                 } else if (isFirstPersonMode) {
                     fpCameraYaw -= event.movementX * fpMouseSensitivity;
                     fpCameraPitch -= event.movementY * fpMouseSensitivity;
                     fpCameraPitch = Math.max(-fpMaxPitch, Math.min(fpMaxPitch, fpCameraPitch));
+                    // Normalize yaw to [-PI, PI]
+                    while (fpCameraYaw > Math.PI) fpCameraYaw -= 2 * Math.PI;
+                    while (fpCameraYaw < -Math.PI) fpCameraYaw += 2 * Math.PI;
                 }
             }
         });
@@ -3499,6 +3615,10 @@
         // Animation loop
         function animate() {
             requestAnimationFrame(animate);
+            
+            // Update camera pan animation if active
+            updateCameraPan(performance.now());
+            
             if (devMode) {
                 updateDevFlyCamera();
             } else if (cinematicActive) {
