@@ -149,6 +149,11 @@
             align-items: center;
             justify-content: center;
         }
+        #mobile-btn-camera {
+            background: rgba(140,40,140,0.5);
+            border-color: rgba(200,80,200,0.6);
+            font-size: 10px;
+        }
         /* Hide desktop-only elements on mobile */
         @media (max-width: 768px), (pointer: coarse) {
             #coords { display: none !important; }
@@ -301,6 +306,7 @@
             </div>
         </div>
         <div id="mobile-buttons">
+            <div class="mobile-btn" id="mobile-btn-camera" role="button" aria-label="Toggle camera mode" tabindex="0">CAM</div>
             <div class="mobile-btn" id="mobile-btn-shoot">FIRE</div>
             <div class="mobile-btn" id="mobile-btn-interact">ACT</div>
             <div class="mobile-btn" id="mobile-btn-weapon">SWAP</div>
@@ -428,6 +434,7 @@
             const shootBtn = document.getElementById('mobile-btn-shoot');
             const interactBtn = document.getElementById('mobile-btn-interact');
             const weaponBtn = document.getElementById('mobile-btn-weapon');
+            const cameraBtn = document.getElementById('mobile-btn-camera');
             
             shootBtn.addEventListener('touchstart', (e) => {
                 e.preventDefault();
@@ -453,6 +460,20 @@
                 currentWeaponIndex = (currentWeaponIndex + 1) % weapons.length;
                 updateWeaponDisplay();
             }, { passive: false });
+            
+            cameraBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                toggleCameraMode();
+            }, { passive: false });
+            
+            // Add keyboard support for camera button
+            cameraBtn.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault(); // Prevent default scrolling for Space key
+                    toggleCameraMode();
+                    cameraBtn.blur(); // Remove focus after activation for better UX
+                }
+            });
             
         }
         
@@ -576,6 +597,32 @@
         let currentViewmodelWeapon = null;
         let viewmodelBobTime = 0;
         let viewmodelRecoil = 0;
+
+        // Pedestrian NPC system
+        const pedestrians = [];
+        const pedestrianSpawnPoints = [
+            { x: -120, z: 60 }, { x: -100, z: 70 }, { x: -130, z: 50 },
+            { x: -520, z: -90 }, { x: -510, z: -100 }, { x: -530, z: -85 },
+            { x: -300, z: 0 }, { x: -200, z: -50 }, { x: -150, z: 30 },
+            { x: -400, z: -40 }, { x: -350, z: 20 }, { x: -250, z: 10 }
+        ];
+        const pedestrianWaypoints = [
+            { x: -120, z: 80 }, { x: -140, z: 60 }, { x: -100, z: 50 },
+            { x: -500, z: -80 }, { x: -540, z: -100 }, { x: -520, z: -70 },
+            { x: -300, z: 20 }, { x: -280, z: -10 }, { x: -320, z: -20 },
+            { x: -200, z: 0 }, { x: -180, z: -30 }, { x: -220, z: -60 },
+            { x: -400, z: -20 }, { x: -420, z: -50 }, { x: -380, z: -30 }
+        ];
+        const pedestrianGunshotFleeRadius = 30;
+        const pedestrianWalkSpeed = 0.08;
+        const pedestrianRunSpeed = 0.25;
+        const pedestrianCollisionRadius = 0.8;
+        const pedestrianFallenHeight = 0.3;
+        const pedestrianCenterHeight = 1.0; // Vertical offset from ground to center of pedestrian
+        const pedestrianMinSpawnCount = 8; // Minimum number of pedestrians to spawn
+        const pedestrianSpawnVariation = 5; // Random variation in number of pedestrians to spawn
+        const pedestrianWaypointArrivalThreshold = 1; // Distance to waypoint considered "arrived"
+        const cameraTogglePoleEventBufferDistance = 2; // Distance buffer (in game units) to prevent camera toggle conflicts near pole event
 
         // House interior and combat system
         let inHouse = false;
@@ -1487,7 +1534,8 @@
             guard.rotation.y = Math.PI / 2;
             group.add(guard);
             
-            group.position.set(0.12, -0.22, -0.4);
+            // Adjusted position to align with arms better
+            group.position.set(0.05, -0.25, -0.45);
             group.rotation.y = -0.05;
             return group;
         }
@@ -1528,7 +1576,8 @@
             rail.position.set(0, 0.05, -0.05);
             group.add(rail);
             
-            group.position.set(0.08, -0.22, -0.45);
+            // Adjusted position to align with arms better
+            group.position.set(0, -0.25, -0.5);
             group.rotation.y = -0.03;
             return group;
         }
@@ -1565,7 +1614,8 @@
             grip.position.set(0, -0.08, 0.1);
             group.add(grip);
             
-            group.position.set(0.12, -0.18, -0.4);
+            // Adjusted position to align with arms better
+            group.position.set(0, -0.22, -0.45);
             return group;
         }
         
@@ -1605,7 +1655,8 @@
             forend.position.set(0, -0.02, -0.05);
             group.add(forend);
             
-            group.position.set(0.08, -0.22, -0.45);
+            // Adjusted position to align with arms better
+            group.position.set(0, -0.25, -0.5);
             group.rotation.y = -0.03;
             return group;
         }
@@ -1804,6 +1855,153 @@
             }
         }
 
+        // Pedestrian NPC functions
+        function createPedestrian(position) {
+            const group = new THREE.Group();
+            
+            // Random appearance variations
+            const bodyColors = [0x2d5a27, 0x3a4a8a, 0x8a3a3a, 0x4a4a4a, 0x5a3a2a];
+            const skinColors = [0xffcc99, 0xf4c2a0, 0xe0ac69, 0x8d5524, 0xc68642];
+            
+            const bodyColor = bodyColors[Math.floor(Math.random() * bodyColors.length)];
+            const skinColor = skinColors[Math.floor(Math.random() * skinColors.length)];
+            
+            // Body
+            const bodyGeometry = new THREE.BoxGeometry(0.5, 1.5, 0.3);
+            const bodyMaterial = new THREE.MeshLambertMaterial({ color: bodyColor });
+            const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+            body.position.y = 0.75;
+            group.add(body);
+            
+            // Head
+            const headGeometry = new THREE.BoxGeometry(0.35, 0.35, 0.35);
+            const headMaterial = new THREE.MeshLambertMaterial({ color: skinColor });
+            const head = new THREE.Mesh(headGeometry, headMaterial);
+            head.position.y = 1.7;
+            group.add(head);
+            
+            group.position.copy(position);
+            scene.add(group);
+            
+            // Random initial target waypoint
+            const targetWaypoint = pedestrianWaypoints[Math.floor(Math.random() * pedestrianWaypoints.length)];
+            
+            return {
+                mesh: group,
+                target: new THREE.Vector3(targetWaypoint.x, 0, targetWaypoint.z),
+                state: 'walking', // 'walking', 'fleeing', 'dead'
+                speed: pedestrianWalkSpeed,
+                fleeTarget: null,
+                isDead: false,
+                deathTimer: 0
+            };
+        }
+
+        function spawnPedestrians() {
+            // Spawn pedestrians at random spawn points
+            const numPedestrians = pedestrianMinSpawnCount + Math.floor(Math.random() * pedestrianSpawnVariation);
+            for (let i = 0; i < numPedestrians; i++) {
+                const spawnPoint = pedestrianSpawnPoints[Math.floor(Math.random() * pedestrianSpawnPoints.length)];
+                const position = new THREE.Vector3(spawnPoint.x, 0, spawnPoint.z);
+                const pedestrian = createPedestrian(position);
+                pedestrians.push(pedestrian);
+            }
+        }
+
+        function updatePedestrians() {
+            for (let i = pedestrians.length - 1; i >= 0; i--) {
+                const ped = pedestrians[i];
+                
+                if (ped.isDead) {
+                    // Dead pedestrians don't move
+                    continue;
+                }
+                
+                const pedPos = ped.mesh.position;
+                const targetPos = ped.target;
+                
+                // Calculate direction to target
+                const direction = targetPos.clone().sub(pedPos);
+                const distance = direction.length();
+                
+                // If reached target, choose new waypoint
+                if (distance < pedestrianWaypointArrivalThreshold) {
+                    if (ped.state === 'fleeing' && ped.fleeTarget) {
+                        // Reached house, disappear
+                        scene.remove(ped.mesh);
+                        pedestrians.splice(i, 1);
+                        continue;
+                    } else {
+                        // Choose new random waypoint
+                        const newWaypoint = pedestrianWaypoints[Math.floor(Math.random() * pedestrianWaypoints.length)];
+                        ped.target.set(newWaypoint.x, 0, newWaypoint.z);
+                        continue;
+                    }
+                }
+                
+                // Move towards target
+                direction.normalize();
+                const moveAmount = Math.min(ped.speed * timeScale, distance);
+                pedPos.add(direction.clone().multiplyScalar(moveAmount));
+                
+                // Rotate to face movement direction
+                const yaw = Math.atan2(-direction.x, -direction.z);
+                ped.mesh.rotation.y = yaw;
+            }
+        }
+
+        function makeNearbyPedestriansFlee(gunshotPosition) {
+            for (const ped of pedestrians) {
+                if (ped.isDead || ped.state === 'fleeing') continue;
+                
+                const distance = ped.mesh.position.distanceTo(gunshotPosition);
+                
+                if (distance < pedestrianGunshotFleeRadius) {
+                    // Find nearest house (use waypoints as approximate house locations)
+                    let nearestHouse = pedestrianWaypoints[0];
+                    let nearestDist = Infinity;
+                    
+                    for (const waypoint of pedestrianWaypoints) {
+                        const dist = ped.mesh.position.distanceTo(new THREE.Vector3(waypoint.x, 0, waypoint.z));
+                        if (dist < nearestDist) {
+                            nearestDist = dist;
+                            nearestHouse = waypoint;
+                        }
+                    }
+                    
+                    ped.state = 'fleeing';
+                    ped.speed = pedestrianRunSpeed;
+                    ped.fleeTarget = new THREE.Vector3(nearestHouse.x, 0, nearestHouse.z);
+                    ped.target = ped.fleeTarget;
+                }
+            }
+        }
+
+        function checkPedestrianBulletCollisions(projectile) {
+            for (const ped of pedestrians) {
+                if (ped.isDead) continue;
+                
+                const pedCenter = ped.mesh.position.clone().add(new THREE.Vector3(0, pedestrianCenterHeight, 0));
+                const dist = projectile.mesh.position.distanceTo(pedCenter);
+                
+                if (dist < pedestrianCollisionRadius) {
+                    // Pedestrian is hit
+                    ped.isDead = true;
+                    ped.state = 'dead';
+                    
+                    // Make body fall over
+                    ped.mesh.rotation.x = Math.PI / 2;
+                    ped.mesh.position.y = pedestrianFallenHeight;
+                    
+                    // Create blood pool
+                    createBloodPool(ped.mesh.position.clone());
+                    
+                    return true; // Hit detected
+                }
+            }
+            return false;
+        }
+
         // Telephone pole event
         const poleEventLocation = new THREE.Vector3(-521, 0, -93.26);
         const poleEventTriggerDistance = 8;
@@ -1986,6 +2184,43 @@
                         isTransitioning = false;
                     }, 100);
                 }, 500);
+            }
+        }
+        
+        // Toggle between first-person and isometric camera modes (for mobile button)
+        function toggleCameraMode() {
+            // Don't allow toggle during certain states
+            if (inHouse || isTransitioning || isRagdoll || isPlayerDead) return;
+            
+            // Don't allow toggle near pole event to avoid conflicts with automatic FP transition
+            // (prevents user toggle from interfering with scripted camera sequence)
+            const distToEvent = myPosition.distanceTo(poleEventLocation);
+            if (distToEvent < poleEventTriggerDistance + cameraTogglePoleEventBufferDistance) return;
+            
+            isFirstPersonMode = !isFirstPersonMode;
+            
+            if (isFirstPersonMode) {
+                // Switching to first-person
+                if (localPlayerMesh) localPlayerMesh.visible = false;
+                
+                // Show crosshair and weapon display
+                document.getElementById('crosshair').style.display = 'block';
+                document.getElementById('weapon-display').style.display = 'block';
+                
+                // Initialize camera orientation to face forward
+                fpCameraYaw = playerYaw;
+                fpCameraPitch = 0;
+                
+            } else {
+                // Switching to isometric
+                if (localPlayerMesh) localPlayerMesh.visible = true;
+                
+                // Hide crosshair and weapon display
+                document.getElementById('crosshair').style.display = 'none';
+                document.getElementById('weapon-display').style.display = 'none';
+                
+                // Reset camera position
+                updateCameraPosition();
             }
         }
         
@@ -2702,6 +2937,9 @@
                 triggerViewmodelRecoil();
             }
             
+            // Make nearby pedestrians flee
+            makeNearbyPedestriansFlee(myPosition.clone());
+            
             // Calculate shooting direction based on view mode
             let direction;
             if (isFirstPersonMode) {
@@ -2761,6 +2999,13 @@
                 const moveAmount = p.direction.clone().multiplyScalar(p.speed * timeScale);
                 p.mesh.position.add(moveAmount);
                 p.distance += p.speed * timeScale;
+                
+                // Check for pedestrian hits
+                if (checkPedestrianBulletCollisions(p)) {
+                    scene.remove(p.mesh);
+                    projectiles.splice(i, 1);
+                    continue;
+                }
                 
                 // Check for hits while projectile travels (for RPG and all weapons)
                 for (const [playerId, playerObj] of otherPlayers) {
@@ -2947,6 +3192,9 @@
             remoroMesh = createRemoro();
             remoroMesh.position.copy(playerStartPos.clone().add(new THREE.Vector3(remoroFollowDistance, 0, remoroFollowDistance)));
             scene.add(remoroMesh);
+            
+            // Spawn pedestrian NPCs
+            spawnPedestrians();
             
             // Initialize pole event scene
             initPoleEvent();
@@ -3556,6 +3804,9 @@
             
             // Update Remoro companion
             updateRemoro();
+            
+            // Update pedestrians
+            updatePedestrians();
             
             // Update talk indicator
             updateTalkIndicator();
