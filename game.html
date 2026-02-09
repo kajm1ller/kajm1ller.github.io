@@ -3438,12 +3438,12 @@
                     
                     if (!(inHouse ? checkHouseCollision(newPosX) : checkCollision(newPosX))) {
                         myPosition.x = newPosX.x;
-                        if (!inHouse) myPosition.y = 0;
                     }
                     if (!(inHouse ? checkHouseCollision(newPosZ) : checkCollision(newPosZ))) {
                         myPosition.z = newPosZ.z;
-                        if (!inHouse) myPosition.y = 0;
                     }
+                    // Keep at ground level when outside after any successful move
+                    if (!inHouse) myPosition.y = 0;
                 }
                 
                 // Update player mesh position (even though invisible)
@@ -3499,14 +3499,14 @@
                         
                         if (!checkCollision(newPosX)) {
                             myPosition.x = newPosX.x;
-                            myPosition.y = 0; // Keep at ground level
                         } else if (!checkCollision(newPosZ)) {
                             myPosition.z = newPosZ.z;
-                            myPosition.y = 0; // Keep at ground level
                         } else {
                             // Completely blocked, cancel movement
                             targetPosition = null;
                         }
+                        // Keep at ground level after any successful move
+                        myPosition.y = 0;
                     }
                     
                     // Update player mesh position
@@ -3560,12 +3560,12 @@
                     
                     if (!checkCollision(newPosX)) {
                         myPosition.x = newPosX.x;
-                        myPosition.y = 0;
                     }
                     if (!checkCollision(newPosZ)) {
                         myPosition.z = newPosZ.z;
-                        myPosition.y = 0;
                     }
+                    // Keep at ground level after any successful move
+                    myPosition.y = 0;
                 }
                 
                 localPlayerMesh.position.copy(myPosition);
