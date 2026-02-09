@@ -1986,20 +1986,6 @@
             return false;
         }
 
-        function createBloodPool(position) {
-            const bloodGeometry = new THREE.CircleGeometry(0.8, 16);
-            const bloodMaterial = new THREE.MeshBasicMaterial({ 
-                color: 0x8b0000, 
-                transparent: true, 
-                opacity: 0.7 
-            });
-            const bloodPool = new THREE.Mesh(bloodGeometry, bloodMaterial);
-            bloodPool.rotation.x = -Math.PI / 2;
-            bloodPool.position.copy(position);
-            bloodPool.position.y = 0.01; // Slightly above ground to prevent z-fighting
-            scene.add(bloodPool);
-        }
-
         // Telephone pole event
         const poleEventLocation = new THREE.Vector3(-521, 0, -93.26);
         const poleEventTriggerDistance = 8;
