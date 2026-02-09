@@ -37,8 +37,10 @@ RAPIER.init().then(() => {
     let firstPersonVelocity = new THREE.Vector3();
     let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
     
-    // First person camera height
+    // First person camera height and controls
     const firstPersonHeight = 1.7;
+    const FIRST_PERSON_MOVE_SPEED = 5; // units per second
+    const TOUCH_SENSITIVITY = 0.002; // radians per pixel
     
     // Add lights
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -270,10 +272,11 @@ RAPIER.init().then(() => {
                 camera.position.set(0, firstPersonHeight, 5);
                 camera.lookAt(0, firstPersonHeight, 0);
                 
-                // On mobile, we can't use pointer lock, so we'll use touch controls
-                const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+                // On mobile/touch devices, we can't use pointer lock, so we'll use touch controls
+                // Feature detection for touch capability
+                const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
                 
-                if (!isMobile) {
+                if (!isTouchDevice) {
                     // Desktop - use pointer lock for mouse look
                     pointerLockControls.lock();
                     
@@ -284,8 +287,8 @@ RAPIER.init().then(() => {
                         toggleFPButton.textContent = 'First Person Mode';
                     });
                 } else {
-                    // Mobile - don't use pointer lock, use touch/gyro instead
-                    // The black screen issue was caused by pointer lock not working on mobile
+                    // Touch device - don't use pointer lock, use touch/gyro instead
+                    // The black screen issue was caused by pointer lock not working on touch devices
                     // We'll handle this without pointer lock
                 }
                 
@@ -501,8 +504,8 @@ RAPIER.init().then(() => {
                 const euler = new THREE.Euler(0, 0, 0, 'YXZ');
                 euler.setFromQuaternion(camera.quaternion);
                 
-                euler.y -= deltaX * 0.002; // Horizontal rotation
-                euler.x -= deltaY * 0.002; // Vertical rotation
+                euler.y -= deltaX * TOUCH_SENSITIVITY; // Horizontal rotation
+                euler.x -= deltaY * TOUCH_SENSITIVITY; // Vertical rotation
                 
                 // Clamp vertical rotation
                 euler.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, euler.x));
@@ -624,16 +627,21 @@ RAPIER.init().then(() => {
     
     // Get the position display element
     const positionElement = document.getElementById('position');
+    
+    // Frame timing for consistent movement
+    let lastFrameTime = performance.now();
 
     // Game loop
-    let gameLoop = () => {
+    let gameLoop = (currentTime) => {
+        const deltaTime = Math.min((currentTime - lastFrameTime) / 1000, 0.1); // Cap at 0.1s for stability
+        lastFrameTime = currentTime;
+        
         // Always step the simulation (even while dragging for physics interactions)
         world.step();
         
         // Update controls based on camera mode
         if (isFirstPersonMode) {
             // First person movement
-            const delta = 0.1; // Time delta approximation
             firstPersonVelocity.set(0, 0, 0);
             
             const direction = new THREE.Vector3();
@@ -642,10 +650,10 @@ RAPIER.init().then(() => {
             camera.getWorldDirection(direction);
             right.crossVectors(camera.up, direction).normalize();
             
-            if (moveForward) firstPersonVelocity.add(direction.multiplyScalar(-delta * 5));
-            if (moveBackward) firstPersonVelocity.add(direction.multiplyScalar(delta * 5));
-            if (moveLeft) firstPersonVelocity.add(right.multiplyScalar(-delta * 5));
-            if (moveRight) firstPersonVelocity.add(right.multiplyScalar(delta * 5));
+            if (moveForward) firstPersonVelocity.add(direction.multiplyScalar(-deltaTime * FIRST_PERSON_MOVE_SPEED));
+            if (moveBackward) firstPersonVelocity.add(direction.multiplyScalar(deltaTime * FIRST_PERSON_MOVE_SPEED));
+            if (moveLeft) firstPersonVelocity.add(right.multiplyScalar(-deltaTime * FIRST_PERSON_MOVE_SPEED));
+            if (moveRight) firstPersonVelocity.add(right.multiplyScalar(deltaTime * FIRST_PERSON_MOVE_SPEED));
             
             // Apply movement
             camera.position.add(firstPersonVelocity);
@@ -658,7 +666,7 @@ RAPIER.init().then(() => {
         // Update pedestrians
         for (const ped of pedestrians) {
             // Update timer
-            ped.timeUntilDirectionChange -= 0.016; // Approximately 60 FPS
+            ped.timeUntilDirectionChange -= deltaTime;
             
             if (ped.timeUntilDirectionChange <= 0) {
                 // Change direction randomly but stay on sidewalks
@@ -668,8 +676,8 @@ RAPIER.init().then(() => {
             }
             
             // Calculate new position
-            const newX = ped.group.position.x + ped.velocity.x * ped.speed * 0.016;
-            const newZ = ped.group.position.z + ped.velocity.y * ped.speed * 0.016;
+            const newX = ped.group.position.x + ped.velocity.x * ped.speed * deltaTime;
+            const newZ = ped.group.position.z + ped.velocity.y * ped.speed * deltaTime;
             
             // Only move if staying on sidewalk
             if (isOnSidewalk(newX, newZ)) {
@@ -807,5 +815,5 @@ RAPIER.init().then(() => {
         requestAnimationFrame(gameLoop);
     };
 
-    gameLoop();
+    gameLoop(performance.now());
 });
