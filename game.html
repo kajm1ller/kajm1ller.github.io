@@ -604,12 +604,13 @@
             { x: -200, z: 0 }, { x: -180, z: -30 }, { x: -220, z: -60 },
             { x: -400, z: -20 }, { x: -420, z: -50 }, { x: -380, z: -30 }
         ];
-        const gunshotFleeRadius = 30;
+        const pedestrianGunshotFleeRadius = 30;
         const pedestrianWalkSpeed = 0.08;
         const pedestrianRunSpeed = 0.25;
         const pedestrianCollisionRadius = 0.8;
         const pedestrianFallenHeight = 0.3;
-        const cameraToggleEventBuffer = 2;
+        const pedestrianCenterHeight = 1.0; // Vertical offset from ground to center of pedestrian
+        const cameraToggleEventBuffer = 2; // Buffer distance to prevent camera toggle conflicts near scripted events
 
         // House interior and combat system
         let inHouse = false;
@@ -1943,7 +1944,7 @@
                 
                 const distance = ped.mesh.position.distanceTo(gunshotPosition);
                 
-                if (distance < gunshotFleeRadius) {
+                if (distance < pedestrianGunshotFleeRadius) {
                     // Find nearest house (use waypoints as approximate house locations)
                     let nearestHouse = pedestrianWaypoints[0];
                     let nearestDist = Infinity;
@@ -1968,7 +1969,7 @@
             for (const ped of pedestrians) {
                 if (ped.isDead) continue;
                 
-                const pedCenter = ped.mesh.position.clone().add(new THREE.Vector3(0, 1, 0));
+                const pedCenter = ped.mesh.position.clone().add(new THREE.Vector3(0, pedestrianCenterHeight, 0));
                 const dist = projectile.mesh.position.distanceTo(pedCenter);
                 
                 if (dist < pedestrianCollisionRadius) {
@@ -2179,7 +2180,7 @@
             // Don't allow toggle during certain states
             if (inHouse || isTransitioning || isRagdoll || isPlayerDead) return;
             
-            // Don't allow toggle if at the pole event
+            // Don't allow toggle if near the pole event (prevents conflicts with scripted camera sequences)
             const distToEvent = myPosition.distanceTo(poleEventLocation);
             if (distToEvent < poleEventTriggerDistance + cameraToggleEventBuffer) return;
             
