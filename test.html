@@ -74,6 +74,21 @@
             box-shadow: 0 2px 6px rgba(245, 87, 108, 0.3);
         }
 
+        #toggleFirstPerson {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+
+        #toggleFirstPerson:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(79, 172, 254, 0.4);
+        }
+
+        #toggleFirstPerson:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 6px rgba(79, 172, 254, 0.3);
+        }
+
         /* Desktop and larger tablet adjustments */
         @media (min-width: 768px) {
             #info {
@@ -101,10 +116,14 @@
 
 <body>
     <div id="info">
-        
+        <div style="font-size: 12px; margin-bottom: 10px;">
+            Desktop: WASD/Arrows to move in FP mode<br>
+            Mobile: Touch & drag to look around
+        </div>
         <div id="position">Position: ...</div>
         <button id="addCube" class="control-button">Add Cube</button>
         <button id="resetCubes" class="control-button">Reset All Cubes</button>
+        <button id="toggleFirstPerson" class="control-button">First Person Mode</button>
     </div>
 </body>
 
