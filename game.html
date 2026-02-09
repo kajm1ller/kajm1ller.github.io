@@ -306,7 +306,7 @@
             </div>
         </div>
         <div id="mobile-buttons">
-            <div class="mobile-btn" id="mobile-btn-camera" role="button" aria-label="Toggle camera mode">CAM</div>
+            <div class="mobile-btn" id="mobile-btn-camera" role="button" aria-label="Toggle camera mode" tabindex="0">CAM</div>
             <div class="mobile-btn" id="mobile-btn-shoot">FIRE</div>
             <div class="mobile-btn" id="mobile-btn-interact">ACT</div>
             <div class="mobile-btn" id="mobile-btn-weapon">SWAP</div>
@@ -466,6 +466,14 @@
                 toggleCameraMode();
             }, { passive: false });
             
+            // Add keyboard support for camera button
+            cameraBtn.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggleCameraMode();
+                }
+            });
+            
         }
         
         // Renderer setup - optimized for performance
@@ -610,7 +618,8 @@
         const pedestrianCollisionRadius = 0.8;
         const pedestrianFallenHeight = 0.3;
         const pedestrianCenterHeight = 1.0; // Vertical offset from ground to center of pedestrian
-        const cameraToggleEventBuffer = 2; // Buffer distance to prevent camera toggle conflicts near scripted events
+        const pedestrianSpawnVariation = 5; // Random variation in number of pedestrians to spawn
+        const cameraToggleEventBuffer = 2; // Buffer distance (in game units) to prevent camera toggle conflicts near scripted events
 
         // House interior and combat system
         let inHouse = false;
@@ -1887,7 +1896,7 @@
 
         function spawnPedestrians() {
             // Spawn 8-12 pedestrians at random spawn points
-            const numPedestrians = 8 + Math.floor(Math.random() * 5);
+            const numPedestrians = 8 + Math.floor(Math.random() * pedestrianSpawnVariation);
             for (let i = 0; i < numPedestrians; i++) {
                 const spawnPoint = pedestrianSpawnPoints[Math.floor(Math.random() * pedestrianSpawnPoints.length)];
                 const position = new THREE.Vector3(spawnPoint.x, 0, spawnPoint.z);
@@ -2180,7 +2189,8 @@
             // Don't allow toggle during certain states
             if (inHouse || isTransitioning || isRagdoll || isPlayerDead) return;
             
-            // Don't allow toggle if near the pole event (prevents conflicts with scripted camera sequences)
+            // Don't allow toggle near pole event to avoid conflicts with automatic FP transition
+            // (prevents user toggle from interfering with scripted camera sequence)
             const distToEvent = myPosition.distanceTo(poleEventLocation);
             if (distToEvent < poleEventTriggerDistance + cameraToggleEventBuffer) return;
             
