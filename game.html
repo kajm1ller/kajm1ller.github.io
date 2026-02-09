@@ -1947,7 +1947,10 @@
                 setTimeout(() => {
                     isFirstPersonMode = true;
                     if (localPlayerMesh) localPlayerMesh.visible = false;
-                    renderer.domElement.requestPointerLock();
+                    // Only request pointer lock on desktop (not mobile)
+                    if (!isMobile) {
+                        renderer.domElement.requestPointerLock();
+                    }
                     
                     // Show FPS UI elements
                     document.getElementById('crosshair').style.display = 'block';
@@ -1962,7 +1965,9 @@
                         if (!poleDialogShown) {
                             poleDialogShown = true;
                             poleDialog.style.display = 'block';
-                            document.exitPointerLock();
+                            if (!isMobile) {
+                                document.exitPointerLock();
+                            }
                         }
                     }, 100);
                 }, 500);
@@ -1970,7 +1975,10 @@
                 // Start transition out of first person mode
                 isTransitioning = true;
                 transitionOverlay.style.opacity = '1';
-                document.exitPointerLock();
+                // Only exit pointer lock on desktop (not mobile)
+                if (!isMobile) {
+                    document.exitPointerLock();
+                }
                 poleDialog.style.display = 'none';
                 
                 // Hide FPS UI elements
