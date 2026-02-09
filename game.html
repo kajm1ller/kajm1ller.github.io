@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Kaj Simulator</title>
     <style>
         body { 
@@ -57,6 +58,111 @@
         canvas {
             cursor: crosshair;
         }
+
+        /* Mobile touch controls */
+        #mobile-controls {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 110;
+        }
+        #mobile-controls.active {
+            display: block;
+        }
+        #joystick-zone {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 150px;
+            height: 150px;
+            pointer-events: auto;
+            touch-action: none;
+        }
+        #joystick-base {
+            position: absolute;
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.15);
+            border: 2px solid rgba(255,255,255,0.3);
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+        }
+        #joystick-stick {
+            position: absolute;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.45);
+            border: 2px solid rgba(255,255,255,0.6);
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            transition: none;
+        }
+        #mobile-buttons {
+            position: absolute;
+            bottom: 30px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            pointer-events: auto;
+            touch-action: none;
+        }
+        .mobile-btn {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.4);
+            background: rgba(0,0,0,0.4);
+            color: white;
+            font-family: Arial, sans-serif;
+            font-size: 11px;
+            font-weight: bold;
+            text-align: center;
+            line-height: 64px;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+        }
+        .mobile-btn:active {
+            background: rgba(255,255,255,0.25);
+        }
+        #mobile-btn-shoot {
+            background: rgba(180,40,40,0.5);
+            border-color: rgba(255,80,80,0.6);
+        }
+        #mobile-btn-interact {
+            background: rgba(40,120,40,0.5);
+            border-color: rgba(80,255,80,0.6);
+        }
+        #mobile-btn-weapon {
+            background: rgba(40,40,140,0.5);
+            border-color: rgba(80,80,255,0.6);
+            font-size: 9px;
+            line-height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        /* Hide desktop-only elements on mobile */
+        @media (max-width: 768px), (pointer: coarse) {
+            #coords { display: none !important; }
+            #weapon-display { bottom: 110px !important; right: 90px !important; font-size: 12px !important; padding: 6px 10px !important; }
+            #status-hud { font-size: 11px !important; padding: 6px 8px !important; }
+            .dialog-option { font-size: 14px !important; }
+            #pole-dialog, #no-answer-dialog, #remoro-dialog, #remoro-talk-dialog, #dead-boy-dialog, #house-dialog, #corpse-dialog {
+                width: 90vw !important;
+                left: 5vw !important;
+                transform: none !important;
+                bottom: 20px !important;
+                font-size: 14px !important;
+            }
+        }
     </style>
 </head>
 <body>
@@ -74,6 +180,7 @@
         <button id="join-btn" style="padding:12px 30px;font-size:18px;cursor:pointer;border:none;border-radius:5px;background:#000000;color:white;">Join Game</button>
     </div>
     <div id="loading">Loading map...</div>
+    <div id="dev-hud" style="display:none;position:absolute;top:50px;left:50%;transform:translateX(-50%);color:#0f0;background:rgba(0,0,0,0.8);padding:8px 18px;border-radius:6px;font-family:monospace;font-size:14px;z-index:200;pointer-events:none;white-space:pre;">DEV FLY MODE\nWASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
     <div id="ragdoll-overlay"><div id="ragdoll-text"></div></div>
     <div id="hurt-flash" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,0,0,0.35);z-index:180;pointer-events:none;"></div>
     <div id="death-screen" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#000 url('/media/deathstuff/deathscreen.jpg') center center / cover no-repeat;z-index:999;pointer-events:none;"></div>
@@ -151,6 +258,19 @@
         }
     </style>
     
+    <div id="mobile-controls">
+        <div id="joystick-zone">
+            <div id="joystick-base">
+                <div id="joystick-stick"></div>
+            </div>
+        </div>
+        <div id="mobile-buttons">
+            <div class="mobile-btn" id="mobile-btn-shoot">FIRE</div>
+            <div class="mobile-btn" id="mobile-btn-interact">ACT</div>
+            <div class="mobile-btn" id="mobile-btn-weapon">SWAP</div>
+        </div>
+    </div>
+    
     <script type="importmap">
         {
             "imports": {
@@ -178,7 +298,7 @@
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 500);
         
         // Player starting position
-        const playerStartPos = new THREE.Vector3(-586.45, 0, -66.97);
+        const playerStartPos = new THREE.Vector3(-120.1, 0, 64.0);
         
         // Create local player model
         let localPlayerMesh = null;
@@ -196,6 +316,106 @@
         // Collision detection
         const collisionMeshes = [];
         const playerRadius = 0.4; // Player collision radius
+        
+        // Mobile detection
+        const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0) || (window.innerWidth <= 768);
+        
+        // Mobile joystick state
+        const joystickState = { active: false, dx: 0, dy: 0, touchId: null };
+        
+        if (isMobile) {
+            // Lock camera zoom on mobile
+            cameraZoom = 40;
+            
+            // Prevent default touch behaviors on canvas
+            document.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
+            
+            // --- Joystick ---
+            const joystickZone = document.getElementById('joystick-zone');
+            const joystickBase = document.getElementById('joystick-base');
+            const joystickStick = document.getElementById('joystick-stick');
+            const maxJoystickRadius = 45; // max stick travel in px
+            
+            joystickZone.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                const touch = e.changedTouches[0];
+                joystickState.active = true;
+                joystickState.touchId = touch.identifier;
+                updateJoystick(touch);
+            }, { passive: false });
+            
+            joystickZone.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                for (const touch of e.changedTouches) {
+                    if (touch.identifier === joystickState.touchId) {
+                        updateJoystick(touch);
+                    }
+                }
+            }, { passive: false });
+            
+            const endJoystick = (e) => {
+                for (const touch of e.changedTouches) {
+                    if (touch.identifier === joystickState.touchId) {
+                        joystickState.active = false;
+                        joystickState.dx = 0;
+                        joystickState.dy = 0;
+                        joystickState.touchId = null;
+                        joystickStick.style.transform = 'translate(-50%, -50%)';
+                    }
+                }
+            };
+            joystickZone.addEventListener('touchend', endJoystick, { passive: false });
+            joystickZone.addEventListener('touchcancel', endJoystick, { passive: false });
+            
+            function updateJoystick(touch) {
+                const rect = joystickBase.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                let dx = touch.clientX - cx;
+                let dy = touch.clientY - cy;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist > maxJoystickRadius) {
+                    dx = (dx / dist) * maxJoystickRadius;
+                    dy = (dy / dist) * maxJoystickRadius;
+                }
+                // Normalize to -1..1
+                joystickState.dx = dx / maxJoystickRadius;
+                joystickState.dy = dy / maxJoystickRadius;
+                // Move stick visual
+                joystickStick.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+            }
+            
+            // --- Action Buttons ---
+            const shootBtn = document.getElementById('mobile-btn-shoot');
+            const interactBtn = document.getElementById('mobile-btn-interact');
+            const weaponBtn = document.getElementById('mobile-btn-weapon');
+            
+            shootBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (!isPlayerDead && !isRagdoll) shoot();
+            }, { passive: false });
+            
+            interactBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (isPlayerDead) return;
+                if (inHouse && currentHouseIsKaj && typeof isNearBed === 'function' && isNearBed()) {
+                    layInBed();
+                } else if (inHouse && typeof isNearExit === 'function' && isNearExit()) {
+                    exitHouse();
+                } else if (typeof isFacingDeadBoy === 'function' && isFacingDeadBoy()) {
+                    talkToDeadBoy();
+                } else {
+                    talkToRemoro();
+                }
+            }, { passive: false });
+            
+            weaponBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                currentWeaponIndex = (currentWeaponIndex + 1) % weapons.length;
+                updateWeaponDisplay();
+            }, { passive: false });
+            
+        }
         
         // Renderer setup - optimized for performance
         const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
@@ -903,11 +1123,21 @@
         function enemyAttack() {
             const dmg = rollDamage(combatState.enemy.atkMin, combatState.enemy.atkMax);
             const finalDmg = playerDefending ? Math.floor(dmg * 0.5) : dmg;
-            combatState.player.hp = Math.max(0, combatState.player.hp - finalDmg);
-            playerDefending = false;
-            flashHurt();
-            logCombat(`Owner hits you for ${finalDmg}.`);
-            updateCombatUI();
+            let v = Math.floor(Math.random() * 2);
+            if(v == 1){
+                combatState.player.hp = Math.max(0, combatState.player.hp - finalDmg);
+                playerDefending = false;
+                flashHurt();
+                logCombat(`Owner hits you for ${finalDmg}.`);
+                updateCombatUI();
+            }
+            else{
+                combatState.remoro.hp = Math.max(0, combatState.remoro.hp - finalDmg);
+                logCombat(`Owner hits remoro for ${finalDmg}.`);
+                updateCombatUI();
+            }
+            
+            
             if (combatState.player.hp <= 0) {
                 triggerPlayerDeath('combat');
             }
@@ -1386,6 +1616,13 @@
         const fpMaxPitch = Math.PI / 2 - 0.1;
         const fpMoveSpeed = 0.1;
         const fpKeys = { w: false, a: false, s: false, d: false };
+        
+        // Dev fly mode
+        let devMode = false;
+        const devFlySpeed = 1.5;
+        const devFlySprintSpeed = 5.0;
+        const devFlyKeys = { w: false, a: false, s: false, d: false, space: false, shift: false, sprint: false };
+        const devCamPos = new THREE.Vector3(0, 50, 0);
         
         // Create pole starer NPC
         function createPoleStarer() {
@@ -2467,6 +2704,11 @@
             myPlayerName = playerNameInput.value.trim() || 'Player';
             nameInput.style.display = 'none';
             
+            // Show mobile controls after joining
+            if (isMobile) {
+                document.getElementById('mobile-controls').classList.add('active');
+            }
+            
             // Initialize player and camera after joining
             initializePlayer();
             connectMultiplayer(myPlayerName);
@@ -2555,6 +2797,7 @@
         // Mouse scroll to zoom
         renderer.domElement.addEventListener('wheel', (event) => {
             event.preventDefault();
+            if (isMobile) return; // Camera locked on mobile
             const zoomSpeed = 5;
             if (event.deltaY > 0) {
                 // Scroll down - zoom out
@@ -2566,8 +2809,78 @@
             updateCameraPosition();
         }, { passive: false });
         
+        // Mobile: canvas tap to set target (isometric click-to-move)
+        if (isMobile) {
+            renderer.domElement.addEventListener('touchstart', (e) => {
+                // Ignore if touch is on controls
+                if (e.target.closest('#mobile-controls')) return;
+                if (!localPlayerMesh || isRagdoll || isPlayerDead) return;
+                if (isFirstPersonMode) return;
+                if (inHouse) return;
+                
+                const touch = e.changedTouches[0];
+                mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+                
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObject(ground);
+                
+                if (intersects.length > 0) {
+                    const point = intersects[0].point;
+                    targetPosition = new THREE.Vector3(point.x, 0, point.z);
+                    
+                    if (clickIndicator) {
+                        clickIndicator.position.set(point.x, 0.1, point.z);
+                        clickIndicator.visible = true;
+                        setTimeout(() => { if (clickIndicator) clickIndicator.visible = false; }, 500);
+                    }
+                }
+            }, { passive: true });
+        }
+        
         // Key event listeners
         document.addEventListener('keydown', (event) => {
+            // F12 toggles dev fly mode
+            if (event.key === 'F12') {
+                event.preventDefault();
+                devMode = !devMode;
+                document.getElementById('dev-hud').style.display = devMode ? 'block' : 'none';
+                if (devMode) {
+                    // Enter dev mode: save current pos, request pointer lock
+                    devCamPos.copy(camera.position);
+                    fpCameraYaw = camera.rotation.y;
+                    fpCameraPitch = camera.rotation.x;
+                    camera.far = 5000;
+                    camera.updateProjectionMatrix();
+                    scene.fog = null;
+                    renderer.domElement.requestPointerLock();
+                } else {
+                    // Exit dev mode: restore fog and camera
+                    scene.fog = new THREE.Fog(0x87ceeb, 100, 450);
+                    camera.far = 500;
+                    camera.updateProjectionMatrix();
+                    document.exitPointerLock();
+                    // Reset fly keys
+                    devFlyKeys.w = devFlyKeys.a = devFlyKeys.s = devFlyKeys.d = false;
+                    devFlyKeys.space = devFlyKeys.shift = devFlyKeys.sprint = false;
+                }
+                return;
+            }
+            
+            // Dev mode key handling
+            if (devMode) {
+                switch(event.key.toLowerCase()) {
+                    case 'w': devFlyKeys.w = true; break;
+                    case 'a': devFlyKeys.a = true; break;
+                    case 's': devFlyKeys.s = true; break;
+                    case 'd': devFlyKeys.d = true; break;
+                    case ' ': devFlyKeys.space = true; event.preventDefault(); break;
+                    case 'control': devFlyKeys.sprint = true; break;
+                }
+                if (event.key === 'Shift') devFlyKeys.shift = true;
+                return;
+            }
+            
             if (isPlayerDead) return;
             if (event.key.toLowerCase() === 'v') {
                 if (vatsActive) {
@@ -2630,6 +2943,19 @@
         });
         
         document.addEventListener('keyup', (event) => {
+            // Dev mode key release
+            if (devMode) {
+                switch(event.key.toLowerCase()) {
+                    case 'w': devFlyKeys.w = false; break;
+                    case 'a': devFlyKeys.a = false; break;
+                    case 's': devFlyKeys.s = false; break;
+                    case 'd': devFlyKeys.d = false; break;
+                    case ' ': devFlyKeys.space = false; break;
+                    case 'control': devFlyKeys.sprint = false; break;
+                }
+                if (event.key === 'Shift') devFlyKeys.shift = false;
+                return;
+            }
             // First person WASD controls
             switch(event.key.toLowerCase()) {
                 case 'w': fpKeys.w = false; break;
@@ -2639,33 +2965,37 @@
             }
         });
         
-        // Mouse look for first person mode
+        // Mouse look for first person mode and dev mode
         document.addEventListener('mousemove', (event) => {
-            if (isFirstPersonMode && document.pointerLockElement === renderer.domElement) {
-                fpCameraYaw -= event.movementX * fpMouseSensitivity;
-                fpCameraPitch -= event.movementY * fpMouseSensitivity;
-                fpCameraPitch = Math.max(-fpMaxPitch, Math.min(fpMaxPitch, fpCameraPitch));
+            if (document.pointerLockElement === renderer.domElement) {
+                if (devMode) {
+                    fpCameraYaw -= event.movementX * fpMouseSensitivity;
+                    fpCameraPitch -= event.movementY * fpMouseSensitivity;
+                    fpCameraPitch = Math.max(-fpMaxPitch, Math.min(fpMaxPitch, fpCameraPitch));
+                } else if (isFirstPersonMode) {
+                    fpCameraYaw -= event.movementX * fpMouseSensitivity;
+                    fpCameraPitch -= event.movementY * fpMouseSensitivity;
+                    fpCameraPitch = Math.max(-fpMaxPitch, Math.min(fpMaxPitch, fpCameraPitch));
+                }
             }
         });
         
         // Load map parts
         const loadingDiv = document.getElementById('loading');
-        const mapParts = [
-            'part0000.obj', 'part0001.obj', 'part0002.obj', 'part0003.obj',
-            'part0004.obj', 'part0005.obj', 'part0006.obj', 'part0007.obj',
-            'part0008.obj', 'part0009.obj', 'part0010.obj', 'part0011.obj',
-            'part0012.obj', 'part0013.obj'
-        ];
+        const mapParts = [];
+        for (let i = 0; i <= 91; i++) {
+            mapParts.push('part' + String(i).padStart(4, '0') + '.obj');
+        }
         
         let loadedCount = 0;
         const totalParts = mapParts.length;
         
         // Load MTL first, then OBJ files
         const mtlLoader = new MTLLoader();
-        mtlLoader.setPath('/map/');
+        mtlLoader.setPath('/anothermapo/');
         
         const objLoader = new OBJLoader();
-        objLoader.setPath('/map/');
+        objLoader.setPath('/anothermapo/');
         
         // Load materials first, then load OBJ files with materials applied
         mtlLoader.load('materials.mtl', 
@@ -2947,6 +3277,53 @@
                 }
             }
             
+            // Mobile joystick movement (overrides click-to-move when active)
+            if (isMobile && joystickState.active && (Math.abs(joystickState.dx) > 0.1 || Math.abs(joystickState.dy) > 0.1)) {
+                // Cancel any click-to-move target
+                targetPosition = null;
+                
+                // Isometric camera faces along (1,1,1) direction, so we need to rotate joystick input
+                // Camera looks from (+X,+Y,+Z) toward origin at 45 degrees
+                // Forward (joystick up / -dy) = camera's look direction projected on XZ = (-1, 0, -1) normalized
+                // Right (joystick right / +dx) = (1, 0, -1) normalized
+                const cos45 = Math.cos(Math.PI / 4);
+                const sin45 = Math.sin(Math.PI / 4);
+                // -dy = forward in screen = along camera forward on ground
+                const isoForwardX = -cos45; // camera forward projected X
+                const isoForwardZ = -sin45; // camera forward projected Z
+                const isoRightX = sin45;
+                const isoRightZ = -cos45;
+                
+                const moveX = joystickState.dx * isoRightX + (-joystickState.dy) * isoForwardX;
+                const moveZ = joystickState.dx * isoRightZ + (-joystickState.dy) * isoForwardZ;
+                
+                const joyMoveSpeed = moveSpeed * timeScale * 1.2;
+                const newPos = myPosition.clone();
+                newPos.x += moveX * joyMoveSpeed;
+                newPos.z += moveZ * joyMoveSpeed;
+                
+                if (!checkCollision(newPos)) {
+                    myPosition.copy(newPos);
+                } else {
+                    // Try sliding
+                    const newPosX = myPosition.clone();
+                    newPosX.x += moveX * joyMoveSpeed;
+                    const newPosZ = myPosition.clone();
+                    newPosZ.z += moveZ * joyMoveSpeed;
+                    
+                    if (!checkCollision(newPosX)) myPosition.x = newPosX.x;
+                    if (!checkCollision(newPosZ)) myPosition.z = newPosZ.z;
+                }
+                
+                localPlayerMesh.position.copy(myPosition);
+                
+                // Rotate player to face movement direction
+                if (Math.abs(moveX) > 0.01 || Math.abs(moveZ) > 0.01) {
+                    playerYaw = Math.atan2(-moveX, -moveZ);
+                    localPlayerMesh.rotation.y = playerYaw;
+                }
+            }
+            
             // Update camera to follow player
             updateCameraPosition();
             
@@ -2980,10 +3357,46 @@
             }
         });
         
+        // Dev fly mode camera update
+        function updateDevFlyCamera() {
+            const speed = devFlyKeys.sprint ? devFlySprintSpeed : devFlySpeed;
+            
+            // Full 3D forward (includes pitch)
+            const forward = new THREE.Vector3(
+                -Math.sin(fpCameraYaw) * Math.cos(fpCameraPitch),
+                Math.sin(fpCameraPitch),
+                -Math.cos(fpCameraYaw) * Math.cos(fpCameraPitch)
+            );
+            const right = new THREE.Vector3(
+                Math.cos(fpCameraYaw),
+                0,
+                -Math.sin(fpCameraYaw)
+            );
+            
+            if (devFlyKeys.w) devCamPos.add(forward.clone().multiplyScalar(speed));
+            if (devFlyKeys.s) devCamPos.add(forward.clone().multiplyScalar(-speed));
+            if (devFlyKeys.a) devCamPos.add(right.clone().multiplyScalar(-speed));
+            if (devFlyKeys.d) devCamPos.add(right.clone().multiplyScalar(speed));
+            if (devFlyKeys.space) devCamPos.y += speed;
+            if (devFlyKeys.shift) devCamPos.y -= speed;
+            
+            camera.position.copy(devCamPos);
+            camera.rotation.order = 'YXZ';
+            camera.rotation.y = fpCameraYaw;
+            camera.rotation.x = fpCameraPitch;
+            camera.rotation.z = 0;
+            
+            // Update dev HUD with position
+            const hud = document.getElementById('dev-hud');
+            hud.textContent = `DEV FLY MODE | X:${devCamPos.x.toFixed(1)} Y:${devCamPos.y.toFixed(1)} Z:${devCamPos.z.toFixed(1)}\nWASD + Space/Shift | Ctrl = Sprint | F12 = Exit`;
+        }
+        
         // Animation loop
         function animate() {
             requestAnimationFrame(animate);
-            if (cinematicActive) {
+            if (devMode) {
+                updateDevFlyCamera();
+            } else if (cinematicActive) {
                 updateVatsCinematic();
             } else {
                 updatePlayer();
