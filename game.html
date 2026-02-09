@@ -306,7 +306,7 @@
             </div>
         </div>
         <div id="mobile-buttons">
-            <div class="mobile-btn" id="mobile-btn-camera">CAM</div>
+            <div class="mobile-btn" id="mobile-btn-camera" role="button" aria-label="Toggle camera mode">CAM</div>
             <div class="mobile-btn" id="mobile-btn-shoot">FIRE</div>
             <div class="mobile-btn" id="mobile-btn-interact">ACT</div>
             <div class="mobile-btn" id="mobile-btn-weapon">SWAP</div>
@@ -607,6 +607,9 @@
         const gunshotFleeRadius = 30;
         const pedestrianWalkSpeed = 0.08;
         const pedestrianRunSpeed = 0.25;
+        const pedestrianCollisionRadius = 0.8;
+        const pedestrianFallenHeight = 0.3;
+        const cameraToggleEventBuffer = 2;
 
         // House interior and combat system
         let inHouse = false;
@@ -1968,14 +1971,14 @@
                 const pedCenter = ped.mesh.position.clone().add(new THREE.Vector3(0, 1, 0));
                 const dist = projectile.mesh.position.distanceTo(pedCenter);
                 
-                if (dist < 0.8) {
+                if (dist < pedestrianCollisionRadius) {
                     // Pedestrian is hit
                     ped.isDead = true;
                     ped.state = 'dead';
                     
                     // Make body fall over
                     ped.mesh.rotation.x = Math.PI / 2;
-                    ped.mesh.position.y = 0.3;
+                    ped.mesh.position.y = pedestrianFallenHeight;
                     
                     // Create blood pool
                     createBloodPool(ped.mesh.position.clone());
@@ -2178,7 +2181,7 @@
             
             // Don't allow toggle if at the pole event
             const distToEvent = myPosition.distanceTo(poleEventLocation);
-            if (distToEvent < poleEventTriggerDistance + 2) return;
+            if (distToEvent < poleEventTriggerDistance + cameraToggleEventBuffer) return;
             
             isFirstPersonMode = !isFirstPersonMode;
             
