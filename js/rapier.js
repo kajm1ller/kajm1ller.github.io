@@ -1,6 +1,7 @@
 import RAPIER from 'https://cdn.skypack.dev/@dimforge/rapier3d-compat';
 import * as THREE from 'https://cdn.skypack.dev/three@0.132.2';
 import { OrbitControls } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/controls/OrbitControls.js';
+import { PointerLockControls } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/controls/PointerLockControls.js';
 
 // Initialize and run the simulation
 RAPIER.init().then(() => {
@@ -28,6 +29,17 @@ RAPIER.init().then(() => {
     };
     controls.target.set(0, 1, 0); // Look at center of action
     
+    // Add PointerLockControls for first person mode
+    const pointerLockControls = new PointerLockControls(camera, renderer.domElement);
+    
+    // Camera mode state
+    let isFirstPersonMode = false;
+    let firstPersonVelocity = new THREE.Vector3();
+    let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+    
+    // First person camera height
+    const firstPersonHeight = 1.7;
+    
     // Add lights
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambientLight);
@@ -41,19 +53,112 @@ RAPIER.init().then(() => {
     let gravity = { x: 0.0, y: -9.81, z: 0.0 };
     let world = new RAPIER.World(gravity);
 
-    // Create the ground (physics)
-    let groundColliderDesc = RAPIER.ColliderDesc.cuboid(10.0, 0.1, 10.0);
+    // Create the ground (physics) - larger for walking around
+    let groundColliderDesc = RAPIER.ColliderDesc.cuboid(25.0, 0.1, 25.0);
     world.createCollider(groundColliderDesc);
     
     // Create the ground (visual)
-    const groundGeometry = new THREE.BoxGeometry(20, 0.2, 20);
-    const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x808080 });
+    const groundGeometry = new THREE.BoxGeometry(50, 0.2, 50);
+    const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x2d5016 }); // Grass green
     const groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
     groundMesh.receiveShadow = true;
     scene.add(groundMesh);
+    
+    // Create sidewalks (visual and physics)
+    const sidewalkMaterial = new THREE.MeshStandardMaterial({ color: 0x808080 }); // Gray
+    const sidewalks = [];
+    
+    // Create a grid of sidewalks
+    const sidewalkPositions = [
+        // Horizontal sidewalks
+        { x: 0, z: -8, width: 40, depth: 2 },
+        { x: 0, z: 0, width: 40, depth: 2 },
+        { x: 0, z: 8, width: 40, depth: 2 },
+        // Vertical sidewalks
+        { x: -10, z: 0, width: 2, depth: 30 },
+        { x: 0, z: 0, width: 2, depth: 30 },
+        { x: 10, z: 0, width: 2, depth: 30 }
+    ];
+    
+    sidewalkPositions.forEach(pos => {
+        const sidewalkGeometry = new THREE.BoxGeometry(pos.width, 0.3, pos.depth);
+        const sidewalkMesh = new THREE.Mesh(sidewalkGeometry, sidewalkMaterial);
+        sidewalkMesh.position.set(pos.x, 0.15, pos.z);
+        sidewalkMesh.receiveShadow = true;
+        sidewalkMesh.castShadow = true;
+        scene.add(sidewalkMesh);
+        sidewalks.push({ x: pos.x, z: pos.z, width: pos.width, depth: pos.depth });
+    });
 
     // Array to store all draggable cubes
     const allCubes = [];
+    
+    // Pedestrian system
+    const pedestrians = [];
+    
+    // Function to check if a position is on a sidewalk
+    function isOnSidewalk(x, z) {
+        for (const sidewalk of sidewalks) {
+            const halfWidth = sidewalk.width / 2;
+            const halfDepth = sidewalk.depth / 2;
+            if (Math.abs(x - sidewalk.x) < halfWidth && Math.abs(z - sidewalk.z) < halfDepth) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    // Function to get a random position on a sidewalk
+    function getRandomSidewalkPosition() {
+        const sidewalk = sidewalks[Math.floor(Math.random() * sidewalks.length)];
+        const x = sidewalk.x + (Math.random() - 0.5) * (sidewalk.width - 1);
+        const z = sidewalk.z + (Math.random() - 0.5) * (sidewalk.depth - 1);
+        return { x, z };
+    }
+    
+    // Function to create a pedestrian
+    function createPedestrian() {
+        const pos = getRandomSidewalkPosition();
+        
+        // Create a simple person shape (body + head)
+        const bodyGeometry = new THREE.CylinderGeometry(0.2, 0.25, 0.8, 8);
+        const bodyMaterial = new THREE.MeshStandardMaterial({ 
+            color: Math.random() * 0xffffff 
+        });
+        const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+        body.position.y = 0.4;
+        body.castShadow = true;
+        
+        const headGeometry = new THREE.SphereGeometry(0.15, 8, 8);
+        const headMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0xffdbac // Skin tone
+        });
+        const head = new THREE.Mesh(headGeometry, headMaterial);
+        head.position.y = 0.95;
+        head.castShadow = true;
+        
+        // Group them together
+        const pedestrianGroup = new THREE.Group();
+        pedestrianGroup.add(body);
+        pedestrianGroup.add(head);
+        pedestrianGroup.position.set(pos.x, 0, pos.z);
+        scene.add(pedestrianGroup);
+        
+        // Set initial movement direction along the sidewalk
+        const angle = Math.random() * Math.PI * 2;
+        
+        pedestrians.push({
+            group: pedestrianGroup,
+            velocity: new THREE.Vector2(Math.cos(angle), Math.sin(angle)),
+            speed: 0.5 + Math.random() * 0.5,
+            timeUntilDirectionChange: 2 + Math.random() * 3
+        });
+    }
+    
+    // Create initial pedestrians
+    for (let i = 0; i < 8; i++) {
+        createPedestrian();
+    }
     
     // Function to create a new cube
     function createCube(x, y, z, color = null) {
@@ -150,6 +255,62 @@ RAPIER.init().then(() => {
         e.preventDefault();
         resetCubesHandler();
     });
+    
+    // Button to toggle first person mode
+    const toggleFPButton = document.getElementById('toggleFirstPerson');
+    if (toggleFPButton) {
+        const toggleFPHandler = () => {
+            isFirstPersonMode = !isFirstPersonMode;
+            
+            if (isFirstPersonMode) {
+                // Switch to first person
+                controls.enabled = false;
+                
+                // Position camera at a reasonable first person position
+                camera.position.set(0, firstPersonHeight, 5);
+                camera.lookAt(0, firstPersonHeight, 0);
+                
+                // On mobile, we can't use pointer lock, so we'll use touch controls
+                const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+                
+                if (!isMobile) {
+                    // Desktop - use pointer lock for mouse look
+                    pointerLockControls.lock();
+                    
+                    // Handle pointer lock events
+                    pointerLockControls.addEventListener('unlock', () => {
+                        isFirstPersonMode = false;
+                        controls.enabled = true;
+                        toggleFPButton.textContent = 'First Person Mode';
+                    });
+                } else {
+                    // Mobile - don't use pointer lock, use touch/gyro instead
+                    // The black screen issue was caused by pointer lock not working on mobile
+                    // We'll handle this without pointer lock
+                }
+                
+                toggleFPButton.textContent = 'Exit First Person';
+            } else {
+                // Switch back to orbit
+                if (pointerLockControls.isLocked) {
+                    pointerLockControls.unlock();
+                }
+                controls.enabled = true;
+                
+                // Reset camera to orbit position
+                camera.position.set(5, 5, 5);
+                camera.lookAt(0, 1, 0);
+                
+                toggleFPButton.textContent = 'First Person Mode';
+            }
+        };
+        
+        toggleFPButton.addEventListener('click', toggleFPHandler);
+        toggleFPButton.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            toggleFPHandler();
+        });
+    }
     
     // Raycaster for mouse picking
     const raycaster = new THREE.Raycaster();
@@ -261,13 +422,28 @@ RAPIER.init().then(() => {
     window.addEventListener('mouseup', onMouseUp);
     
     // Touch event handlers for mobile
+    let lastTouchX = 0;
+    let lastTouchY = 0;
+    let touchMoving = false;
+    
     function onTouchStart(event) {
         if (event.touches.length === 1) {
+            const touchEvent = event.touches[0];
+            
+            // If in first person mode, track for camera rotation
+            if (isFirstPersonMode) {
+                lastTouchX = touchEvent.clientX;
+                lastTouchY = touchEvent.clientY;
+                touchMoving = true;
+                event.preventDefault();
+                return;
+            }
+            
+            // Otherwise handle cube dragging
             event.preventDefault();
             
-            const touch = event.touches[0];
-            mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+            mouse.x = (touchEvent.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(touchEvent.clientY / window.innerHeight) * 2 + 1;
             
             raycaster.setFromCamera(mouse, camera);
             
@@ -308,13 +484,40 @@ RAPIER.init().then(() => {
     }
     
     function onTouchMove(event) {
-        if (!isDragging || event.touches.length !== 1) return;
+        if (event.touches.length === 1) {
+            const touchEvent = event.touches[0];
+            
+            // If in first person mode, rotate camera
+            if (isFirstPersonMode && touchMoving) {
+                event.preventDefault();
+                
+                const deltaX = touchEvent.clientX - lastTouchX;
+                const deltaY = touchEvent.clientY - lastTouchY;
+                
+                lastTouchX = touchEvent.clientX;
+                lastTouchY = touchEvent.clientY;
+                
+                // Rotate camera based on touch movement
+                const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+                euler.setFromQuaternion(camera.quaternion);
+                
+                euler.y -= deltaX * 0.002; // Horizontal rotation
+                euler.x -= deltaY * 0.002; // Vertical rotation
+                
+                // Clamp vertical rotation
+                euler.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, euler.x));
+                
+                camera.quaternion.setFromEuler(euler);
+                return;
+            }
+            
+            // Otherwise handle cube dragging
+            if (!isDragging || event.touches.length !== 1) return;
         
         event.preventDefault();
         
-        const touch = event.touches[0];
-        mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
-        mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+        mouse.x = (touchEvent.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(touchEvent.clientY / window.innerHeight) * 2 + 1;
         
         raycaster.setFromCamera(mouse, camera);
         
@@ -330,9 +533,13 @@ RAPIER.init().then(() => {
                 lastTime = currentTime;
             }
         }
+        }
     }
     
     function onTouchEnd(event) {
+        // Reset touch moving flag
+        touchMoving = false;
+        
         if (isDragging && draggedCube) {
             event.preventDefault();
             
@@ -360,6 +567,54 @@ RAPIER.init().then(() => {
     window.addEventListener('touchend', onTouchEnd, { passive: false });
     window.addEventListener('touchcancel', onTouchEnd, { passive: false });
     
+    // Keyboard controls for first person mode
+    const onKeyDown = (event) => {
+        if (!isFirstPersonMode) return;
+        
+        switch (event.code) {
+            case 'ArrowUp':
+            case 'KeyW':
+                moveForward = true;
+                break;
+            case 'ArrowLeft':
+            case 'KeyA':
+                moveLeft = true;
+                break;
+            case 'ArrowDown':
+            case 'KeyS':
+                moveBackward = true;
+                break;
+            case 'ArrowRight':
+            case 'KeyD':
+                moveRight = true;
+                break;
+        }
+    };
+    
+    const onKeyUp = (event) => {
+        switch (event.code) {
+            case 'ArrowUp':
+            case 'KeyW':
+                moveForward = false;
+                break;
+            case 'ArrowLeft':
+            case 'KeyA':
+                moveLeft = false;
+                break;
+            case 'ArrowDown':
+            case 'KeyS':
+                moveBackward = false;
+                break;
+            case 'ArrowRight':
+            case 'KeyD':
+                moveRight = false;
+                break;
+        }
+    };
+    
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    
     // Handle window resize
     window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;
@@ -375,8 +630,61 @@ RAPIER.init().then(() => {
         // Always step the simulation (even while dragging for physics interactions)
         world.step();
         
-        // Update orbit controls
-        controls.update();
+        // Update controls based on camera mode
+        if (isFirstPersonMode) {
+            // First person movement
+            const delta = 0.1; // Time delta approximation
+            firstPersonVelocity.set(0, 0, 0);
+            
+            const direction = new THREE.Vector3();
+            const right = new THREE.Vector3();
+            
+            camera.getWorldDirection(direction);
+            right.crossVectors(camera.up, direction).normalize();
+            
+            if (moveForward) firstPersonVelocity.add(direction.multiplyScalar(-delta * 5));
+            if (moveBackward) firstPersonVelocity.add(direction.multiplyScalar(delta * 5));
+            if (moveLeft) firstPersonVelocity.add(right.multiplyScalar(-delta * 5));
+            if (moveRight) firstPersonVelocity.add(right.multiplyScalar(delta * 5));
+            
+            // Apply movement
+            camera.position.add(firstPersonVelocity);
+            camera.position.y = firstPersonHeight; // Keep at eye level
+        } else {
+            // Update orbit controls
+            controls.update();
+        }
+        
+        // Update pedestrians
+        for (const ped of pedestrians) {
+            // Update timer
+            ped.timeUntilDirectionChange -= 0.016; // Approximately 60 FPS
+            
+            if (ped.timeUntilDirectionChange <= 0) {
+                // Change direction randomly but stay on sidewalks
+                const angle = Math.random() * Math.PI * 2;
+                ped.velocity.set(Math.cos(angle), Math.sin(angle));
+                ped.timeUntilDirectionChange = 2 + Math.random() * 3;
+            }
+            
+            // Calculate new position
+            const newX = ped.group.position.x + ped.velocity.x * ped.speed * 0.016;
+            const newZ = ped.group.position.z + ped.velocity.y * ped.speed * 0.016;
+            
+            // Only move if staying on sidewalk
+            if (isOnSidewalk(newX, newZ)) {
+                ped.group.position.x = newX;
+                ped.group.position.z = newZ;
+                
+                // Rotate to face direction of movement
+                const angle = Math.atan2(ped.velocity.x, ped.velocity.y);
+                ped.group.rotation.y = angle;
+            } else {
+                // Hit edge of sidewalk, turn around
+                ped.velocity.multiplyScalar(-1);
+                ped.timeUntilDirectionChange = 1 + Math.random() * 2;
+            }
+        }
         
         // If dragging, apply force to move cube toward drag point
         if (isDragging && draggedCube) {
@@ -488,8 +796,10 @@ RAPIER.init().then(() => {
         
         // Update the position display
         const cubeCount = allCubes.length;
+        const pedCount = pedestrians.length;
+        const mode = isFirstPersonMode ? 'First Person' : 'Orbit';
         const status = isDragging ? ' [GRABBED]' : '';
-        positionElement.textContent = `Cubes: ${cubeCount}${status}`;
+        positionElement.textContent = `Cubes: ${cubeCount} | Pedestrians: ${pedCount} | Mode: ${mode}${status}`;
 
         // Render the scene
         renderer.render(scene, camera);
