@@ -496,6 +496,10 @@
                         fpCameraPitch -= deltaY * fpTouchSensitivity;
                         fpCameraPitch = Math.max(-fpMaxPitch, Math.min(fpMaxPitch, fpCameraPitch));
                         
+                        // Normalize yaw to [-PI, PI] to prevent floating-point precision issues
+                        while (fpCameraYaw > Math.PI) fpCameraYaw -= 2 * Math.PI;
+                        while (fpCameraYaw < -Math.PI) fpCameraYaw += 2 * Math.PI;
+                        
                         fpTouchState.startX = touch.clientX;
                         fpTouchState.startY = touch.clientY;
                         break;
@@ -969,7 +973,13 @@
             cameraPanStartTime = performance.now();
             cameraPanStartYaw = fpCameraYaw;
             cameraPanStartPitch = fpCameraPitch;
-            cameraPanTargetYaw = targetYaw;
+            
+            // Handle angle wrapping: ensure we take the shortest path
+            let angleDiff = targetYaw - fpCameraYaw;
+            while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+            while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+            
+            cameraPanTargetYaw = fpCameraYaw + angleDiff;
             cameraPanTargetPitch = targetPitch;
         }
 
@@ -987,6 +997,9 @@
             
             if (t >= 1.0) {
                 cameraPanActive = false;
+                // Normalize final yaw angle
+                while (fpCameraYaw > Math.PI) fpCameraYaw -= 2 * Math.PI;
+                while (fpCameraYaw < -Math.PI) fpCameraYaw += 2 * Math.PI;
             }
         }
 
@@ -3174,10 +3187,16 @@
                     fpCameraYaw -= event.movementX * fpMouseSensitivity;
                     fpCameraPitch -= event.movementY * fpMouseSensitivity;
                     fpCameraPitch = Math.max(-fpMaxPitch, Math.min(fpMaxPitch, fpCameraPitch));
+                    // Normalize yaw to [-PI, PI]
+                    while (fpCameraYaw > Math.PI) fpCameraYaw -= 2 * Math.PI;
+                    while (fpCameraYaw < -Math.PI) fpCameraYaw += 2 * Math.PI;
                 } else if (isFirstPersonMode) {
                     fpCameraYaw -= event.movementX * fpMouseSensitivity;
                     fpCameraPitch -= event.movementY * fpMouseSensitivity;
                     fpCameraPitch = Math.max(-fpMaxPitch, Math.min(fpMaxPitch, fpCameraPitch));
+                    // Normalize yaw to [-PI, PI]
+                    while (fpCameraYaw > Math.PI) fpCameraYaw -= 2 * Math.PI;
+                    while (fpCameraYaw < -Math.PI) fpCameraYaw += 2 * Math.PI;
                 }
             }
         });
