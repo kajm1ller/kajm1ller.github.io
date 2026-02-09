@@ -3354,6 +3354,10 @@
         function checkCollision(newPosition) {
             if (collisionMeshes.length === 0) return false;
             
+            // Keep player at ground level (roads/sidewalks are at Y=0)
+            // This prevents players from walking into areas above/below street level
+            newPosition.y = 0;
+            
             // Cast rays in 8 directions from player position at different heights
             const directions = [
                 new THREE.Vector3(1, 0, 0),
@@ -3412,6 +3416,7 @@
                 const hasCollision = inHouse ? checkHouseCollision(newPos) : checkCollision(newPos);
                 if (!hasCollision) {
                     myPosition.copy(newPos);
+                    if (!inHouse) myPosition.y = 0; // Keep at ground level when outside
                 } else {
                     // Try sliding along walls - check each axis separately
                     const newPosX = myPosition.clone();
@@ -3430,9 +3435,11 @@
                     
                     if (!(inHouse ? checkHouseCollision(newPosX) : checkCollision(newPosX))) {
                         myPosition.x = newPosX.x;
+                        if (!inHouse) myPosition.y = 0;
                     }
                     if (!(inHouse ? checkHouseCollision(newPosZ) : checkCollision(newPosZ))) {
                         myPosition.z = newPosZ.z;
+                        if (!inHouse) myPosition.y = 0;
                     }
                 }
                 
@@ -3477,6 +3484,7 @@
                     // Check collision before moving
                     if (!checkCollision(newPos)) {
                         myPosition.copy(newPos);
+                        myPosition.y = 0; // Keep player at ground level (sidewalk/road)
                     } else {
                         // Try sliding along walls
                         const newPosX = myPosition.clone();
@@ -3486,8 +3494,10 @@
                         
                         if (!checkCollision(newPosX)) {
                             myPosition.x = newPosX.x;
+                            myPosition.y = 0; // Keep at ground level
                         } else if (!checkCollision(newPosZ)) {
                             myPosition.z = newPosZ.z;
+                            myPosition.y = 0; // Keep at ground level
                         } else {
                             // Completely blocked, cancel movement
                             targetPosition = null;
@@ -3533,6 +3543,7 @@
                 
                 if (!checkCollision(newPos)) {
                     myPosition.copy(newPos);
+                    myPosition.y = 0; // Keep at ground level
                 } else {
                     // Try sliding
                     const newPosX = myPosition.clone();
@@ -3540,8 +3551,14 @@
                     const newPosZ = myPosition.clone();
                     newPosZ.z += moveZ * joyMoveSpeed;
                     
-                    if (!checkCollision(newPosX)) myPosition.x = newPosX.x;
-                    if (!checkCollision(newPosZ)) myPosition.z = newPosZ.z;
+                    if (!checkCollision(newPosX)) {
+                        myPosition.x = newPosX.x;
+                        myPosition.y = 0;
+                    }
+                    if (!checkCollision(newPosZ)) {
+                        myPosition.z = newPosZ.z;
+                        myPosition.y = 0;
+                    }
                 }
                 
                 localPlayerMesh.position.copy(myPosition);
