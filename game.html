@@ -469,8 +469,9 @@
             // Add keyboard support for camera button
             cameraBtn.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
+                    e.preventDefault(); // Prevent default scrolling for Space key
                     toggleCameraMode();
+                    cameraBtn.blur(); // Remove focus after activation for better UX
                 }
             });
             
@@ -618,8 +619,10 @@
         const pedestrianCollisionRadius = 0.8;
         const pedestrianFallenHeight = 0.3;
         const pedestrianCenterHeight = 1.0; // Vertical offset from ground to center of pedestrian
+        const pedestrianMinSpawnCount = 8; // Minimum number of pedestrians to spawn
         const pedestrianSpawnVariation = 5; // Random variation in number of pedestrians to spawn
-        const cameraToggleEventBuffer = 2; // Buffer distance (in game units) to prevent camera toggle conflicts near scripted events
+        const pedestrianWaypointArrivalThreshold = 1; // Distance to waypoint considered "arrived"
+        const cameraTogglePoleEventBufferDistance = 2; // Distance buffer (in game units) to prevent camera toggle conflicts near pole event
 
         // House interior and combat system
         let inHouse = false;
@@ -1895,8 +1898,8 @@
         }
 
         function spawnPedestrians() {
-            // Spawn 8-12 pedestrians at random spawn points
-            const numPedestrians = 8 + Math.floor(Math.random() * pedestrianSpawnVariation);
+            // Spawn pedestrians at random spawn points
+            const numPedestrians = pedestrianMinSpawnCount + Math.floor(Math.random() * pedestrianSpawnVariation);
             for (let i = 0; i < numPedestrians; i++) {
                 const spawnPoint = pedestrianSpawnPoints[Math.floor(Math.random() * pedestrianSpawnPoints.length)];
                 const position = new THREE.Vector3(spawnPoint.x, 0, spawnPoint.z);
@@ -1922,7 +1925,7 @@
                 const distance = direction.length();
                 
                 // If reached target, choose new waypoint
-                if (distance < 1) {
+                if (distance < pedestrianWaypointArrivalThreshold) {
                     if (ped.state === 'fleeing' && ped.fleeTarget) {
                         // Reached house, disappear
                         scene.remove(ped.mesh);
@@ -2192,7 +2195,7 @@
             // Don't allow toggle near pole event to avoid conflicts with automatic FP transition
             // (prevents user toggle from interfering with scripted camera sequence)
             const distToEvent = myPosition.distanceTo(poleEventLocation);
-            if (distToEvent < poleEventTriggerDistance + cameraToggleEventBuffer) return;
+            if (distToEvent < poleEventTriggerDistance + cameraTogglePoleEventBufferDistance) return;
             
             isFirstPersonMode = !isFirstPersonMode;
             
