@@ -23,7 +23,7 @@
         }
         #loading {
             position: absolute;
-            top: 50%;
+            top: 25%;
             left: 50%;
             transform: translate(-50%, -50%);
             color: rgb(255, 255, 255);
@@ -204,6 +204,77 @@
             }
             .key-hint { display: none !important; }
         }
+        /* Collision Editor */
+        #collision-editor-panel {
+            display: none;
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 300px;
+            max-height: 90vh;
+            overflow-y: auto;
+            background: rgba(0,0,0,0.9);
+            color: #0f0;
+            font-family: monospace;
+            font-size: 13px;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #0f0;
+            z-index: 300;
+            pointer-events: auto;
+        }
+        #collision-editor-panel h3 {
+            margin: 0 0 8px 0;
+            color: #0f0;
+            font-size: 15px;
+        }
+        #collision-editor-panel .ce-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 4px;
+        }
+        #collision-editor-panel .ce-row label {
+            width: 55px;
+            flex-shrink: 0;
+        }
+        #collision-editor-panel .ce-row input {
+            flex: 1;
+            background: #111;
+            color: #0f0;
+            border: 1px solid #0a0;
+            padding: 3px 5px;
+            font-family: monospace;
+            font-size: 12px;
+            border-radius: 3px;
+        }
+        #collision-editor-panel button {
+            margin: 4px 4px 0 0;
+            padding: 5px 10px;
+            background: #222;
+            color: #0f0;
+            border: 1px solid #0a0;
+            cursor: pointer;
+            font-family: monospace;
+            border-radius: 3px;
+        }
+        #collision-editor-panel button:hover {
+            background: #0a0;
+            color: #000;
+        }
+        .ce-info {
+            color: #888;
+            margin-bottom: 6px;
+        }
+        .ce-selected-info {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #333;
+        }
+        .ce-mode-btn.active {
+            background: #0a0;
+            color: #000;
+        }
     </style>
 </head>
 <body>
@@ -278,6 +349,8 @@
     </div>
     <div id="exit-indicator" style="display:none;position:absolute;top:60%;left:50%;transform:translate(-50%,-50%);color:#7cff7c;font-family:Arial,sans-serif;font-size:18px;font-weight:bold;background:rgba(0,0,0,0.6);padding:8px 16px;border-radius:5px;z-index:140;pointer-events:none;"><span class='key-hint'>(E) </span>Exit</div>
     <div id="bed-indicator" style="display:none;position:absolute;top:65%;left:50%;transform:translate(-50%,-50%);color:#7cff7c;font-family:Arial,sans-serif;font-size:18px;font-weight:bold;background:rgba(0,0,0,0.6);padding:8px 16px;border-radius:5px;z-index:140;pointer-events:none;"><span class='key-hint'>(E) </span>Lay Down</div>
+    <div id="car-indicator" style="display:none;position:absolute;top:55%;left:50%;transform:translate(-50%,-50%);color:#7cff7c;font-family:Arial,sans-serif;font-size:18px;font-weight:bold;background:rgba(0,0,0,0.6);padding:8px 16px;border-radius:5px;z-index:140;pointer-events:none;"><span class='key-hint'>(E) </span>Enter Car</div>
+    <div id="car-speed-hud" style="display:none;position:absolute;bottom:20px;left:50%;transform:translateX(-50%);color:white;background:rgba(0,0,0,0.7);padding:10px 20px;border-radius:5px;font-family:Arial,sans-serif;font-size:16px;z-index:100;pointer-events:none;">Speed: <span id="car-speed-val">0</span> mph</div>
     <div id="combat-ui" style="display:none;position:absolute;top:20px;left:50%;transform:translateX(-50%);width:720px;background:rgba(0,0,0,0.8);border:2px solid #333;border-radius:10px;padding:20px;font-family:Arial,sans-serif;z-index:180;">
         <div style="color:#fff;font-size:18px;margin-bottom:10px;">Combat</div>
         <div style="display:flex;gap:12px;margin-bottom:12px;">
@@ -299,6 +372,33 @@
         }
     </style>
     
+    <!-- Collision Editor Panel -->
+    <div id="collision-editor-panel">
+        <h3>Collision Editor (F9)</h3>
+        <div class="ce-info" id="ce-count">Colliders: 0</div>
+        <div>
+            <button id="ce-mode-move" class="ce-mode-btn active">Move</button>
+            <button id="ce-mode-resize" class="ce-mode-btn">Resize</button>
+            <button id="ce-delete" title="Delete selected collider">Delete</button>
+            <button id="ce-add" title="Add new collider at camera">Add</button>
+        </div>
+        <div>
+            <button id="ce-save">Save</button>
+            <button id="ce-load">Load</button>
+            <button id="ce-reset">Reset</button>
+        </div>
+        <div class="ce-selected-info" id="ce-selected-info" style="display:none;">
+            <div style="color:#ff0;margin-bottom:4px;">Selected #<span id="ce-sel-idx"></span></div>
+            <div class="ce-row"><label>Min X</label><input id="ce-min-x" type="number" step="0.5"></div>
+            <div class="ce-row"><label>Min Y</label><input id="ce-min-y" type="number" step="0.5"></div>
+            <div class="ce-row"><label>Min Z</label><input id="ce-min-z" type="number" step="0.5"></div>
+            <div class="ce-row"><label>Max X</label><input id="ce-max-x" type="number" step="0.5"></div>
+            <div class="ce-row"><label>Max Y</label><input id="ce-max-y" type="number" step="0.5"></div>
+            <div class="ce-row"><label>Max Z</label><input id="ce-max-z" type="number" step="0.5"></div>
+            <button id="ce-apply">Apply</button>
+        </div>
+    </div>
+
     <div id="mobile-controls">
         <div id="joystick-zone">
             <div id="joystick-base">
@@ -335,7 +435,7 @@
         
         // Isometric camera setup
         let cameraZoom = 50; // Controls both height and distance
-        const minZoom = 15;
+        const minZoom = 5;
         const maxZoom = 150;
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 500);
         
@@ -567,7 +667,7 @@
         scene.add(ground);
         
         // Movement controls - click to move
-        const moveSpeed = 0.15;
+        const moveSpeed = 0.12;
         let timeScale = 1;
         
         // Weapons system
@@ -613,16 +713,312 @@
             { x: -200, z: 0 }, { x: -180, z: -30 }, { x: -220, z: -60 },
             { x: -400, z: -20 }, { x: -420, z: -50 }, { x: -380, z: -30 }
         ];
+        var pedsKilled = 0;
         const pedestrianGunshotFleeRadius = 30;
         const pedestrianWalkSpeed = 0.08;
         const pedestrianRunSpeed = 0.25;
-        const pedestrianCollisionRadius = 0.8;
+        const pedestrianCollisionRadius = 1;
         const pedestrianFallenHeight = 0.3;
         const pedestrianCenterHeight = 1.0; // Vertical offset from ground to center of pedestrian
-        const pedestrianMinSpawnCount = 8; // Minimum number of pedestrians to spawn
-        const pedestrianSpawnVariation = 5; // Random variation in number of pedestrians to spawn
+        const pedestrianMinSpawnCount = 50; // Minimum number of pedestrians to spawn
+        const pedestrianSpawnVariation = 1; // Random variation in number of pedestrians to spawn
         const pedestrianWaypointArrivalThreshold = 1; // Distance to waypoint considered "arrived"
         const cameraTogglePoleEventBufferDistance = 2; // Distance buffer (in game units) to prevent camera toggle conflicts near pole event
+
+        // === HONDA CIVIC CAR SYSTEM ===
+        let carMesh = null;
+        let isInCar = false;
+        let carSpeed = 0;
+        let carYaw = 0;
+        const carMaxSpeed = 0.8;
+        const carAcceleration = 0.015;
+        const carBrakeForce = 0.03;
+        const carFriction = 0.005;
+        const carTurnSpeed = 0.03;
+        const carEnterDistance = 4;
+        const carIndicatorEl = document.getElementById('car-indicator');
+        const carSpeedHud = document.getElementById('car-speed-hud');
+        const carSpeedVal = document.getElementById('car-speed-val');
+        const carKeys = { w: false, a: false, s: false, d: false };
+
+        function createHondaCivic() {
+            const group = new THREE.Group();
+
+            // Main body - low sedan shape
+            const bodyGeo = new THREE.BoxGeometry(2.2, 0.7, 4.5);
+            const bodyMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            body.position.y = 0.55;
+            group.add(body);
+
+            // Roof / cabin
+            const cabinGeo = new THREE.BoxGeometry(1.9, 0.6, 2.2);
+            const cabinMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+            const cabin = new THREE.Mesh(cabinGeo, cabinMat);
+            cabin.position.set(0, 1.1, -0.3);
+            group.add(cabin);
+
+            // Windshield (front glass)
+            const windshieldGeo = new THREE.BoxGeometry(1.7, 0.5, 0.05);
+            const glassMat = new THREE.MeshLambertMaterial({ color: 0x4488aa, transparent: true, opacity: 0.5 });
+            const windshield = new THREE.Mesh(windshieldGeo, glassMat);
+            windshield.position.set(0, 1.1, -1.4);
+            windshield.rotation.x = -0.2;
+            group.add(windshield);
+
+            // Rear window
+            const rearGlassGeo = new THREE.BoxGeometry(1.7, 0.45, 0.05);
+            const rearGlass = new THREE.Mesh(rearGlassGeo, glassMat);
+            rearGlass.position.set(0, 1.05, 0.8);
+            rearGlass.rotation.x = 0.2;
+            group.add(rearGlass);
+
+            // Side windows
+            const sideWindowGeo = new THREE.BoxGeometry(0.05, 0.4, 1.8);
+            const leftWindow = new THREE.Mesh(sideWindowGeo, glassMat);
+            leftWindow.position.set(-0.97, 1.1, -0.3);
+            group.add(leftWindow);
+            const rightWindow = new THREE.Mesh(sideWindowGeo, glassMat);
+            rightWindow.position.set(0.97, 1.1, -0.3);
+            group.add(rightWindow);
+
+            // Headlights
+            const headlightGeo = new THREE.BoxGeometry(0.35, 0.2, 0.05);
+            const headlightMat = new THREE.MeshBasicMaterial({ color: 0xffffcc });
+            const headlightL = new THREE.Mesh(headlightGeo, headlightMat);
+            headlightL.position.set(-0.7, 0.55, -2.26);
+            group.add(headlightL);
+            const headlightR = new THREE.Mesh(headlightGeo, headlightMat);
+            headlightR.position.set(0.7, 0.55, -2.26);
+            group.add(headlightR);
+
+            // Taillights
+            const taillightGeo = new THREE.BoxGeometry(0.3, 0.15, 0.05);
+            const taillightMat = new THREE.MeshBasicMaterial({ color: 0xff2222 });
+            const taillightL = new THREE.Mesh(taillightGeo, taillightMat);
+            taillightL.position.set(-0.7, 0.55, 2.26);
+            group.add(taillightL);
+            const taillightR = new THREE.Mesh(taillightGeo, taillightMat);
+            taillightR.position.set(0.7, 0.55, 2.26);
+            group.add(taillightR);
+
+            // Wheels
+            const wheelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.25, 12);
+            const wheelMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
+            const wheelPositions = [
+                [-1.0, 0.35, -1.3],
+                [1.0, 0.35, -1.3],
+                [-1.0, 0.35, 1.3],
+                [1.0, 0.35, 1.3]
+            ];
+            wheelPositions.forEach(pos => {
+                const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+                wheel.rotation.z = Math.PI / 2;
+                wheel.position.set(pos[0], pos[1], pos[2]);
+                group.add(wheel);
+                // Hubcap
+                const hubGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.26, 8);
+                const hubMat = new THREE.MeshLambertMaterial({ color: 0x666666 });
+                const hub = new THREE.Mesh(hubGeo, hubMat);
+                hub.rotation.z = Math.PI / 2;
+                hub.position.set(pos[0], pos[1], pos[2]);
+                group.add(hub);
+            });
+
+            // Bumpers
+            const bumperGeo = new THREE.BoxGeometry(2.0, 0.15, 0.15);
+            const bumperMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+            const frontBumper = new THREE.Mesh(bumperGeo, bumperMat);
+            frontBumper.position.set(0, 0.3, -2.3);
+            group.add(frontBumper);
+            const rearBumper = new THREE.Mesh(bumperGeo, bumperMat);
+            rearBumper.position.set(0, 0.3, 2.3);
+            group.add(rearBumper);
+
+            // License plate area
+            const plateGeo = new THREE.BoxGeometry(0.6, 0.2, 0.02);
+            const plateMat = new THREE.MeshLambertMaterial({ color: 0xeeeeee });
+            const plate = new THREE.Mesh(plateGeo, plateMat);
+            plate.position.set(0, 0.35, 2.31);
+            group.add(plate);
+
+            return group;
+        }
+
+        function isNearCar() {
+            if (!carMesh) return false;
+            const dist = myPosition.distanceTo(carMesh.position);
+            return dist < carEnterDistance;
+        }
+
+        function enterCar() {
+            if (isInCar || !carMesh || isRagdoll || isPlayerDead || inHouse) return;
+            if (!isNearCar()) return;
+            isInCar = true;
+            carSpeed = 0;
+            carYaw = carMesh.rotation.y;
+            if (localPlayerMesh) {
+                localPlayerMesh.visible = false;
+                remoroMesh.visible = false;
+                labelRenderer.domElement.style.display = 'none';
+                
+            }
+        
+            targetPosition = null;
+            carIndicatorEl.style.display = 'none';
+            carSpeedHud.style.display = 'block';
+        }
+
+        function exitCar() {
+             const remoroPos = remoroMesh.position;
+            if (!isInCar) return;
+            isInCar = false;
+            carSpeed = 0;
+            // Place player next to car
+            const exitOffset = new THREE.Vector3(
+                Math.cos(carYaw) * 3,
+                0,
+                -Math.sin(carYaw) * 3
+            );
+
+            const RemoroexitOffset = new THREE.Vector3(
+                Math.sin(carYaw) * 3,
+                0,
+                -Math.cos(carYaw) * 3
+
+            );
+            myPosition.copy(carMesh.position).add(exitOffset);
+            remoroPos.copy(carMesh.position).add(RemoroexitOffset);
+            
+            if (localPlayerMesh) {
+                localPlayerMesh.position.copy(myPosition);
+                localPlayerMesh.visible = !isFirstPersonMode;
+                
+            }
+            if (remoroMesh) remoroMesh.visible = true;
+            labelRenderer.domElement.style.display = 'block';
+            carSpeedHud.style.display = 'none';
+        }
+
+        function updateCarDriving() {
+            if (!isInCar || !carMesh) return;
+
+            // Acceleration / braking
+            if (carKeys.w) {
+                carSpeed = Math.min(carMaxSpeed, carSpeed + carAcceleration);
+            } else if (carKeys.s) {
+                carSpeed = Math.max(-carMaxSpeed * 0.4, carSpeed - carBrakeForce);
+            } else {
+                // Friction
+                if (carSpeed > 0) carSpeed = Math.max(0, carSpeed - carFriction);
+                else if (carSpeed < 0) carSpeed = Math.min(0, carSpeed + carFriction);
+            }
+
+            // Steering (only when moving)
+            if (Math.abs(carSpeed) > 0.01) {
+                const turnFactor = carSpeed > 0 ? 1 : -1;
+                if (carKeys.a) carYaw += carTurnSpeed * turnFactor;
+                if (carKeys.d) carYaw -= carTurnSpeed * turnFactor;
+            }
+
+
+            // Calculate new position
+            const forward = new THREE.Vector3(
+                -Math.sin(carYaw),
+                0,
+                -Math.cos(carYaw)
+            );
+            const newCarPos = carMesh.position.clone().add(forward.multiplyScalar(carSpeed));
+            newCarPos.y = 0;
+
+            // --- Car-building collision detection ---
+            let carHitBuilding = false;
+            for (const mesh of collisionMeshes) {
+                if (!mesh.userData.worldBox) continue;
+                // Expand the car's bounding box for collision
+                const carBox = new THREE.Box3().setFromCenterAndSize(
+                    newCarPos.clone().setY(0.5), // car center, y at mid-height
+                    new THREE.Vector3(2.4, 1.2, 4.7) // car size (body + margin)
+                );
+                if (carBox.intersectsBox(mesh.userData.worldBox)) {
+                    carHitBuilding = true;
+                    break;
+                }
+            }
+
+            if (!carHitBuilding) {
+                // Check collisions with pedestrians
+                for (const ped of pedestrians) {
+                    if (ped.isDead) continue;
+                    const pd = ped.mesh.position.distanceTo(newCarPos);
+                    const collisionRadius = 1.6; // tuned radius for car hitting ped
+                    if (pd < collisionRadius) {
+                        // Ragdoll the pedestrian
+                        ped.isDead = true;
+                        ped.state = 'dead';
+                        // Apply impulse based on car forward vector and speed (reduced scale)
+                        const impulse = forward.clone().normalize().multiplyScalar(Math.max(0.5, Math.abs(carSpeed)) * 18);
+                        impulse.y = 1.5 * Math.abs(carSpeed);
+                        ped.ragdollVelocity = impulse;
+                        // Lift a bit to show impact
+                        ped.mesh.position.y += 0.2;
+                        // Rotate to indicate being hit
+                        ped.mesh.rotation.x = 0;
+                        // Optional: create blood pool after short delay
+                        setTimeout(() => createBloodPool(ped.mesh.position.clone()), 600);
+                    }
+                }
+                carMesh.position.copy(newCarPos);
+            } else {
+                // Stop and bounce car back a bit
+                carSpeed *= -0.3;
+                // Optionally, move car slightly away from building
+                carMesh.position.add(forward.clone().multiplyScalar(-0.5));
+            }
+
+            carMesh.rotation.y = carYaw;
+
+            // Player position tracks car
+            myPosition.copy(carMesh.position);
+            if (localPlayerMesh) localPlayerMesh.position.copy(myPosition);
+            if (remoroMesh) remoroMesh.position.copy(myPosition);
+
+
+            // Update speed display (convert game units to "mph")
+            const displaySpeed = Math.abs(Math.round(carSpeed * 100));
+            if (carSpeedVal) carSpeedVal.textContent = displaySpeed;
+
+            // Camera follows car
+            if (isFirstPersonMode) {
+                // First person: sit inside car looking forward
+                camera.position.copy(carMesh.position).add(new THREE.Vector3(0, 1.6, 0));
+                const cameraForward = new THREE.Vector3(-Math.sin(fpCameraYaw), 0, -Math.cos(fpCameraYaw));
+                const cameraRight = new THREE.Vector3(Math.cos(fpCameraYaw), 0, -Math.sin(fpCameraYaw));
+                cameraForward.applyAxisAngle(cameraRight, fpCameraPitch);
+                const lookAt = camera.position.clone().add(cameraForward.multiplyScalar(10));
+                camera.lookAt(lookAt);
+            } else {
+                // Isometric: follow car
+                const cameraOffset = new THREE.Vector3(cameraZoom, cameraZoom, cameraZoom);
+                camera.position.copy(carMesh.position).add(cameraOffset);
+                camera.lookAt(carMesh.position.clone().add(new THREE.Vector3(0, 1, 0)));
+            }
+        }
+
+        function updateCarIndicator() {
+            if (isInCar || inHouse || isRagdoll || isPlayerDead) {
+                carIndicatorEl.style.display = 'none';
+                return;
+            }
+            if (isNearCar()) {
+                carIndicatorEl.style.display = 'block';
+            } else {
+                carIndicatorEl.style.display = 'none';
+            }
+        }
+
+        // Sidewalk waypoint cache (populated after map load). Pedestrians will prefer these.
+        let sidewalkWaypoints = [];
 
         // House interior and combat system
         let inHouse = false;
@@ -648,8 +1044,13 @@
             "What are you doing inside my house?",
             "Why are you here? You need to leave.",
             "This is private property. Explain yourself.",
-            "Who let you in? Get out.",
-            "You're not supposed to be here."
+            "You're not supposed to be here.",
+            "What the fuck are you doing in my house? Get out.",
+            "Who are you?",
+            "You have 15 seconds to leave before I start shooting.",
+            "Oh, you must be my grandson James! I just need help moving this couch.",
+            "Hey what's up man?",
+            "Fuck off."
         ];
 
         const combatState = {
@@ -1799,13 +2200,41 @@
             head.position.y = 1.7;
             group.add(head);
             
+            // Hair - Blonde
+            const hairGeometry = new THREE.BoxGeometry(0.4, 0.15, 0.4);
+            const hairMaterial = new THREE.MeshLambertMaterial({ color: 0xffd700 });
+            const hair = new THREE.Mesh(hairGeometry, hairMaterial);
+            hair.position.y = 1.85;
+            group.add(hair);
+            
+            // Eyes - Black
+            const eyeGeometry = new THREE.BoxGeometry(0.05, 0.05, 0.02);
+            const eyeMaterial = new THREE.MeshLambertMaterial({ color: 0x000000 });
+            const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+            leftEye.position.set(-0.08, 1.75, -0.18);
+            group.add(leftEye);
+            const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+            rightEye.position.set(0.08, 1.75, -0.18);
+            group.add(rightEye);
+
+            const label = createNametag('Kaj');
+            label.position.set(0, 2.8, 0); // Position higher above head
+            group.add(label);
+            
             return group;
         }
         
         // Create Remoro companion
         let remoroMesh = null;
-        const remoroFollowDistance = 2.5; // How far behind Remoro follows
+        const remoroFollowDistance = 2; // How far behind Remoro follows
         const remoroMoveSpeed = 0.12;
+        // Remoro suppression state (fires at target while player recently fired)
+        let remoroSuppressTarget = null;
+        let remoroSuppressActive = false;
+        let remoroLastPlayerFireTime = 0;
+        let remoroLastShotTime = 0;
+        let remoroWeapon = null;
+        const remoroSuppressTimeout = 5000; // ms to keep suppressing after player's last shot
         
         function createRemoro() {
             const group = new THREE.Group();
@@ -1823,6 +2252,23 @@
             const head = new THREE.Mesh(headGeometry, headMaterial);
             head.position.y = 1.7;
             group.add(head);
+            
+            // Hair - Black
+            const hairGeometry = new THREE.BoxGeometry(0.4, 0.15, 0.4);
+            const hairMaterial = new THREE.MeshLambertMaterial({ color: 0x000000 });
+            const hair = new THREE.Mesh(hairGeometry, hairMaterial);
+            hair.position.y = 1.85;
+            group.add(hair);
+            
+            // Eyes - Black
+            const eyeGeometry = new THREE.BoxGeometry(0.05, 0.05, 0.02);
+            const eyeMaterial = new THREE.MeshLambertMaterial({ color: 0x000000 });
+            const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+            leftEye.position.set(-0.08, 1.75, -0.18);
+            group.add(leftEye);
+            const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+            rightEye.position.set(0.08, 1.75, -0.18);
+            group.add(rightEye);
             
             // Add nametag
             const label = createNametag('Remoro');
@@ -1883,8 +2329,10 @@
             group.position.copy(position);
             scene.add(group);
             
-            // Random initial target waypoint
-            const targetWaypoint = pedestrianWaypoints[Math.floor(Math.random() * pedestrianWaypoints.length)];
+            // Random initial target waypoint (prefer sidewalk waypoints)
+            const initialWaypoints = sidewalkWaypoints.length ? sidewalkWaypoints : pedestrianWaypoints;
+            if (!initialWaypoints || initialWaypoints.length === 0) console.warn('createPedestrian: no initial waypoints available');
+            const targetWaypoint = initialWaypoints[Math.floor(Math.random() * initialWaypoints.length)];
             
             return {
                 mesh: group,
@@ -1893,19 +2341,50 @@
                 speed: pedestrianWalkSpeed,
                 fleeTarget: null,
                 isDead: false,
-                deathTimer: 0
+                deathTimer: 0,
+                ragdollVelocity: null
             };
         }
 
         function spawnPedestrians() {
             // Spawn pedestrians at random spawn points
             const numPedestrians = pedestrianMinSpawnCount + Math.floor(Math.random() * pedestrianSpawnVariation);
+            // Prefer spawning near original spawn points but snap to nearby sidewalk points when available
+            const spawnCandidates = [];
+            const snapRadius = 80; // max distance to snap a spawn point to a sidewalk waypoint
+
+            if (sidewalkWaypoints.length) {
+                for (const sp of pedestrianSpawnPoints) {
+                    // find nearest sidewalk waypoint within snapRadius
+                    let nearest = null;
+                    let nd = Infinity;
+                    for (const sw of sidewalkWaypoints) {
+                        const dx = sw.x - sp.x;
+                        const dz = sw.z - sp.z;
+                        const d = Math.sqrt(dx*dx + dz*dz);
+                        if (d < nd) { nd = d; nearest = sw; }
+                    }
+                    if (nearest && nd <= snapRadius) {
+                        spawnCandidates.push({ x: nearest.x, z: nearest.z });
+                    } else {
+                        spawnCandidates.push(sp);
+                    }
+                }
+            } else {
+                spawnCandidates.push(...pedestrianSpawnPoints);
+            }
+
+            if (spawnCandidates.length === 0) console.warn('spawnPedestrians: no spawn candidates');
+            console.log('spawnPedestrians: spawning', numPedestrians, 'from pool size', spawnCandidates.length);
+
             for (let i = 0; i < numPedestrians; i++) {
-                const spawnPoint = pedestrianSpawnPoints[Math.floor(Math.random() * pedestrianSpawnPoints.length)];
+                const spawnPoint = spawnCandidates[Math.floor(Math.random() * spawnCandidates.length)];
                 const position = new THREE.Vector3(spawnPoint.x, 0, spawnPoint.z);
                 const pedestrian = createPedestrian(position);
+                console.log('spawnPedestrians: created pedestrian at', position.x, position.z);
                 pedestrians.push(pedestrian);
             }
+            console.log('spawnPedestrians: total pedestrians', pedestrians.length);
         }
 
         function updatePedestrians() {
@@ -1913,7 +2392,85 @@
                 const ped = pedestrians[i];
                 
                 if (ped.isDead) {
-                    // Dead pedestrians don't move
+                    // Dead pedestrians: simulate ragdoll physics if velocity present
+                    if (ped.ragdollVelocity) {
+                        // Integrate physics with basic collision against world boxes
+                        const dt = 0.016 * timeScale;
+                        const oldPos = ped.mesh.position.clone();
+                        // apply gravity
+                        ped.ragdollVelocity.y -= 9.8 * dt;
+                        // propose new position
+                        let newPos = oldPos.clone().add(ped.ragdollVelocity.clone().multiplyScalar(dt));
+
+                        // Collide with world collision boxes (approximate)
+                        for (const mesh of collisionMeshes) {
+                            const box = mesh.userData.worldBox;
+                            if (!box) continue;
+                            // If newPos is inside box, push to nearest surface and dampen
+                            if (box.containsPoint(newPos)) {
+                                // clamp to nearest point on box
+                                const closest = box.clampPoint(newPos.clone(), new THREE.Vector3());
+                                // determine collision normal (from closest point to oldPos)
+                                const normal = oldPos.clone().sub(closest).normalize();
+                                if (normal.length() === 0) normal.set(0,1,0);
+
+                                // If hitting top surface, place on top and zero vertical velocity
+                                if (normal.y > 0.7) {
+                                    newPos.y = box.max.y + 0.01;
+                                    ped.ragdollVelocity.y = 0;
+                                    ped.ragdollVelocity.x *= 0.4;
+                                    ped.ragdollVelocity.z *= 0.4;
+                                } else {
+                                    // Horizontal collision: reflect/dampen velocity on the dominant axis
+                                    if (Math.abs(normal.x) > Math.abs(normal.z)) {
+                                        ped.ragdollVelocity.x = -ped.ragdollVelocity.x * 0.3;
+                                    } else {
+                                        ped.ragdollVelocity.z = -ped.ragdollVelocity.z * 0.3;
+                                    }
+                                    ped.ragdollVelocity.y *= 0.8;
+                                    // move slightly away from box
+                                    newPos.copy(closest.add(normal.multiplyScalar(0.05)));
+                                }
+                            }
+                        }
+
+                        // Ground collision
+                        if (newPos.y <= pedestrianFallenHeight) {
+                            newPos.y = pedestrianFallenHeight;
+                            if (Math.abs(ped.ragdollVelocity.y) > 1) {
+                                // small bounce
+                                ped.ragdollVelocity.y = -ped.ragdollVelocity.y * 0.25;
+                                ped.ragdollVelocity.x *= 0.5;
+                                ped.ragdollVelocity.z *= 0.5;
+                            } else {
+                                ped.ragdollVelocity.y = 0;
+                                ped.ragdollVelocity.x *= 0.3;
+                                ped.ragdollVelocity.z *= 0.3;
+                            }
+                            // lay flat more quickly
+                            ped.mesh.rotation.x = Math.min(Math.PI / 2, ped.mesh.rotation.x + 0.6 * dt);
+                        } else {
+                            // Rotate while in air
+                            ped.mesh.rotation.x = Math.min(Math.PI / 2, ped.mesh.rotation.x + 0.3 * dt);
+                        }
+
+                        // Update position
+                        ped.mesh.position.copy(newPos);
+
+                        // Yaw from horizontal velocity
+                        const horiz = new THREE.Vector3(ped.ragdollVelocity.x, 0, ped.ragdollVelocity.z);
+                        if (horiz.length() > 0.01) {
+                            const spinYaw = Math.atan2(-horiz.x, -horiz.z);
+                            ped.mesh.rotation.y = spinYaw;
+                        }
+
+                        // Stop ragdoll when velocities are small
+                        const horizSpeed = Math.sqrt(ped.ragdollVelocity.x * ped.ragdollVelocity.x + ped.ragdollVelocity.z * ped.ragdollVelocity.z);
+                        if (Math.abs(ped.ragdollVelocity.y) < 0.3 && horizSpeed < 0.2 && newPos.y <= pedestrianFallenHeight + 0.01) {
+                            ped.ragdollVelocity = null;
+                            ped.mesh.rotation.x = Math.PI / 2;
+                        }
+                    }
                     continue;
                 }
                 
@@ -1932,8 +2489,9 @@
                         pedestrians.splice(i, 1);
                         continue;
                     } else {
-                        // Choose new random waypoint
-                        const newWaypoint = pedestrianWaypoints[Math.floor(Math.random() * pedestrianWaypoints.length)];
+                        // Choose new random waypoint (prefer sidewalks)
+                        const waypointPool = sidewalkWaypoints.length ? sidewalkWaypoints : pedestrianWaypoints;
+                        const newWaypoint = waypointPool[Math.floor(Math.random() * waypointPool.length)];
                         ped.target.set(newWaypoint.x, 0, newWaypoint.z);
                         continue;
                     }
@@ -1986,7 +2544,9 @@
                 
                 if (dist < pedestrianCollisionRadius) {
                     // Pedestrian is hit
+                    pedsKilled++;
                     ped.isDead = true;
+                    console.log(pedsKilled);
                     ped.state = 'dead';
                     
                     // Make body fall over
@@ -2002,10 +2562,396 @@
             return false;
         }
 
+        // Helper: check if a 2D point (x,z) lies inside any collision mesh world box
+        function pointInsideCollisionMeshes(pt) {
+            for (const mesh of collisionMeshes) {
+                const box = mesh.userData.worldBox;
+                if (!box) continue;
+                if (pt.x >= box.min.x && pt.x <= box.max.x && pt.z >= box.min.z && pt.z <= box.max.z) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Build sidewalk waypoints by heuristically scanning loaded map meshes
+        function buildSidewalkWaypoints() {
+            sidewalkWaypoints = [];
+            const keywords = /sidewalk|footway|pavement|paving|footpath|walkway|kerb|curb/;
+
+            function meshLooksLikeSidewalk(child) {
+                try {
+                    const checks = [];
+                    if (child.name) checks.push(child.name.toLowerCase());
+                    if (child.material) {
+                        if (child.material.name) checks.push(child.material.name.toLowerCase());
+                        if (child.material.map && child.material.map.name) checks.push(child.material.map.name.toLowerCase());
+                        if (child.material.map && child.material.map.image && child.material.map.image.src) checks.push(child.material.map.image.src.toLowerCase());
+                    }
+                    return checks.some(s => keywords.test(s));
+                } catch (e) {
+                    return false;
+                }
+            }
+
+            scene.traverse((child) => {
+                if (!child.isMesh) return;
+                // Prefer explicit sidewalk materials/names
+                if (meshLooksLikeSidewalk(child)) {
+                    // Ensure bounding box in world coordinates
+                    child.updateMatrixWorld(true);
+                    if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
+                    const bbox = child.geometry.boundingBox.clone().applyMatrix4(child.matrixWorld);
+                    // Sample points across the bbox at ~2 unit spacing
+                    const step = 2.0;
+                    for (let x = Math.floor(bbox.min.x); x <= bbox.max.x; x += step) {
+                        for (let z = Math.floor(bbox.min.z); z <= bbox.max.z; z += step) {
+                            const pt = { x: x + 0.5, z: z + 0.5 };
+                            if (!pointInsideCollisionMeshes(pt)) sidewalkWaypoints.push(pt);
+                        }
+                    }
+                }
+            });
+
+            // If none found, leave sidewalkWaypoints empty (code falls back to original waypoints)
+            console.log('Sidewalk waypoints built:', sidewalkWaypoints.length);
+        }
+
+        // ============================================================
+        // COLLISION EDITOR (F9)
+        // ============================================================
+        let collisionEditorActive = false;
+        let ceWireframes = [];        // THREE.LineSegments for each collider
+        let ceSelectedIndex = -1;
+        let ceDragActive = false;
+        let ceDragStart = new THREE.Vector2();
+        let ceDragPlane = new THREE.Plane();
+        let ceDragOffset = new THREE.Vector3();
+        let ceMode = 'move'; // 'move' or 'resize'
+        const ceRaycaster = new THREE.Raycaster();
+        const ceMouse = new THREE.Vector2();
+
+        const cePanel = document.getElementById('collision-editor-panel');
+        const ceCountEl = document.getElementById('ce-count');
+        const ceSelInfo = document.getElementById('ce-selected-info');
+        const ceSelIdx = document.getElementById('ce-sel-idx');
+        const ceInputs = {
+            minX: document.getElementById('ce-min-x'),
+            minY: document.getElementById('ce-min-y'),
+            minZ: document.getElementById('ce-min-z'),
+            maxX: document.getElementById('ce-max-x'),
+            maxY: document.getElementById('ce-max-y'),
+            maxZ: document.getElementById('ce-max-z'),
+        };
+
+        // Mode buttons
+        document.getElementById('ce-mode-move').addEventListener('click', () => {
+            ceMode = 'move';
+            document.getElementById('ce-mode-move').classList.add('active');
+            document.getElementById('ce-mode-resize').classList.remove('active');
+        });
+        document.getElementById('ce-mode-resize').addEventListener('click', () => {
+            ceMode = 'resize';
+            document.getElementById('ce-mode-resize').classList.add('active');
+            document.getElementById('ce-mode-move').classList.remove('active');
+        });
+
+        // Build wireframe helpers for all collision meshes
+        function ceBuildWireframes() {
+            ceClearWireframes();
+            for (let i = 0; i < collisionMeshes.length; i++) {
+                const box = collisionMeshes[i].userData.worldBox;
+                if (!box) continue;
+                const wf = ceCreateBoxWireframe(box, i === ceSelectedIndex ? 0xffff00 : 0x00ff00);
+                wf.userData.ceIndex = i;
+                wf.renderOrder = 999;
+                wf.material.depthTest = false;
+                scene.add(wf);
+                ceWireframes.push(wf);
+            }
+            ceCountEl.textContent = 'Colliders: ' + collisionMeshes.length;
+        }
+
+        function ceCreateBoxWireframe(box, color) {
+            const size = new THREE.Vector3();
+            box.getSize(size);
+            const center = new THREE.Vector3();
+            box.getCenter(center);
+            const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
+            const edges = new THREE.EdgesGeometry(geo);
+            const mat = new THREE.LineBasicMaterial({ color, linewidth: 1 });
+            const line = new THREE.LineSegments(edges, mat);
+            line.position.copy(center);
+            return line;
+        }
+
+        function ceClearWireframes() {
+            for (const wf of ceWireframes) scene.remove(wf);
+            ceWireframes = [];
+        }
+
+        function ceSelectCollider(idx) {
+            ceSelectedIndex = idx;
+            if (idx < 0 || idx >= collisionMeshes.length) {
+                ceSelInfo.style.display = 'none';
+                ceBuildWireframes();
+                return;
+            }
+            ceSelInfo.style.display = 'block';
+            ceSelIdx.textContent = idx;
+            const box = collisionMeshes[idx].userData.worldBox;
+            ceInputs.minX.value = box.min.x.toFixed(2);
+            ceInputs.minY.value = box.min.y.toFixed(2);
+            ceInputs.minZ.value = box.min.z.toFixed(2);
+            ceInputs.maxX.value = box.max.x.toFixed(2);
+            ceInputs.maxY.value = box.max.y.toFixed(2);
+            ceInputs.maxZ.value = box.max.z.toFixed(2);
+            ceBuildWireframes();
+        }
+
+        // Apply manual input values
+        document.getElementById('ce-apply').addEventListener('click', () => {
+            if (ceSelectedIndex < 0) return;
+            const mesh = collisionMeshes[ceSelectedIndex];
+            mesh.userData.worldBox.min.set(
+                parseFloat(ceInputs.minX.value),
+                parseFloat(ceInputs.minY.value),
+                parseFloat(ceInputs.minZ.value)
+            );
+            mesh.userData.worldBox.max.set(
+                parseFloat(ceInputs.maxX.value),
+                parseFloat(ceInputs.maxY.value),
+                parseFloat(ceInputs.maxZ.value)
+            );
+            ceBuildWireframes();
+        });
+
+        // Delete selected
+        document.getElementById('ce-delete').addEventListener('click', () => {
+            if (ceSelectedIndex < 0 || ceSelectedIndex >= collisionMeshes.length) return;
+            collisionMeshes.splice(ceSelectedIndex, 1);
+            ceSelectedIndex = -1;
+            ceSelInfo.style.display = 'none';
+            ceBuildWireframes();
+        });
+
+        // Add new collider at camera position
+        document.getElementById('ce-add').addEventListener('click', () => {
+            const pos = camera.position.clone();
+            pos.y = 0;
+            const fakeBox = new THREE.Box3(
+                new THREE.Vector3(pos.x - 2, 0, pos.z - 2),
+                new THREE.Vector3(pos.x + 2, 4, pos.z + 2)
+            );
+            // Create a placeholder mesh entry
+            const geo = new THREE.BoxGeometry(4, 4, 4);
+            const mat = new THREE.MeshBasicMaterial({ visible: false });
+            const placeholder = new THREE.Mesh(geo, mat);
+            placeholder.userData.worldBox = fakeBox;
+            placeholder.userData.height = 4;
+            placeholder.userData.ceAdded = true; // mark as editor-added
+            collisionMeshes.push(placeholder);
+            ceSelectCollider(collisionMeshes.length - 1);
+        });
+
+        // Save to localStorage
+        document.getElementById('ce-save').addEventListener('click', () => {
+            ceSaveToStorage();
+            alert('Collision overrides saved! (' + collisionMeshes.length + ' colliders)');
+        });
+
+        function ceSaveToStorage() {
+            const data = collisionMeshes.map((m, i) => {
+                const b = m.userData.worldBox;
+                return {
+                    idx: i,
+                    min: [b.min.x, b.min.y, b.min.z],
+                    max: [b.max.x, b.max.y, b.max.z],
+                    added: !!m.userData.ceAdded
+                };
+            });
+            localStorage.setItem('kaj_collision_overrides', JSON.stringify(data));
+        }
+
+        // Load from localStorage
+        document.getElementById('ce-load').addEventListener('click', () => {
+            ceLoadFromStorage();
+            ceBuildWireframes();
+        });
+
+        function ceLoadFromStorage() {
+            const raw = localStorage.getItem('kaj_collision_overrides');
+            if (!raw) { console.log('No saved collision overrides'); return; }
+            try {
+                const data = JSON.parse(raw);
+                // Apply overrides to existing meshes and add new ones
+                const existingCount = collisionMeshes.length;
+                for (const entry of data) {
+                    if (entry.added) {
+                        // Re-create editor-added placeholder
+                        const fakeBox = new THREE.Box3(
+                            new THREE.Vector3(entry.min[0], entry.min[1], entry.min[2]),
+                            new THREE.Vector3(entry.max[0], entry.max[1], entry.max[2])
+                        );
+                        const geo = new THREE.BoxGeometry(1,1,1);
+                        const mat = new THREE.MeshBasicMaterial({ visible: false });
+                        const placeholder = new THREE.Mesh(geo, mat);
+                        placeholder.userData.worldBox = fakeBox;
+                        placeholder.userData.height = fakeBox.max.y - fakeBox.min.y;
+                        placeholder.userData.ceAdded = true;
+                        collisionMeshes.push(placeholder);
+                    } else if (entry.idx < existingCount) {
+                        const mesh = collisionMeshes[entry.idx];
+                        mesh.userData.worldBox.min.set(entry.min[0], entry.min[1], entry.min[2]);
+                        mesh.userData.worldBox.max.set(entry.max[0], entry.max[1], entry.max[2]);
+                    }
+                }
+                console.log('Loaded', data.length, 'collision overrides');
+            } catch(e) {
+                console.error('Failed to load collision overrides:', e);
+            }
+        }
+
+        // Reset (remove localStorage data and reload)
+        document.getElementById('ce-reset').addEventListener('click', () => {
+            if (confirm('Remove all saved collision overrides and reload?')) {
+                localStorage.removeItem('kaj_collision_overrides');
+                window.location.reload();
+            }
+        });
+
+        // Toggle editor
+        function ceToggle() {
+            collisionEditorActive = !collisionEditorActive;
+            if (collisionEditorActive) {
+                cePanel.style.display = 'block';
+                ceBuildWireframes();
+            } else {
+                cePanel.style.display = 'none';
+                ceClearWireframes();
+                ceSelectedIndex = -1;
+                ceSelInfo.style.display = 'none';
+            }
+        }
+
+        // Mouse picking for collision editor
+        function ceOnMouseDown(e) {
+            if (!collisionEditorActive) return;
+            if (e.target.closest('#collision-editor-panel')) return; // clicking panel
+            if (e.button !== 0) return; // left click only
+
+            ceMouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            ceMouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            ceRaycaster.setFromCamera(ceMouse, camera);
+
+            // Intersect wireframes
+            // We need invisible box meshes for raycasting, so use a different approach:
+            // For each collider, create a temporary invisible box and raycast against those
+            const tempBoxes = [];
+            for (let i = 0; i < collisionMeshes.length; i++) {
+                const box = collisionMeshes[i].userData.worldBox;
+                if (!box) continue;
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                const center = new THREE.Vector3();
+                box.getCenter(center);
+                const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
+                const mat = new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide });
+                const m = new THREE.Mesh(geo, mat);
+                m.position.copy(center);
+                m.updateMatrixWorld(true);
+                m.userData.ceIndex = i;
+                tempBoxes.push(m);
+            }
+
+            const hits = ceRaycaster.intersectObjects(tempBoxes, false);
+            // Clean up temp meshes
+            for (const tb of tempBoxes) { tb.geometry.dispose(); tb.material.dispose(); }
+
+            if (hits.length > 0) {
+                const idx = hits[0].object.userData.ceIndex;
+                ceSelectCollider(idx);
+
+                // Start drag
+                ceDragActive = true;
+                ceDragStart.set(e.clientX, e.clientY);
+
+                // Drag plane: horizontal (Y-up) at the center of the box
+                const box = collisionMeshes[idx].userData.worldBox;
+                const center = new THREE.Vector3();
+                box.getCenter(center);
+                ceDragPlane.setFromNormalAndCoplanarPoint(
+                    new THREE.Vector3(0, 1, 0), center
+                );
+                // Offset = intersection point - box center
+                const intPt = new THREE.Vector3();
+                ceRaycaster.ray.intersectPlane(ceDragPlane, intPt);
+                if (intPt) ceDragOffset.copy(center).sub(intPt);
+                else ceDragOffset.set(0,0,0);
+
+                e.preventDefault();
+                e.stopPropagation();
+            } else {
+                ceSelectCollider(-1);
+            }
+        }
+
+        function ceOnMouseMove(e) {
+            if (!collisionEditorActive || !ceDragActive || ceSelectedIndex < 0) return;
+
+            ceMouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            ceMouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            ceRaycaster.setFromCamera(ceMouse, camera);
+
+            const intPt = new THREE.Vector3();
+            if (!ceRaycaster.ray.intersectPlane(ceDragPlane, intPt)) return;
+            intPt.add(ceDragOffset);
+
+            const box = collisionMeshes[ceSelectedIndex].userData.worldBox;
+            const oldCenter = new THREE.Vector3();
+            box.getCenter(oldCenter);
+            const size = new THREE.Vector3();
+            box.getSize(size);
+
+            if (ceMode === 'move') {
+                // Move box so center is at intPt (keep y unchanged)
+                const dx = intPt.x - oldCenter.x;
+                const dz = intPt.z - oldCenter.z;
+                box.min.x += dx; box.max.x += dx;
+                box.min.z += dz; box.max.z += dz;
+            } else {
+                // Resize: drag changes max corner
+                box.max.x = intPt.x + size.x * 0.5;
+                box.max.z = intPt.z + size.z * 0.5;
+                // Ensure min < max
+                if (box.max.x < box.min.x + 0.5) box.max.x = box.min.x + 0.5;
+                if (box.max.z < box.min.z + 0.5) box.max.z = box.min.z + 0.5;
+            }
+
+            // Refresh wireframes and panel inputs
+            ceSelectCollider(ceSelectedIndex);
+            e.preventDefault();
+        }
+
+        function ceOnMouseUp(e) {
+            if (ceDragActive) {
+                ceDragActive = false;
+                e.preventDefault();
+            }
+        }
+
+        // Attach editor mouse listeners (only active when editor is on)
+        window.addEventListener('mousedown', ceOnMouseDown, true);
+        window.addEventListener('mousemove', ceOnMouseMove, true);
+        window.addEventListener('mouseup', ceOnMouseUp, true);
+
         // Telephone pole event
         const poleEventLocation = new THREE.Vector3(-521, 0, -93.26);
         const poleEventTriggerDistance = 8;
         let isFirstPersonMode = false;
+        // Tracks whether first-person was entered automatically by the pole event
+        // so we only auto-exit when that auto-entry occurred.
+        let isFirstPersonAuto = false;
         let isTransitioning = false;
         let poleStarerMesh = null;
         let brokenPoleMesh = null;
@@ -2144,6 +3090,8 @@
                 
                 setTimeout(() => {
                     isFirstPersonMode = true;
+                    // Mark that this transition to FP was triggered automatically
+                    isFirstPersonAuto = true;
                     if (localPlayerMesh) localPlayerMesh.visible = false;
                     renderer.domElement.requestPointerLock();
                     
@@ -2164,7 +3112,7 @@
                         }
                     }, 100);
                 }, 500);
-            } else if (distToEvent >= poleEventTriggerDistance + 2 && isFirstPersonMode && !isTransitioning) {
+            } else if (distToEvent >= poleEventTriggerDistance + 2 && isFirstPersonMode && !isTransitioning && isFirstPersonAuto) {
                 // Start transition out of first person mode
                 isTransitioning = true;
                 transitionOverlay.style.opacity = '1';
@@ -2177,6 +3125,8 @@
                 
                 setTimeout(() => {
                     isFirstPersonMode = false;
+                    // Clear auto flag when leaving FP via automatic sequence
+                    isFirstPersonAuto = false;
                     if (localPlayerMesh) localPlayerMesh.visible = true;
                     
                     setTimeout(() => {
@@ -2210,6 +3160,8 @@
                 // Initialize camera orientation to face forward
                 fpCameraYaw = playerYaw;
                 fpCameraPitch = 0;
+                // User explicitly toggled FP mode, clear auto-enter flag
+                isFirstPersonAuto = false;
                 
             } else {
                 // Switching to isometric
@@ -2426,29 +3378,33 @@
         // Remoro dialog continue button
         document.getElementById('remoro-continue').addEventListener('click', () => {
             remoroDialog.style.display = 'none';
-            renderer.domElement.requestPointerLock();
+            
         });
         
         // Remoro random speech system
         const remoroTalkDialog = document.getElementById('remoro-talk-dialog');
         const remoroTalkText = document.getElementById('remoro-talk-text');
-        const remoroQuotes = [
+        var remoroQuotes = [
             "The FBI Killed Martin Luther King",
             "Fuck you",
-            "You owe me 73 dollars for the Gas Bill",
-            "Why are we here. Just to suffer"
+            "You owe me 73 dollars for the Gas Bilel",
+            "Why are we here. Just to suffer",
+            "Wow. We've killed " + pedsKilled + " people today. Really makes you think"
         ];
         
         // Check if player is facing Remoro
         function isFacingRemoro() {
-            if (!remoroMesh || !isFirstPersonMode) return false;
+            if (!remoroMesh) return false;
             
             // Get direction player is facing
-            const playerDir = new THREE.Vector3(
-                -Math.sin(fpCameraYaw),
-                0,
-                -Math.cos(fpCameraYaw)
-            ).normalize();
+            let playerDir;
+          
+                playerDir = new THREE.Vector3(
+                    Math.sin(localPlayerMesh.rotation.y),
+                    0,
+                    Math.cos(localPlayerMesh.rotation.y)
+                ).normalize();
+           
             
             // Get direction to Remoro
             const toRemoro = remoroMesh.position.clone().sub(myPosition);
@@ -2457,30 +3413,46 @@
             toRemoro.normalize();
             
             // Check dot product (facing direction) and distance
-            const dot = playerDir.dot(toRemoro);
+            const dot = playerDir.dot(toRemoro) * -1;
             return dot > 0.7 && distToRemoro < 5; // Facing within ~45 degrees and within 5 units
         }
         
         // Talk to Remoro
-        function talkToRemoro() {
-            if (!isFacingRemoro()) return;
-            
+        function talkToRemoro(force = false) {
+            if (!force && !isFacingRemoro()) return;
+
+            if (isInCar) return;
+
+            if (force && (!remoroMesh || myPosition.distanceTo(remoroMesh.position) > 5)) return;
+
             const randomQuote = remoroQuotes[Math.floor(Math.random() * remoroQuotes.length)];
             remoroTalkText.textContent = '"' + randomQuote + '"';
-            remoroTalkDialog.style.display = 'block';
-            document.exitPointerLock();
+
+            // If called as a hover/indicator (force=true) just show the indicator.
+            // If called without force (e.g. E key press) open the dialog.
+            if (force) {
+                talkIndicator.style.display = 'block';
+            } else {
+                remoroTalkDialog.style.display = 'block';
+            }
+
+            
+            
+            
+
+            
         }
         
         // Remoro talk dialog continue button
         document.getElementById('remoro-talk-continue').addEventListener('click', () => {
             remoroTalkDialog.style.display = 'none';
-            renderer.domElement.requestPointerLock();
+           
         });
         
         // Dead boy dialog continue button
         document.getElementById('dead-boy-continue').addEventListener('click', () => {
             deadBoyDialog.style.display = 'none';
-            renderer.domElement.requestPointerLock();
+           
         });
         
         // Check if player is facing dead boy
@@ -2515,10 +3487,7 @@
         
         // Update talk indicator visibility
         function updateTalkIndicator() {
-            if (!isFirstPersonMode) {
-                talkIndicator.style.display = 'none';
-                return;
-            }
+         
             
             if (isFacingRemoro() || isFacingDeadBoy()) {
                 talkIndicator.style.display = 'block';
@@ -2554,29 +3523,9 @@
         let cinematicData = null;
         let cinematicRestore = null;
 
-        function getPlayerPositionById(playerId) {
-            if (playerId === myPlayerId) {
-                return myPosition.clone().add(new THREE.Vector3(0, 1.7, 0));
-            }
-            const other = otherPlayers.get(playerId);
-            if (!other) return null;
-            return other.mesh.position.clone().add(new THREE.Vector3(0, 1.7, 0));
-        }
 
-        function getClosestTarget() {
-            let closest = null;
-            let closestDist = Infinity;
-            for (const [playerId, playerObj] of otherPlayers) {
-                if (playerObj.ragdoll) continue;
-                const targetPos = playerObj.mesh.position.clone().add(new THREE.Vector3(0, 1.2, 0));
-                const dist = targetPos.distanceTo(myPosition);
-                if (dist < closestDist && dist < 120) {
-                    closestDist = dist;
-                    closest = { id: playerId, mesh: playerObj.mesh, distance: dist };
-                }
-            }
-            return closest;
-        }
+
+
 
         function computeVatsChances(distance) {
             const headBase = 0.55;
@@ -2616,41 +3565,9 @@
             vatsBodyHighlight = null;
         }
 
-        function updateVatsDisplay() {
-            const target = otherPlayers.get(vatsTargetId);
-            if (!target) {
-                exitVats();
-                return;
-            }
-            const distance = target.mesh.position.distanceTo(myPosition);
-            const chances = computeVatsChances(distance);
-            const headPercent = Math.round(chances.head * 100);
-            const bodyPercent = Math.round(chances.body * 100);
-            if (!vatsLabel) {
-                vatsLabel = createVatsLabel();
-                vatsLabel.position.set(0, 2.6, 0);
-                target.mesh.add(vatsLabel);
-            }
-            vatsLabel.element.innerHTML = `Head ${headPercent}% (H)<br>Body ${bodyPercent}% (B)<br>Shots ${vatsShots} (1-3)`;
 
-            if (vatsHeadHighlight && vatsBodyHighlight) {
-                const headSelected = vatsTargetPart === 'head';
-                vatsHeadHighlight.material.opacity = headSelected ? 0.6 : 0.2;
-                vatsBodyHighlight.material.opacity = headSelected ? 0.15 : 0.45;
-            }
-        }
 
-        function enterVats() {
-            if (vatsActive) return;
-            const target = getClosestTarget();
-            if (!target) return;
-            vatsActive = true;
-            vatsTargetId = target.id;
-            vatsTargetPart = 'body';
-            vatsShots = 1;
-            attachVatsHighlights(target.mesh);
-            updateVatsDisplay();
-        }
+
 
         function exitVats() {
             vatsActive = false;
@@ -2723,53 +3640,13 @@
             camera.lookAt(targetPos.clone().add(new THREE.Vector3(0, 1.0, 0)));
         }
 
-        function executeVats() {
-            if (!vatsActive || !vatsTargetId) return;
-            const target = otherPlayers.get(vatsTargetId);
-            if (!target) {
-                exitVats();
-                return;
-            }
-            const distance = target.mesh.position.distanceTo(myPosition);
-            const chances = computeVatsChances(distance);
-            const chance = vatsTargetPart === 'head' ? chances.head : chances.body;
-            let hits = 0;
-            for (let i = 0; i < vatsShots; i++) {
-                if (Math.random() < chance) hits++;
-            }
-            const success = hits > 0;
-            const weapon = weapons[currentWeaponIndex].name;
 
-            if (socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({
-                    type: 'vats',
-                    targetId: vatsTargetId,
-                    part: vatsTargetPart,
-                    shots: vatsShots,
-                    weapon: weapon,
-                    success: success
-                }));
-            }
-
-            startVatsCinematic({
-                shooterId: myPlayerId,
-                targetId: vatsTargetId,
-                part: vatsTargetPart,
-                shots: vatsShots,
-                weapon: weapon,
-                success: success
-            });
-            exitVats();
-        }
         
         // Coordinates display
         const coordsDiv = document.getElementById('coords');
         
-        // Multiplayer setup
-        let myPlayerId = null;
+        // Singleplayer setup
         let myPlayerName = 'Player';
-        let socket = null;
-        const otherPlayers = new Map(); // Map of playerId -> { mesh, label }
         
         // Create player model (rectangle/box)
         function createPlayerModel(color = 0x00ff00) {
@@ -2803,47 +3680,9 @@
             return label;
         }
         
-        // Add or update other player
-        function updateOtherPlayer(playerData) {
-            if (playerData.id === myPlayerId) return; // Skip self
-            
-            let playerObj = otherPlayers.get(playerData.id);
-            
-            if (!playerObj) {
-                // Create new player
-                const mesh = createPlayerModel(0x3498db); // Blue for other players
-                const label = createNametag(playerData.name);
-                mesh.add(label);
-                scene.add(mesh);
-                playerObj = { mesh, label, ragdoll: false };
-                otherPlayers.set(playerData.id, playerObj);
-            }
-            
-            // Update position and rotation (use Y for jump sync)
-            playerObj.mesh.position.set(playerData.x, playerData.y - 1.7, playerData.z);
-            playerObj.mesh.rotation.y = playerData.yaw;
-            
-            // Update ragdoll state if changed
-            if (playerData.ragdoll !== undefined && playerData.ragdoll !== playerObj.ragdoll) {
-                playerObj.ragdoll = playerData.ragdoll;
-                if (playerData.ragdoll) {
-                    // Ragdoll animation - tilt backwards
-                    playerObj.mesh.rotation.x = -Math.PI / 2;
-                } else {
-                    // Stand back up
-                    playerObj.mesh.rotation.x = 0;
-                }
-            }
-        }
+
         
-        // Remove player
-        function removePlayer(playerId) {
-            const playerObj = otherPlayers.get(playerId);
-            if (playerObj) {
-                scene.remove(playerObj.mesh);
-                otherPlayers.delete(playerId);
-            }
-        }
+
         
         // Create projectile visual
         function createProjectile(startPos, direction, weapon) {
@@ -2867,6 +3706,34 @@
                 damage: weapon.damage,
                 weaponName: weapon.name
             };
+        }
+        
+        // Remoro shooting helper: fire from Remoro towards a pedestrian target
+        function remoroShootAt(ped, weapon) {
+            if (!remoroMesh || !ped || ped.isDead) return;
+            const remoroPos = remoroMesh.position.clone();
+            const targetCenter = ped.mesh.position.clone().add(new THREE.Vector3(0, pedestrianCenterHeight, 0));
+            const aimDir = targetCenter.clone().sub(remoroPos).normalize();
+
+            const startPos = remoroPos.clone();
+            startPos.y = 1.2;
+            startPos.add(aimDir.clone().multiplyScalar(0.6));
+
+            const spreadDir = aimDir.clone();
+            spreadDir.x += (Math.random() - 0.5) * (weapon.spread || 0.02);
+            spreadDir.y += (Math.random() - 0.5) * (weapon.spread || 0.02);
+            spreadDir.z += (Math.random() - 0.5) * (weapon.spread || 0.02);
+            spreadDir.normalize();
+
+            const proj = createProjectile(startPos, spreadDir, weapon);
+            projectiles.push(proj);
+
+            if (!weapon.explosive) {
+                if (weapon.name === 'Pistol') playSound(pistolFireSound);
+                else playSound(smgFireSound);
+            }
+
+            makeNearbyPedestriansFlee(remoroPos);
         }
         
         // Create explosion effect
@@ -2938,7 +3805,7 @@
             }
             
             // Make nearby pedestrians flee
-            makeNearbyPedestriansFlee(myPosition.clone());
+            //makeNearbyPedestriansFlee(myPosition.clone());
             
             // Calculate shooting direction based on view mode
             let direction;
@@ -2959,7 +3826,11 @@
             }
             
             const pelletCount = weapon.pellets || 1;
-            
+
+            // Compute player projectile start position once (used for Remoro targeting)
+            const playerProjectileStart = myPosition.clone();
+            playerProjectileStart.y = isFirstPersonMode ? 1.7 : 1; // Eye level in FP, chest in isometric
+
             for (let i = 0; i < pelletCount; i++) {
                 // Apply spread
                 const spreadDir = direction.clone();
@@ -2971,170 +3842,55 @@
                 spreadDir.normalize();
                 
                 // Create projectile visual from player position
-                const startPos = myPosition.clone();
-                startPos.y = isFirstPersonMode ? 1.7 : 1; // Eye level in FP, chest in isometric
+                const startPos = playerProjectileStart.clone();
                 startPos.add(direction.clone().multiplyScalar(0.5)); // Start slightly in front
                 const projectile = createProjectile(startPos, spreadDir, weapon);
                 projectiles.push(projectile);
             }
             
-            // Notify server of shot fired (for effects)
-            if (socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({
-                    type: 'fire',
-                    weapon: weapon.name,
-                    x: myPosition.x,
-                    y: myPosition.y + 1,
-                    z: myPosition.z,
-                    yaw: isFirstPersonMode ? fpCameraYaw : playerYaw,
-                    pitch: isFirstPersonMode ? fpCameraPitch : 0
-                }));
-            }
-        }
-        
-        // Update projectiles
-        function updateProjectiles() {
-            for (let i = projectiles.length - 1; i >= 0; i--) {
-                const p = projectiles[i];
-                const moveAmount = p.direction.clone().multiplyScalar(p.speed * timeScale);
-                p.mesh.position.add(moveAmount);
-                p.distance += p.speed * timeScale;
-                
-                // Check for pedestrian hits
-                if (checkPedestrianBulletCollisions(p)) {
-                    scene.remove(p.mesh);
-                    projectiles.splice(i, 1);
-                    continue;
-                }
-                
-                // Check for hits while projectile travels (for RPG and all weapons)
-                for (const [playerId, playerObj] of otherPlayers) {
-                    if (playerObj.ragdoll) continue;
-                    
-                    const playerCenter = playerObj.mesh.position.clone().add(new THREE.Vector3(0, 1, 0));
-                    const dist = p.mesh.position.distanceTo(playerCenter);
-                    
-                    // Hit detection based on projectile type
-                    const hitRadius = p.explosive ? 1.5 : 0.8;
-                    if (dist < hitRadius) {
-                        if (p.explosive) {
-                            // RPG explodes on impact
-                            createExplosion(p.mesh.position.clone(), 3);
-                        } else {
-                            // Regular hit
-                            if (socket && socket.readyState === WebSocket.OPEN) {
-                                socket.send(JSON.stringify({
-                                    type: 'shoot',
-                                    targetId: playerId,
-                                    damage: p.damage,
-                                    weapon: p.weaponName
-                                }));
-                            }
-                        }
-                        scene.remove(p.mesh);
-                        projectiles.splice(i, 1);
-                        break;
-                    }
-                }
-                
-                // Remove if traveled too far
-                if (p.distance >= p.maxDistance) {
-                    // RPG explodes at max range
-                    if (p.explosive) {
-                        createExplosion(p.mesh.position.clone(), 3);
-                    }
-                    scene.remove(p.mesh);
-                    projectiles.splice(i, 1);
-                }
-            }
-        }
-        
-        // Handle being hit (ragdoll)
-        function handleHit(shooterName, weaponName) {
-            if (isRagdoll) return;
-            
-            isRagdoll = true;
-           
-            
-            // Send ragdoll state to server
-            if (socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({
-                    type: 'ragdoll',
-                    ragdoll: true
-                }));
-            }
-            
-            // Get back up after 3.5 seconds
-            ragdollTimer = setTimeout(() => {
-                isRagdoll = false;
-                ragdollOverlay.style.display = 'none';
-                
-                // Send recovery state to server
-                if (socket && socket.readyState === WebSocket.OPEN) {
-                    socket.send(JSON.stringify({
-                        type: 'ragdoll',
-                        ragdoll: false
-                    }));
-                }
-            }, 3500);
-        }
-        
-        // Connect to WebSocket server
-        function connectMultiplayer(playerName) {
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            socket = new WebSocket(`${protocol}//${window.location.host}`);
-            
-            socket.onopen = () => {
-                console.log('Connected to multiplayer server');
-                socket.send(JSON.stringify({
-                    type: 'join',
-                    name: playerName,
-                    x: myPosition.x,
-                    y: myPosition.y + 1.7,
-                    z: myPosition.z,
-                    yaw: playerYaw
-                }));
-            };
-            
-            socket.onmessage = (event) => {
-                const msg = JSON.parse(event.data);
-                
-                if (msg.type === 'welcome') {
-                    myPlayerId = msg.id;
-                    console.log('My player ID:', myPlayerId);
-                }
-                
-                if (msg.type === 'players') {
-                    // Get list of current player IDs
-                    const currentIds = new Set(msg.players.map(p => p.id));
-                    
-                    // Remove players who left
-                    for (const [id] of otherPlayers) {
-                        if (!currentIds.has(id)) {
-                            removePlayer(id);
-                        }
-                    }
-                    
-                    // Update/add players
-                    for (const player of msg.players) {
-                        updateOtherPlayer(player);
-                    }
-                }
-                
-                if (msg.type === 'hit') {
-                    // We got hit by someone
-                    handleHit(msg.shooterName, msg.weapon);
-                }
+            // Remoro: if present, try to shoot at the NPC the player is aiming at
+            try {
+                if (remoroMesh) {
+                    const start = playerProjectileStart.clone();
+                    const dir = direction.clone().normalize();
+                    let targetPed = null;
+                    let targetT = Infinity;
 
-                if (msg.type === 'vats') {
-                    startVatsCinematic(msg);
+                    for (const ped of pedestrians) {
+                        if (ped.isDead) continue;
+                        const pedCenter = ped.mesh.position.clone().add(new THREE.Vector3(0, pedestrianCenterHeight, 0));
+                        const toPed = pedCenter.clone().sub(start);
+                        const t = toPed.dot(dir);
+                        if (t <= 0 || t > weapon.range) continue;
+                        const closest = start.clone().add(dir.clone().multiplyScalar(t));
+                        const distToRay = closest.distanceTo(pedCenter);
+                        if (distToRay <= pedestrianCollisionRadius) {
+                            // Check line of sight using raycast against collision meshes
+                            const ray = new THREE.Raycaster();
+                            ray.set(start, dir);
+                            ray.far = t;
+                            const hits = ray.intersectObjects(collisionMeshes, true);
+                            if (hits && hits.length > 0) continue; // blocked
+                            if (t < targetT) { targetT = t; targetPed = ped; }
+                        }
+                    }
+
+                    if (targetPed) {
+                        remoroSuppressTarget = targetPed;
+                        remoroSuppressActive = true;
+                        remoroLastPlayerFireTime = Date.now();
+                        remoroWeapon = weapon;
+                        remoroLastShotTime = 0;
+                        remoroShootAt(targetPed, weapon);
+                    }
                 }
-            };
-            
-            socket.onclose = () => {
-                console.log('Disconnected from server');
-            };
+            } catch (e) { console.warn('Remoro shooting error', e); }
+
+            // Extend suppression timer if Remoro is already suppressing
+            if (remoroSuppressActive) remoroLastPlayerFireTime = Date.now();
+
         }
+        
         
         // Send position updates
         let lastUpdateTime = 0;
@@ -3171,7 +3927,6 @@
             
             // Initialize player and camera after joining
             initializePlayer();
-            connectMultiplayer(myPlayerName);
         });
         
         playerNameInput.addEventListener('keypress', (e) => {
@@ -3198,6 +3953,13 @@
             
             // Initialize pole event scene
             initPoleEvent();
+
+            // Create Honda Civic next to Kaj house
+            carMesh = createHondaCivic();
+            // Place the car next to the player start position (Kaj house area)
+            carMesh.position.set(playerStartPos.x + 6, 0, playerStartPos.z + 2);
+            carMesh.rotation.y = Math.PI / 4; // Angled slightly
+            scene.add(carMesh);
             
             // Create click indicator
             clickIndicator = createClickIndicator();
@@ -3286,6 +4048,16 @@
                 mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
                 
                 raycaster.setFromCamera(mouse, camera);
+
+                // Check if tapped Remoro
+                if (remoroMesh) {
+                    const hitRemoro = raycaster.intersectObject(remoroMesh, true);
+                    if (hitRemoro.length > 0) {
+                        talkToRemoro(true);
+                        return;
+                    }
+                }
+                
                 const intersects = raycaster.intersectObject(ground);
                 
                 if (intersects.length > 0) {
@@ -3303,6 +4075,12 @@
         
         // Key event listeners
         document.addEventListener('keydown', (event) => {
+            // F9 toggles collision editor
+            if (event.key === 'F9') {
+                event.preventDefault();
+                ceToggle();
+                return;
+            }
             // F12 toggles dev fly mode
             if (event.key === 'F12') {
                 event.preventDefault();
@@ -3345,14 +4123,8 @@
             }
             
             if (isPlayerDead) return;
-            if (event.key.toLowerCase() === 'v') {
-                if (vatsActive) {
-                    exitVats();
-                } else {
-                    enterVats();
-                }
-                return;
-            }
+
+          
 
             if (vatsActive) {
                 const key = event.key.toLowerCase();
@@ -3387,6 +4159,15 @@
                     case 's': fpKeys.s = true; break;
                     case 'd': fpKeys.d = true; break;
                     case 'e': 
+                        // Car enter/exit
+                        if (isInCar) {
+                            exitCar();
+                            break;
+                        }
+                        if (isNearCar() && !inHouse) {
+                            enterCar();
+                            break;
+                        }
                         if (inHouse && currentHouseIsKaj && isNearBed()) {
                             layInBed();
                             break;
@@ -3397,10 +4178,32 @@
                         }
                         if (isFacingDeadBoy()) {
                             talkToDeadBoy();
-                        } else {
+                        } else if (isFacingRemoro()) {
                             talkToRemoro();
                         }
                         break;
+                }
+            }
+
+            // E key in isometric mode (car enter/exit)
+            if (!isFirstPersonMode && event.key.toLowerCase() === 'e') {
+                console.log("Something is happening.\n0");
+                if (isInCar) {
+                    exitCar();
+                } else if (isNearCar() && !inHouse) {
+                    enterCar();
+                } else if (!inHouse && isFacingRemoro()) {
+                    talkToRemoro();
+                }
+            }
+
+            // Car driving controls (work in both FP and isometric while in car)
+            if (isInCar) {
+                switch(event.key.toLowerCase()) {
+                    case 'w': carKeys.w = true; break;
+                    case 'a': carKeys.a = true; break;
+                    case 's': carKeys.s = true; break;
+                    case 'd': carKeys.d = true; break;
                 }
             }
         });
@@ -3418,6 +4221,15 @@
                 }
                 if (event.key === 'Shift') devFlyKeys.shift = false;
                 return;
+            }
+            // Car key release
+            if (isInCar) {
+                switch(event.key.toLowerCase()) {
+                    case 'w': carKeys.w = false; break;
+                    case 'a': carKeys.a = false; break;
+                    case 's': carKeys.s = false; break;
+                    case 'd': carKeys.d = false; break;
+                }
             }
             // First person WASD controls
             switch(event.key.toLowerCase()) {
@@ -3445,6 +4257,19 @@
                     // Normalize yaw to [-PI, PI]
                     while (fpCameraYaw > Math.PI) fpCameraYaw -= 2 * Math.PI;
                     while (fpCameraYaw < -Math.PI) fpCameraYaw += 2 * Math.PI;
+                }
+            } else {
+                // Update mouse position for isometric view
+                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                
+                // Hover to talk to Remoro (Desktop)
+                if (remoroMesh && !inHouse && !isMobile && remoroTalkDialog && remoroTalkDialog.style.display !== 'block') {
+                    raycaster.setFromCamera(mouse, camera);
+                    const intersects = raycaster.intersectObject(remoroMesh, true);
+                    if (intersects.length > 0) {
+                        talkToRemoro(true);
+                    }
                 }
             }
         });
@@ -3487,6 +4312,14 @@
                                         child.frustumCulled = true;
                                         child.matrixAutoUpdate = false;
                                         child.updateMatrix();
+                                        // Only render camera-facing faces (backface cull)
+                                        if (child.material) {
+                                            if (Array.isArray(child.material)) {
+                                                child.material.forEach(m => { m.side = THREE.FrontSide; });
+                                            } else {
+                                                child.material.side = THREE.FrontSide;
+                                            }
+                                        }
                                         // Only add to collision meshes if tall enough to be a wall (not floor/road)
                                         child.geometry.computeBoundingBox();
                                         const bbox = child.geometry.boundingBox;
@@ -3523,6 +4356,8 @@
                     .then(() => {
                         loadingDiv.style.display = 'none';
                         setupKajHouseLabel();
+                        buildSidewalkWaypoints();
+                        ceLoadFromStorage(); // restore saved collision overrides
                         console.log('Map loaded successfully with textures');
                     })
                     .catch((error) => {
@@ -3540,7 +4375,7 @@
                 // Fallback: load without materials
                 const defaultMaterial = new THREE.MeshLambertMaterial({ 
                     color: 0x888888,
-                    side: THREE.DoubleSide
+                    side: THREE.FrontSide
                 });
                 
                 function loadMapPartNoMaterials(partName) {
@@ -3586,6 +4421,8 @@
                     .then(() => {
                         loadingDiv.style.display = 'none';
                         setupKajHouseLabel();
+                        buildSidewalkWaypoints();
+                        ceLoadFromStorage(); // restore saved collision overrides
                     });
             }
         );
@@ -3681,10 +4518,24 @@
                 
                 // First person camera - at player eye level with mouse look
                 camera.position.copy(myPosition).add(new THREE.Vector3(0, 1.7, 0));
-                camera.rotation.order = 'YXZ';
-                camera.rotation.y = fpCameraYaw;
-                camera.rotation.x = fpCameraPitch;
-                camera.rotation.z = 0; // Ensure no roll
+                const cameraForward = new THREE.Vector3(-Math.sin(fpCameraYaw), 0, -Math.cos(fpCameraYaw));
+                const cameraRight = new THREE.Vector3(Math.cos(fpCameraYaw), 0, -Math.sin(fpCameraYaw));
+                cameraForward.applyAxisAngle(cameraRight, fpCameraPitch);
+                const lookAt = camera.position.clone().add(cameraForward.multiplyScalar(10));
+                camera.lookAt(lookAt);
+                
+                // Handle mobile joystick movement for first person
+                if (isMobile && joystickState.active && (Math.abs(joystickState.dx) > 0.1 || Math.abs(joystickState.dy) > 0.1)) {
+                    const joyMoveSpeed = fpMoveSpeed * timeScale * 1.2;
+                    const newPos = myPosition.clone();
+                    newPos.x += joystickState.dx * right.x * joyMoveSpeed;
+                    newPos.z += joystickState.dx * right.z * joyMoveSpeed;
+                    newPos.x += (-joystickState.dy) * forward.x * joyMoveSpeed;
+                    newPos.z += (-joystickState.dy) * forward.z * joyMoveSpeed;
+                    if (!checkCollision(newPos)) {
+                        myPosition.copy(newPos);
+                    }
+                }
             } else {
                 // Isometric camera offset - positioned above and behind player at 45 degree angle
                 const cameraOffset = new THREE.Vector3(cameraZoom, cameraZoom, cameraZoom);
@@ -3736,13 +4587,23 @@
                     
                     // Update player mesh position
                     localPlayerMesh.position.copy(myPosition);
-                    
-                    // Rotate player to face movement direction
-                    playerYaw = Math.atan2(-direction.x, -direction.z);
-                    localPlayerMesh.rotation.y = playerYaw;
                 } else {
                     // Arrived at target
                     targetPosition = null;
+                }
+            }
+
+            // Rotate player to face mouse cursor (Desktop)
+            if (!isMobile) {
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObject(ground);
+                if (intersects.length > 0) {
+                    const point = intersects[0].point;
+                    const dx = point.x - myPosition.x;
+                    const dz = point.z - myPosition.z;
+                    // Rotate to face mouse point
+                    playerYaw = Math.atan2(-dx, -dz);
+                    localPlayerMesh.rotation.y = playerYaw;
                 }
             }
             
@@ -3801,18 +4662,6 @@
 
             // Check for house entry
             checkHouseEntry();
-            
-            // Update Remoro companion
-            updateRemoro();
-            
-            // Update pedestrians
-            updatePedestrians();
-            
-            // Update talk indicator
-            updateTalkIndicator();
-            
-            // Update coordinates display
-            coordsDiv.innerHTML = `X: ${myPosition.x.toFixed(2)}<br>Y: ${myPosition.y.toFixed(2)}<br>Z: ${myPosition.z.toFixed(2)}`;
 
             if (houseEntryCooldown > 0) houseEntryCooldown--;
         }
@@ -3874,14 +4723,61 @@
                 updateDevFlyCamera();
             } else if (cinematicActive) {
                 updateVatsCinematic();
+            } else if (isInCar) {
+                updateCarDriving();
             } else {
                 updatePlayer();
             }
-            if (vatsActive) {
-                updateVatsDisplay();
+
+            // Always update Remoro and pedestrians regardless of player state (e.g., in car)
+            updateRemoro();
+            updatePedestrians();
+            updateTalkIndicator();
+
+            // Update projectiles
+            for (let i = projectiles.length - 1; i >= 0; i--) {
+                const projectile = projectiles[i];
+                projectile.mesh.position.add(projectile.direction.clone().multiplyScalar(projectile.speed * 2)); // Assuming 60 FPS
+                projectile.distance += projectile.speed * 0.016;
+
+                // Check collisions with pedestrians
+                if (checkPedestrianBulletCollisions(projectile)) {
+                    scene.remove(projectile.mesh);
+                    projectiles.splice(i, 1);
+                    continue;
+                }
+
+                // Remove projectile if it exceeds max distance
+                if (projectile.distance >= projectile.maxDistance) {
+                    scene.remove(projectile.mesh);
+                    projectiles.splice(i, 1);
+                }
             }
-            updateProjectiles();
-            sendPositionUpdate();
+
+            // Remoro suppression behavior: keep firing at target while player fired recently
+            if (remoroSuppressActive && remoroSuppressTarget) {
+                // Stop if target is dead
+                if (remoroSuppressTarget.isDead) {
+                    pedsKilled++;
+                    remoroSuppressActive = false;
+                    remoroSuppressTarget = null;
+                    remoroWeapon = null;
+                } else {
+                    const now = Date.now();
+                    if (now - remoroLastPlayerFireTime > remoroSuppressTimeout) {
+                        // Timeout: stop suppressing
+                        remoroSuppressActive = false;
+                        remoroSuppressTarget = null;
+                        remoroWeapon = null;
+                    } else {
+                        const useWeapon = remoroWeapon || weapons[currentWeaponIndex];
+                        if (now - remoroLastShotTime >= (useWeapon.fireRate || 400)) {
+                            remoroShootAt(remoroSuppressTarget, useWeapon);
+                            remoroLastShotTime = now;
+                        }
+                    }
+                }
+            }
             
             // Update and render viewmodel in first person mode
             updateViewmodel();
