@@ -1453,6 +1453,7 @@
 
         function enterHouse(defeatedAlready, isKajHouse = false) {
             if (inHouse || houseEntryCooldown > 0) return;
+            labelRenderer.domElement.style.display = 'none';
             inHouse = true;
             houseEntryCooldown = 120;
             lastOutsidePosition.copy(myPosition);
@@ -1514,6 +1515,7 @@
         }
 
         function exitHouse() {
+            labelRenderer.domElement.style.display = 'block';
             inHouse = false;
             houseCombatActive = false;
             houseScene = null;
@@ -1552,6 +1554,7 @@
                 ) {
                     const houseId = getHouseIdFromBox(box);
                     currentHouseId = houseId;
+                    
                     enterHouse(houseDefeated.has(houseId), houseId === kajHouseId);
                     break;
                 }
@@ -3880,7 +3883,7 @@
                         remoroSuppressActive = true;
                         remoroLastPlayerFireTime = Date.now();
                         remoroWeapon = weapon;
-                        remoroLastShotTime = 0;
+                        remoroLastShotTime = 1;
                         remoroShootAt(targetPed, weapon);
                     }
                 }
@@ -4754,7 +4757,7 @@
                 }
             }
 
-            // Remoro suppression behavior: keep firing at target while player fired recently
+            // Remoro suppression behavior
             if (remoroSuppressActive && remoroSuppressTarget) {
                 // Stop if target is dead
                 if (remoroSuppressTarget.isDead) {
