@@ -545,81 +545,386 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             if (now - lastSprayTime < sprayRate) return;
             lastSprayTime = now;
             
-            // Raycast from screen center
-            sprayRaycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-            sprayRaycaster.far = 20; // spray range
+            // Use easeOutCubic for smooth deceleration
+            const easeT = 1 - Math.pow(1 - t, 3);
             
-            // Raycast only against cached map meshes (not all scene children)
-            const intersects = sprayRaycaster.intersectObjects(sprayTargetMeshes, false);
+            fpCameraYaw = cameraPanStartYaw + (cameraPanTargetYaw - cameraPanStartYaw) * easeT;
+            fpCameraPitch = cameraPanStartPitch + (cameraPanTargetPitch - cameraPanStartPitch) * easeT;
             
-            if (intersects.length > 0) {
-                const hit = intersects[0];
-                if (!hit.face) return;
-                
-                // Create decal at hit point
-                const normal = hit.face.normal.clone();
-                // Transform normal to world space
-                if (hit.object.matrixWorld) {
-                    const normalMatrix = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
-                    normal.applyMatrix3(normalMatrix).normalize();
-                }
-                
-                // Small random offset for spray effect
-                const jitter = spraySize * 0.3;
-                const tangent = new THREE.Vector3().crossVectors(normal, new THREE.Vector3(0, 1, 0));
-                if (tangent.length() < 0.01) tangent.crossVectors(normal, new THREE.Vector3(1, 0, 0));
-                tangent.normalize();
-                const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize();
-                
-                const offsetX = (Math.random() - 0.5) * jitter;
-                const offsetY = (Math.random() - 0.5) * jitter;
-                
-                const sprayPos = hit.point.clone()
-                    .add(normal.clone().multiplyScalar(0.01))
-                    .add(tangent.clone().multiplyScalar(offsetX))
-                    .add(bitangent.clone().multiplyScalar(offsetY));
-                
-                // Vary the size slightly for natural look
-                const sizeVariation = spraySize * (0.7 + Math.random() * 0.6);
-                
-                const decalMat = new THREE.MeshBasicMaterial({
-                    color: currentSprayColor,
-                    map: sprayTexture,
-                    transparent: true,
-                    opacity: 0.6 + Math.random() * 0.3,
-                    depthWrite: false,
-                    side: THREE.DoubleSide
-                });
-                
-                const decal = new THREE.Mesh(sharedDecalGeo, decalMat);
-                decal.scale.set(sizeVariation, sizeVariation, 1);
-                decal.position.copy(sprayPos);
-                
-                // Orient decal to face along the surface normal
-                decal.lookAt(sprayPos.clone().add(normal));
-                
-                // Small random rotation for variety
-                decal.rotateZ(Math.random() * Math.PI * 2);
-                
-                scene.add(decal);
-                sprayDecals.push(decal);
-                
-                // Remove old decals if limit exceeded
-                if (sprayDecals.length > maxDecals) {
-                    const oldDecal = sprayDecals.shift();
-                    scene.remove(oldDecal);
-                    oldDecal.material.dispose();
+            if (t >= 1.0) {
+                cameraPanActive = false;
+                // Normalize final yaw angle
+                while (fpCameraYaw > Math.PI) fpCameraYaw -= 2 * Math.PI;
+                while (fpCameraYaw < -Math.PI) fpCameraYaw += 2 * Math.PI;
+            }
+        }
+
+        function enterHouse(defeatedAlready, isKajHouse = false) {
+            if (inHouse || houseEntryCooldown > 0) return;
+            labelRenderer.domElement.style.display = 'none';
+            inHouse = true;
+            houseEntryCooldown = 120;
+            lastOutsidePosition.copy(myPosition);
+            currentHouseIsKaj = isKajHouse;
+
+            // Reset and build a fresh interior
+            createHouseInterior(isKajHouse);
+
+            // Teleport inside
+            myPosition.set(0, 0, 3.5);
+            isFirstPersonMode = true;
+            if (localPlayerMesh) localPlayerMesh.visible = false;
+            
+            
+            // Set initial camera angle and start pan animation to NPC
+            fpCameraYaw = Math.PI;
+            fpCameraPitch = 0;
+            
+            // Pan camera to look at NPC (if not Kaj's house)
+            if (!isKajHouse && houseNPC) {
+                // Calculate angle to NPC from player position
+                const toNpc = new THREE.Vector3().subVectors(houseNPC.position, myPosition);
+                const targetYaw = Math.atan2(-toNpc.x, -toNpc.z);
+                const distance = Math.sqrt(toNpc.x * toNpc.x + toNpc.z * toNpc.z);
+                const targetPitch = Math.atan2(toNpc.y + 0.7, distance); // +0.7 to aim at NPC head height
+                startCameraPan(targetYaw, targetPitch);
+            }
+
+            // Show UI
+            document.getElementById('crosshair').style.display = isMobile ? 'none' : 'block';
+            document.getElementById('weapon-display').style.display = 'block';
+            updateWeaponDisplay();
+
+            // Show dialog
+            houseCombatActive = false;
+            houseDialogEl.style.display = 'none';
+            corpseDialogEl.style.display = 'none';
+            corpseLootBtn.disabled = false;
+            corpseEatBtn.disabled = false;
+            corpseRemoroBtn.disabled = false;
+            if (isKajHouse) {
+                houseAttackBtn.disabled = true;
+                updateExitIndicator();
+                updateBedIndicator();
+                return;
+            }
+            if (defeatedAlready) {
+                setHouseNpcCorpse();
+                corpseDialogTextEl.textContent = 'You\'ve already killed this person. You can\'t kill them again, you fucking lunatic.';
+                corpseDialogEl.style.display = 'block';
+                houseAttackBtn.disabled = true;
+            } else {
+                const line = houseDialogLines[Math.floor(Math.random() * houseDialogLines.length)];
+                houseDialogTextEl.textContent = line;
+                houseDialogEl.style.display = 'block';
+                houseAttackBtn.disabled = false;
+            }
+            updateExitIndicator();
+        }
+
+        function exitHouse() {
+            labelRenderer.domElement.style.display = 'block';
+            inHouse = false;
+            houseCombatActive = false;
+            houseScene = null;
+            houseFurniture = [];
+            houseNPC = null;
+            houseBounds = null;
+            houseExitZone = null;
+            kajHouseBedZone = null;
+            myPosition.copy(lastOutsidePosition);
+            if (localPlayerMesh) localPlayerMesh.visible = true;
+            isFirstPersonMode = false;
+            targetPosition = null;
+            if (!isMobile) document.exitPointerLock();
+            houseDialogEl.style.display = 'none';
+            combatUiEl.style.display = 'none';
+            corpseDialogEl.style.display = 'none';
+            document.getElementById('crosshair').style.display = 'none';
+            document.getElementById('weapon-display').style.display = 'none';
+            exitIndicatorEl.style.display = 'none';
+            bedIndicatorEl.style.display = 'none';
+            houseEntryCooldown = 240;
+            currentHouseId = null;
+            currentHouseIsKaj = false;
+        }
+
+        function checkHouseEntry() {
+            if (inHouse || houseEntryCooldown > 0 || isFirstPersonMode) return;
+            const entryDistance = 2.2;
+            for (const mesh of collisionMeshes) {
+                const box = mesh.userData.worldBox;
+                const height = mesh.userData.height || 0;
+                if (!box || height < 2.5) continue;
+                if (
+                    myPosition.x > box.min.x - entryDistance && myPosition.x < box.max.x + entryDistance &&
+                    myPosition.z > box.min.z - entryDistance && myPosition.z < box.max.z + entryDistance
+                ) {
+                    const houseId = getHouseIdFromBox(box);
+                    currentHouseId = houseId;
+                    
+                    enterHouse(houseDefeated.has(houseId), houseId === kajHouseId);
+                    break;
                 }
             }
         }
+
+        function updateHouseMovement() {
+            if (!isFirstPersonMode) return;
+
+            if (houseCombatActive) {
+                camera.position.copy(myPosition).add(new THREE.Vector3(0, 1.7, 0));
+                camera.rotation.order = 'YXZ';
+                camera.rotation.y = fpCameraYaw;
+                camera.rotation.x = fpCameraPitch;
+                camera.rotation.z = 0;
+                updateExitIndicator();
+                updateBedIndicator();
+                return;
+            }
+
+            const forward = new THREE.Vector3(
+                -Math.sin(fpCameraYaw),
+                0,
+                -Math.cos(fpCameraYaw)
+            );
+            const right = new THREE.Vector3(
+                Math.cos(fpCameraYaw),
+                0,
+                -Math.sin(fpCameraYaw)
+            );
+
+            const newPos = myPosition.clone();
+            
+            // Mobile joystick drives first-person movement inside houses
+            if (isMobile && joystickState.active && (Math.abs(joystickState.dx) > 0.1 || Math.abs(joystickState.dy) > 0.1)) {
+                // Joystick maps relative to camera facing direction
+                newPos.add(forward.clone().multiplyScalar(-joystickState.dy * fpMoveSpeed * 1.5));
+                newPos.add(right.clone().multiplyScalar(joystickState.dx * fpMoveSpeed * 1.5));
+            } else {
+                if (fpKeys.w) newPos.add(forward.clone().multiplyScalar(fpMoveSpeed));
+                if (fpKeys.s) newPos.add(forward.clone().multiplyScalar(-fpMoveSpeed));
+                if (fpKeys.a) newPos.add(right.clone().multiplyScalar(-fpMoveSpeed));
+                if (fpKeys.d) newPos.add(right.clone().multiplyScalar(fpMoveSpeed));
+            }
+
+            if (!checkHouseCollision(newPos)) {
+                myPosition.copy(newPos);
+            }
+
+            camera.position.copy(myPosition).add(new THREE.Vector3(0, 1.7, 0));
+            camera.rotation.order = 'YXZ';
+            camera.rotation.y = fpCameraYaw;
+            camera.rotation.x = fpCameraPitch;
+            camera.rotation.z = 0;
+
+            updateExitIndicator();
+            updateBedIndicator();
+            if (isNearExit() && houseDialogEl.style.display !== 'block' && corpseDialogEl.style.display !== 'block') {
+                exitHouse();
+            }
+        }
+
+        function logCombat(text) {
+            const line = document.createElement('div');
+            line.textContent = text;
+            combatLogEl.appendChild(line);
+            combatLogEl.scrollTop = combatLogEl.scrollHeight;
+        }
+
+        function playCombatAttackSound(isPlayer) {
+            if (isPlayer) {
+                const weapon = weapons[currentWeaponIndex];
+                if (!weapon.explosive) {
+                    if (weapon.name === 'Pistol') {
+                        playSound(pistolFireSound);
+                    } else if (weapon.name === 'Rifle' || weapon.name === 'Shotgun') {
+                        playSound(smgFireSound);
+                    }
+                } else {
+                    playSound(explosionSound);
+                }
+            } else {
+                playSound(smgFireSound);
+            }
+        }
+
+        function animateNpcHit() {
+            if (!houseNPC) return;
+            const start = performance.now();
+            const duration = 140;
+            const originalPos = houseNPC.position.clone();
+            const flashMeshes = [];
+            houseNPC.traverse((child) => {
+                if (child.isMesh) {
+                    flashMeshes.push({ mesh: child, color: child.material.color.getHex() });
+                    child.material.color.setHex(0xff6666);
+                }
+            });
+
+            const animate = () => {
+                const t = (performance.now() - start) / duration;
+                if (t < 1) {
+                    houseNPC.position.x = originalPos.x + (Math.random() - 0.5) * 0.08;
+                    houseNPC.position.z = originalPos.z + (Math.random() - 0.5) * 0.08;
+                    requestAnimationFrame(animate);
+                } else {
+                    houseNPC.position.copy(originalPos);
+                    flashMeshes.forEach((item) => item.mesh.material.color.setHex(item.color));
+                }
+            };
+            animate();
+        }
+
+        function updateCombatUI() {
+            combatPlayerHpEl.textContent = `${combatState.player.hp}/${combatState.player.maxHp}`;
+            combatRemoroHpEl.textContent = `${combatState.remoro.hp}/${combatState.remoro.maxHp}`;
+            combatEnemyHpEl.textContent = `${combatState.enemy.hp}/${combatState.enemy.maxHp}`;
+            updateStatusHud();
+        }
+
+        function startCombat() {
+            houseCombatActive = true;
+            combatUiEl.style.display = 'block';
+            houseDialogEl.style.display = 'none';
+            corpseDialogEl.style.display = 'none';
+            combatLogEl.innerHTML = '';
+            combatState.player.hp = combatState.player.maxHp;
+            combatState.remoro.hp = combatState.remoro.maxHp;
+            combatState.enemy.hp = combatState.enemy.maxHp;
+            playerDefending = false;
+            combatActionsDisabled = false;
+            combatAttackBtn.disabled = false;
+            combatTalkBtn.disabled = false;
+            combatDefendBtn.disabled = false;
+            combatFleeBtn.disabled = false;
+            updateCombatUI();
+            logCombat('Combat begins.');
+        }
+
+        function endCombat(victory) {
+            houseCombatActive = false;
+            combatActionsDisabled = true;
+            combatAttackBtn.disabled = true;
+            combatTalkBtn.disabled = true;
+            combatDefendBtn.disabled = true;
+            combatFleeBtn.disabled = true;
+            logCombat(victory ? 'You won the fight.' : 'You were defeated.');
+            if (victory && houseNPC) {
+                setHouseNpcCorpse();
+            }
+            setTimeout(() => {
+                combatUiEl.style.display = 'none';
+                if (victory) {
+                    if (currentHouseId) {
+                        houseDefeated.add(currentHouseId);
+                    }
+                    corpseDialogTextEl.textContent = 'The owner is dead. What do you do?';
+                    corpseDialogEl.style.display = 'block';
+                    updateExitIndicator();
+                } else {
+                    exitHouse();
+                }
+            }, 1200);
+        }
+
+        function rollDamage(min, max) {
+            return Math.floor(randomRange(min, max + 1));
+        }
+
+        function enemyAttack() {
+            const dmg = rollDamage(combatState.enemy.atkMin, combatState.enemy.atkMax);
+            const finalDmg = playerDefending ? Math.floor(dmg * 0.5) : dmg;
+            let v = Math.floor(Math.random() * 2);
+            if(v == 1){
+                combatState.player.hp = Math.max(0, combatState.player.hp - finalDmg);
+                playerDefending = false;
+                flashHurt();
+                logCombat(`Owner hits you for ${finalDmg}.`);
+                updateCombatUI();
+            }
+            else{
+                combatState.remoro.hp = Math.max(0, combatState.remoro.hp - finalDmg);
+                logCombat(`Owner hits remoro for ${finalDmg}.`);
+                updateCombatUI();
+            }
+            
+            
+            if (combatState.player.hp <= 0) {
+                triggerPlayerDeath('combat');
+            }
+        }
+
+        function remoroAttack() {
+            const dmg = rollDamage(combatState.remoro.atkMin, combatState.remoro.atkMax);
+            combatState.enemy.hp = Math.max(0, combatState.enemy.hp - dmg);
+            playCombatAttackSound(false);
+            animateNpcHit();
+            logCombat(`Remoro hits Owner for ${dmg}.`);
+            updateCombatUI();
+        }
+
+        function playerAttack() {
+            const dmg = rollDamage(combatState.player.atkMin, combatState.player.atkMax);
+            combatState.enemy.hp = Math.max(0, combatState.enemy.hp - dmg);
+            playCombatAttackSound(true);
+            animateNpcHit();
+            logCombat(`You hit Owner for ${dmg}.`);
+            updateCombatUI();
+        }
+
+        function handlePlayerAction(action) {
+            if (!houseCombatActive) return;
+            if (combatActionsDisabled) return;
+            if (combatState.player.hp <= 0 || combatState.enemy.hp <= 0) return;
+
+            combatActionsDisabled = true;
+            combatAttackBtn.disabled = true;
+            combatTalkBtn.disabled = true;
+            combatDefendBtn.disabled = true;
+            combatFleeBtn.disabled = true;
+
+            if (action === 'attack') {
+                playerAttack();
+            } else if (action === 'talk') {
+                const line = combatTalkLines[Math.floor(Math.random() * combatTalkLines.length)];
+                logCombat(`You: ${line}`);
+            } else if (action === 'defend') {
+                playerDefending = true;
+                logCombat('You brace for impact.');
+            } else if (action === 'flee') {
+                logCombat('You flee the house.');
+                endCombat(false);
+                return;
+            }
+
+            if (combatState.enemy.hp <= 0) {
+                endCombat(true);
+                return;
+            }
+
+            setTimeout(() => {
+                remoroAttack();
+                if (combatState.enemy.hp <= 0) {
+                    endCombat(true);
+                    return;
+                }
+
+                setTimeout(() => {
+                    enemyAttack();
+                    if (combatState.player.hp <= 0) return;
+                    if (houseCombatActive) {
+                        combatActionsDisabled = false;
+                        combatAttackBtn.disabled = false;
+                        combatTalkBtn.disabled = false;
+                        combatDefendBtn.disabled = false;
+                        combatFleeBtn.disabled = false;
+                    }
+                }, 450);
+            }, 350);
+        }
         
-        // ============ SPRAY CAN VIEWMODEL ============
-        let viewmodelScene = null;
-        let viewmodelCamera = null;
-        let viewmodelSprayCan = null;
-        let viewmodelBobTime = 0;
-        let sprayParticleTime = 0;
-        
+        // Create viewmodel scene (rendered on top of main scene)
         function initViewmodelScene() {
             viewmodelScene = new THREE.Scene();
             viewmodelCamera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 10);
