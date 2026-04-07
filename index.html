@@ -1987,21 +1987,42 @@
         // Step physics world
         world.step(1 / 60, delta / 1000, 3);
         
-        // Clamp all physics bodies inside the cube bounds to prevent clipping out
-        const boundsLimit = 0.7; // Slightly inside the walls
+        // Clamp all physics bodies inside the cube bounds using their AABB
+        // so the full meshes (not just their centers) stay inside the walls.
+        const boundsLimit = cubeHalfSize - 0.02; // Slightly inside visual cube
         const clampBody = (body) => {
             if (!body) return;
-            const pos = body.position;
-            let clamped = false;
-            if (pos.x < -boundsLimit) { pos.x = -boundsLimit; clamped = true; }
-            if (pos.x > boundsLimit) { pos.x = boundsLimit; clamped = true; }
-            if (pos.y < -boundsLimit) { pos.y = -boundsLimit; clamped = true; }
-            if (pos.y > boundsLimit) { pos.y = boundsLimit; clamped = true; }
-            if (pos.z < -boundsLimit) { pos.z = -boundsLimit; clamped = true; }
-            if (pos.z > boundsLimit) { pos.z = boundsLimit; clamped = true; }
-            if (clamped) {
-                // Dampen velocity when hitting bounds
-                body.velocity.scale(0.5, body.velocity);
+
+            // Ensure AABB is up to date for current transform (Cannon-ES)
+            if (typeof body.updateAABB === 'function') {
+                body.updateAABB();
+            }
+
+            const aabb = body.aabb;
+            if (!aabb || !aabb.lowerBound || !aabb.upperBound) return;
+            const min = aabb.lowerBound;
+            const max = aabb.upperBound;
+
+            let shiftX = 0;
+            let shiftY = 0;
+            let shiftZ = 0;
+
+            if (min.x < -boundsLimit) shiftX += -boundsLimit - min.x;
+            if (max.x > boundsLimit)  shiftX += boundsLimit - max.x;
+            if (min.y < -boundsLimit) shiftY += -boundsLimit - min.y;
+            if (max.y > boundsLimit)  shiftY += boundsLimit - max.y;
+            if (min.z < -boundsLimit) shiftZ += -boundsLimit - min.z;
+            if (max.z > boundsLimit)  shiftZ += boundsLimit - max.z;
+
+            const needsShift = shiftX !== 0 || shiftY !== 0 || shiftZ !== 0;
+            if (needsShift) {
+                body.position.x += shiftX;
+                body.position.y += shiftY;
+                body.position.z += shiftZ;
+
+                // Dampen linear and angular velocity when we hit bounds
+                body.velocity.scale(0.4, body.velocity);
+                body.angularVelocity.scale(0.4, body.angularVelocity);
             }
         };
         
