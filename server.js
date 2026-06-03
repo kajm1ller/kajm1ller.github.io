@@ -1,20 +1,46 @@
-const https = require('https');
 const fs = require('fs');
+const http = require('http');
+const https = require('https');
+const path = require('path');
 const express = require('express');
 
 const app = express();
+
+const CERT_DIR = process.env.SSL_CERT_DIR || '/etc/letsencrypt/live/kaj.services';
+const SSL_KEY_PATH = process.env.SSL_KEY_PATH || path.join(CERT_DIR, 'privkey.pem');
+const SSL_CERT_PATH = process.env.SSL_CERT_PATH || path.join(CERT_DIR, 'fullchain.pem');
+const hasTlsCerts = fs.existsSync(SSL_KEY_PATH) && fs.existsSync(SSL_CERT_PATH);
+const isLocalDevelopment = !hasTlsCerts;
+const staticOptions = isLocalDevelopment
+  ? {
+      etag: false,
+      lastModified: false,
+      setHeaders(res, filePath) {
+        if (path.extname(filePath) === '.html') {
+          res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+          res.set('Pragma', 'no-cache');
+          res.set('Expires', '0');
+        }
+      }
+    }
+  : undefined;
+
 app.use(express.json());
-app.use(express.static('.'));
+app.use(express.static(path.join(__dirname), staticOptions));
+
+const HOST = process.env.HOST || '0.0.0.0';
+const PORT = Number.parseInt(process.env.PORT, 10) || (hasTlsCerts ? 443 : 3000);
+const PUBLIC_HOST = process.env.PUBLIC_HOST || (hasTlsCerts ? 'kaj.services' : 'localhost');
+const PUBLIC_PORT = Number.parseInt(process.env.PUBLIC_PORT, 10) || PORT;
+const PROTOCOL = hasTlsCerts ? 'https' : 'http';
+const needsExplicitPort = !((PROTOCOL === 'http' && PUBLIC_PORT === 80) || (PROTOCOL === 'https' && PUBLIC_PORT === 443));
+const PUBLIC_ORIGIN = process.env.PUBLIC_ORIGIN || `${PROTOCOL}://${PUBLIC_HOST}${needsExplicitPort ? `:${PUBLIC_PORT}` : ''}`;
 
 // Spotify API Configuration
 const SPOTIFY_CLIENT_ID = 'bfe4489b510f416da87c51d4661682ba'; // You'll need to add your client ID
 const SPOTIFY_CLIENT_SECRET = '2f968d8555c6413293e8910ee73f0550';
 
-// Determine if production or local
-const isProductionEnv = fs.existsSync('/etc/letsencrypt/live/kaj.services/privkey.pem');
-const SPOTIFY_REDIRECT_URI = isProductionEnv 
-  ? 'https://kaj.services/api/spotify/callback'
-  : 'http://localhost:3000/api/spotify/callback';
+const SPOTIFY_REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI || `${PUBLIC_ORIGIN}/api/spotify/callback`;
 
 let spotifyAccessToken = null;
 let spotifyRefreshToken = null;
@@ -295,198 +321,113 @@ function broadcastVatsEvent(wss, event) {
   });
 }
 
-// Check if running on production (has SSL certs) or locally
-const isProduction = fs.existsSync('/etc/letsencrypt/live/kaj.services/privkey.pem');
+function createServer() {
+  if (!hasTlsCerts) {
+    return http.createServer(app);
+  }
 
-if (isProduction) {
-  const options = {
-    key: fs.readFileSync('/etc/letsencrypt/live/kaj.services/privkey.pem'),
-    cert: fs.readFileSync('/etc/letsencrypt/live/kaj.services/fullchain.pem')
-  };
-
-  const server = https.createServer(options, app);
-  const wss = new WebSocket.Server({ server });
-  
-  wss.on('connection', (ws) => {
-    const playerId = Math.random().toString(36).substr(2, 9);
-    console.log(`Player connected: ${playerId}`);
-    wsToPlayerId.set(ws, playerId);
-    playerIdToWs.set(playerId, ws);
-    
-    ws.on('message', (data) => {
-      try {
-        const msg = JSON.parse(data);
-        
-        if (msg.type === 'join') {
-          players.set(playerId, {
-            id: playerId,
-            name: msg.name || 'Player',
-            x: msg.x || 0,
-            y: msg.y || 1.7,
-            z: msg.z || 0,
-            yaw: msg.yaw || 0,
-            ragdoll: false
-          });
-          ws.send(JSON.stringify({ type: 'welcome', id: playerId }));
-          broadcastPlayerList(wss);
-        }
-        
-        if (msg.type === 'update') {
-          const player = players.get(playerId);
-          if (player) {
-            player.x = msg.x;
-            player.y = msg.y;
-            player.z = msg.z;
-            player.yaw = msg.yaw;
-            broadcastPlayerList(wss);
-          }
-        }
-        
-        if (msg.type === 'shoot') {
-          const shooter = players.get(playerId);
-          if (shooter && msg.targetId) {
-            sendHitNotification(msg.targetId, shooter.name, msg.weapon);
-          }
-        }
-        
-        if (msg.type === 'ragdoll') {
-          const player = players.get(playerId);
-          if (player) {
-            player.ragdoll = msg.ragdoll;
-            broadcastPlayerList(wss);
-          }
-        }
-
-        if (msg.type === 'vats') {
-          const shooter = players.get(playerId);
-          if (shooter && msg.targetId) {
-            const event = {
-              type: 'vats',
-              shooterId: playerId,
-              shooterName: shooter.name,
-              targetId: msg.targetId,
-              part: msg.part,
-              shots: msg.shots,
-              weapon: msg.weapon,
-              success: msg.success
-            };
-            if (msg.success) {
-              sendHitNotification(msg.targetId, shooter.name, msg.weapon);
-            }
-            broadcastVatsEvent(wss, event);
-          }
-        }
-      } catch (e) {
-        console.error('WebSocket message error:', e);
-      }
-    });
-    
-    ws.on('close', () => {
-      console.log(`Player disconnected: ${playerId}`);
-      players.delete(playerId);
-      wsToPlayerId.delete(ws);
-      playerIdToWs.delete(playerId);
-      broadcastPlayerList(wss);
-    });
-  });
-  
-  server.listen(443, '0.0.0.0', () => {
-    console.log('HTTPS Server running on port 443 with WebSocket support');
-  });
-} else {
-  // Local development - use HTTP
-  const http = require('http');
-  const PORT = 3000;
-  
-  const server = http.createServer(app);
-  const wss = new WebSocket.Server({ server });
-  
-  wss.on('connection', (ws) => {
-    const playerId = Math.random().toString(36).substr(2, 9);
-    console.log(`Player connected: ${playerId}`);
-    wsToPlayerId.set(ws, playerId);
-    playerIdToWs.set(playerId, ws);
-    
-    ws.on('message', (data) => {
-      try {
-        const msg = JSON.parse(data);
-        
-        if (msg.type === 'join') {
-          players.set(playerId, {
-            id: playerId,
-            name: msg.name || 'Player',
-            x: msg.x || 0,
-            y: msg.y || 1.7,
-            z: msg.z || 0,
-            yaw: msg.yaw || 0,
-            ragdoll: false
-          });
-          ws.send(JSON.stringify({ type: 'welcome', id: playerId }));
-          broadcastPlayerList(wss);
-        }
-        
-        if (msg.type === 'update') {
-          const player = players.get(playerId);
-          if (player) {
-            player.x = msg.x;
-            player.y = msg.y;
-            player.z = msg.z;
-            player.yaw = msg.yaw;
-            broadcastPlayerList(wss);
-          }
-        }
-        
-        if (msg.type === 'shoot') {
-          const shooter = players.get(playerId);
-          if (shooter && msg.targetId) {
-            sendHitNotification(msg.targetId, shooter.name, msg.weapon);
-          }
-        }
-        
-        if (msg.type === 'ragdoll') {
-          const player = players.get(playerId);
-          if (player) {
-            player.ragdoll = msg.ragdoll;
-            broadcastPlayerList(wss);
-          }
-        }
-
-        if (msg.type === 'vats') {
-          const shooter = players.get(playerId);
-          if (shooter && msg.targetId) {
-            const event = {
-              type: 'vats',
-              shooterId: playerId,
-              shooterName: shooter.name,
-              targetId: msg.targetId,
-              part: msg.part,
-              shots: msg.shots,
-              weapon: msg.weapon,
-              success: msg.success
-            };
-            if (msg.success) {
-              sendHitNotification(msg.targetId, shooter.name, msg.weapon);
-            }
-            broadcastVatsEvent(wss, event);
-          }
-        }
-      } catch (e) {
-        console.error('WebSocket message error:', e);
-      }
-    });
-    
-    ws.on('close', () => {
-      console.log(`Player disconnected: ${playerId}`);
-      players.delete(playerId);
-      wsToPlayerId.delete(ws);
-      playerIdToWs.delete(playerId);
-      broadcastPlayerList(wss);
-    });
-  });
-  
-  server.listen(PORT, () => {
-    console.log(`Development server running on http://localhost:${PORT}`);
-    console.log(`WebSocket server running on ws://localhost:${PORT}`);
-    console.log(`Visit http://localhost:${PORT}/api/spotify/login to authenticate`);
-  });
+  return https.createServer({
+    key: fs.readFileSync(SSL_KEY_PATH),
+    cert: fs.readFileSync(SSL_CERT_PATH)
+  }, app);
 }
+
+function attachWebSocketServer(server) {
+  const wss = new WebSocket.Server({ server });
+
+  wss.on('connection', (ws) => {
+    const playerId = Math.random().toString(36).slice(2, 11);
+    console.log(`Player connected: ${playerId}`);
+    wsToPlayerId.set(ws, playerId);
+    playerIdToWs.set(playerId, ws);
+
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data);
+
+        if (msg.type === 'join') {
+          players.set(playerId, {
+            id: playerId,
+            name: msg.name || 'Player',
+            x: msg.x || 0,
+            y: msg.y || 1.7,
+            z: msg.z || 0,
+            yaw: msg.yaw || 0,
+            ragdoll: false
+          });
+          ws.send(JSON.stringify({ type: 'welcome', id: playerId }));
+          broadcastPlayerList(wss);
+        }
+
+        if (msg.type === 'update') {
+          const player = players.get(playerId);
+          if (player) {
+            player.x = msg.x;
+            player.y = msg.y;
+            player.z = msg.z;
+            player.yaw = msg.yaw;
+            broadcastPlayerList(wss);
+          }
+        }
+
+        if (msg.type === 'shoot') {
+          const shooter = players.get(playerId);
+          if (shooter && msg.targetId) {
+            sendHitNotification(msg.targetId, shooter.name, msg.weapon);
+          }
+        }
+
+        if (msg.type === 'ragdoll') {
+          const player = players.get(playerId);
+          if (player) {
+            player.ragdoll = msg.ragdoll;
+            broadcastPlayerList(wss);
+          }
+        }
+
+        if (msg.type === 'vats') {
+          const shooter = players.get(playerId);
+          if (shooter && msg.targetId) {
+            const event = {
+              type: 'vats',
+              shooterId: playerId,
+              shooterName: shooter.name,
+              targetId: msg.targetId,
+              part: msg.part,
+              shots: msg.shots,
+              weapon: msg.weapon,
+              success: msg.success
+            };
+            if (msg.success) {
+              sendHitNotification(msg.targetId, shooter.name, msg.weapon);
+            }
+            broadcastVatsEvent(wss, event);
+          }
+        }
+      } catch (e) {
+        console.error('WebSocket message error:', e);
+      }
+    });
+
+    ws.on('close', () => {
+      console.log(`Player disconnected: ${playerId}`);
+      players.delete(playerId);
+      wsToPlayerId.delete(ws);
+      playerIdToWs.delete(playerId);
+      broadcastPlayerList(wss);
+    });
+  });
+
+  return wss;
+}
+
+const server = createServer();
+attachWebSocketServer(server);
+
+server.listen(PORT, HOST, () => {
+  const wsProtocol = hasTlsCerts ? 'wss' : 'ws';
+  console.log(`${PROTOCOL.toUpperCase()} server running on ${PUBLIC_ORIGIN}`);
+  console.log(`WebSocket server running on ${wsProtocol}://${PUBLIC_HOST}${needsExplicitPort ? `:${PUBLIC_PORT}` : ''}`);
+  console.log(`Listening on ${HOST}:${PORT}`);
+  console.log(`Visit ${PUBLIC_ORIGIN}/api/spotify/login to authenticate`);
+});
