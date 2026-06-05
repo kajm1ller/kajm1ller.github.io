@@ -3,6 +3,7 @@ const http = require('http');
 const https = require('https');
 const path = require('path');
 const express = require('express');
+const googleTTS = require('google-tts-api');
 
 const app = express();
 
@@ -27,6 +28,36 @@ const staticOptions = isLocalDevelopment
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname), staticOptions));
+
+app.get('/api/bedroom-voice', async (req, res) => {
+  const text = String(req.query.text || '').trim().slice(0, 200);
+
+  if (!text) {
+    return res.status(400).json({ error: 'Text required' });
+  }
+
+  try {
+    const audioUrl = googleTTS.getAudioUrl(text, {
+      lang: 'en',
+      slow: false,
+      host: 'https://translate.google.com'
+    });
+
+    const audioResponse = await fetch(audioUrl);
+
+    if (!audioResponse.ok) {
+      return res.status(502).json({ error: 'Failed to generate speech' });
+    }
+
+    const audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
+    res.setHeader('Content-Type', audioResponse.headers.get('content-type') || 'audio/mpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(audioBuffer);
+  } catch (error) {
+    console.error('Bedroom voice error:', error);
+    res.status(500).json({ error: 'Failed to speak' });
+  }
+});
 
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number.parseInt(process.env.PORT, 10) || (hasTlsCerts ? 443 : 3000);

@@ -61,6 +61,11 @@
             opacity: 0.7;
         }
 
+        .navbar a.active-room {
+            text-decoration: underline;
+            text-underline-offset: 4px;
+        }
+
         /* Mobile navbar fixes */
         @media (max-width: 768px) {
             .navbar {
@@ -290,13 +295,148 @@
             border: 1px solid #ff5252;
             color: #ff5252;
         }
+
+        .care-panel {
+            display: none;
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            width: min(360px, calc(100vw - 40px));
+            background: rgba(8, 8, 8, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 18px;
+            padding: 18px;
+            z-index: 55;
+            color: white;
+            font-family: Arial, sans-serif;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 10px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        .care-panel.active {
+            display: block;
+        }
+
+        .care-panel h3 {
+            margin: 0 0 12px 0;
+            font-size: 17px;
+        }
+
+        .care-meta {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+
+        .care-chip {
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }
+
+        .care-chip.alert {
+            background: rgba(255, 82, 82, 0.18);
+            border-color: rgba(255, 82, 82, 0.5);
+            color: #ffd1d1;
+        }
+
+        .care-chip.good {
+            background: rgba(0, 255, 120, 0.12);
+            border-color: rgba(0, 255, 120, 0.35);
+            color: #d9ffe7;
+        }
+
+        .care-stats {
+            display: grid;
+            gap: 10px;
+        }
+
+        .care-stat {
+            display: grid;
+            grid-template-columns: 56px 1fr 42px;
+            gap: 10px;
+            align-items: center;
+            font-size: 12px;
+        }
+
+        .care-stat strong {
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #d3d3d3;
+        }
+
+        .care-bar {
+            height: 10px;
+            border-radius: 999px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .care-bar-fill {
+            height: 100%;
+            width: 50%;
+            border-radius: inherit;
+            transition: width 0.25s ease, background 0.25s ease;
+        }
+
+        .care-actions {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .care-actions button {
+            padding: 10px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.08);
+            color: white;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .care-actions button:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .care-log {
+            margin-top: 14px;
+            padding: 12px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            font-size: 12px;
+            line-height: 1.45;
+            min-height: 52px;
+        }
+
+        .care-hint {
+            margin-top: 8px;
+            font-size: 11px;
+            color: #9dd9ff;
+        }
+
+        @media (max-width: 768px) {
+            .care-panel {
+                left: 20px;
+                right: 20px;
+                width: auto;
+            }
+        }
     </style>
 </head>
 
 <body>
     <div class="title">Kaj Services</div>
     <nav class="navbar">
-        <a href="#" id="music-link">music</a>
+        <a href="#" id="music-link">🎵 music</a>
+        <a href="#" id="bedroom-link">🛏 bedroom</a>
         <a href="#" data-popup="contact">contact</a>
         <a href="#" data-popup="about">about</a>
         <a href="https://github.com/kajm1ller" target="_blank">github</a>
@@ -643,13 +783,573 @@
     monitorGroup.position.set(0, -0.15, musicRoomOffset + 0.2);
     monitorGroup.rotation.x = -0.1; // Slight tilt back
     scene.add(monitorGroup);
+
+    // ========== BEDROOM ROOM SETUP ==========
+    const bedroomRoomOffset = 3.1;
+
+    const bedroomCubeGeometry = new THREE.BoxGeometry(1.5, 1.5, 1.5);
+    const bedroomCube = new THREE.Mesh(bedroomCubeGeometry, new THREE.MeshBasicMaterial({ color: 0x111111, wireframe: true }));
+    const bedroomOuterOpaque = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.FrontSide });
+    const bedroomOuterTransparent = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.FrontSide });
+    const bedroomOuterCube = new THREE.Mesh(
+        bedroomCubeGeometry,
+        [bedroomOuterOpaque, bedroomOuterOpaque, bedroomOuterOpaque, bedroomOuterOpaque, bedroomOuterTransparent, bedroomOuterOpaque]
+    );
+    const bedroomEdges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(bedroomCubeGeometry),
+        new THREE.LineBasicMaterial({ color: 0xff8cd6, linewidth: 2 })
+    );
+
+    bedroomCube.position.x = bedroomRoomOffset;
+    bedroomOuterCube.position.x = bedroomRoomOffset;
+    bedroomEdges.position.x = bedroomRoomOffset;
+    bedroomCube.rotation.y = 0.22;
+    bedroomOuterCube.rotation.y = 0.22;
+    bedroomEdges.rotation.y = 0.22;
+
+    const bedroomWallMat = new THREE.MeshBasicMaterial({ color: 0x241d2c, side: THREE.BackSide });
+    const bedroomAccentMat = new THREE.MeshBasicMaterial({ color: 0x33253c, side: THREE.BackSide });
+    const bedroomCeilingMat = new THREE.MeshBasicMaterial({ color: 0x141118, side: THREE.BackSide });
+    const bedroomFloorMat = new THREE.MeshBasicMaterial({ color: 0x3d2e28, side: THREE.BackSide });
+    const bedroomInnerTransparent = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.BackSide });
+    bedroomCube.material = [bedroomWallMat, bedroomWallMat, bedroomCeilingMat, bedroomFloorMat, bedroomInnerTransparent, bedroomAccentMat];
+
+    scene.add(bedroomCube);
+    scene.add(bedroomOuterCube);
+    scene.add(bedroomEdges);
+
+    const bedroomGroup = new THREE.Group();
+    bedroomGroup.position.set(bedroomRoomOffset, 0, 0);
+    bedroomGroup.rotation.y = 0.22;
+    scene.add(bedroomGroup);
+
+    const bedWoodMaterial = new THREE.MeshBasicMaterial({ color: 0x6f4e37 });
+    const bedMattressMaterial = new THREE.MeshBasicMaterial({ color: 0xcfc7c9 });
+    const blanketMaterial = new THREE.MeshBasicMaterial({ color: 0x556b8c });
+    const pillowMaterial = new THREE.MeshBasicMaterial({ color: 0xf2eef0 });
+    const tableMaterial = new THREE.MeshBasicMaterial({ color: 0x4c3427 });
+    const lampShadeMaterial = new THREE.MeshBasicMaterial({ color: 0xf5d7a1 });
+    const rugMaterial = new THREE.MeshBasicMaterial({ color: 0x7c5c93 });
+    const windowMaterial = new THREE.MeshBasicMaterial({ color: 0x6f86ff });
+
+    const rug = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.01, 0.95), rugMaterial);
+    rug.position.set(0.05, -0.735, 0.05);
+    bedroomGroup.add(rug);
+
+    const bedFrame = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.16, 1.04), bedWoodMaterial);
+    bedFrame.position.set(0.14, -0.64, -0.05);
+    bedroomGroup.add(bedFrame);
+
+    const mattress = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.12, 0.96), bedMattressMaterial);
+    mattress.position.set(0.14, -0.52, -0.05);
+    bedroomGroup.add(mattress);
+
+    const blanket = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.08, 0.62), blanketMaterial);
+    blanket.position.set(0.11, -0.44, 0.13);
+    bedroomGroup.add(blanket);
+
+    const headboard = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.3, 0.05), bedWoodMaterial);
+    headboard.position.set(0.14, -0.49, -0.55);
+    bedroomGroup.add(headboard);
+
+    const pillowLeft = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.07, 0.16), pillowMaterial);
+    pillowLeft.position.set(0.0, -0.44, -0.34);
+    bedroomGroup.add(pillowLeft);
+
+    const pillowRight = pillowLeft.clone();
+    pillowRight.position.x = 0.25;
+    bedroomGroup.add(pillowRight);
+
+    const nightStand = new THREE.Group();
+    const standTop = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.16, 0.18), tableMaterial);
+    standTop.position.y = -0.63;
+    nightStand.add(standTop);
+    const lampBase = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.08, 12), new THREE.MeshBasicMaterial({ color: 0xb0a08a }));
+    lampBase.position.y = -0.51;
+    nightStand.add(lampBase);
+    const lampShade = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 0.12, 12), lampShadeMaterial);
+    lampShade.position.y = -0.4;
+    nightStand.add(lampShade);
+    nightStand.position.set(-0.42, 0, -0.45);
+    bedroomGroup.add(nightStand);
+
+    const windowFrame = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.02), new THREE.MeshBasicMaterial({ color: 0x15171f }));
+    windowFrame.position.set(-0.38, 0.2, -0.72);
+    bedroomGroup.add(windowFrame);
+
+    const windowGlow = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 0.18), windowMaterial);
+    windowGlow.position.set(-0.38, 0.2, -0.705);
+    bedroomGroup.add(windowGlow);
+
+    const dresser = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.36, 0.18), tableMaterial);
+    dresser.position.set(-0.45, -0.57, 0.38);
+    bedroomGroup.add(dresser);
+
+    const bedroomLight = new THREE.PointLight(0xffd3a8, 1.8, 5);
+    bedroomLight.position.set(bedroomRoomOffset - 0.2, 0.2, 0.2);
+    scene.add(bedroomLight);
+    const bedroomFillLight = new THREE.DirectionalLight(0xfff2e0, 0.8);
+    bedroomFillLight.position.set(bedroomRoomOffset + 1, 1.5, 1.5);
+    bedroomFillLight.target.position.set(bedroomRoomOffset, -0.2, 0);
+    scene.add(bedroomFillLight);
+    scene.add(bedroomFillLight.target);
+
+    const occupantPartSizes = {
+        headRadius: 0.08,
+        torsoSize: { x: 0.12, y: 0.18, z: 0.08 },
+        upperArmSize: { x: 0.04, y: 0.12, z: 0.04 },
+        lowerArmSize: { x: 0.035, y: 0.1, z: 0.035 },
+        upperLegSize: { x: 0.05, y: 0.14, z: 0.05 },
+        lowerLegSize: { x: 0.04, y: 0.13, z: 0.04 }
+    };
+    const createOccupantBodyMaterial = () => new THREE.MeshStandardMaterial({ color: 0xffccaa, roughness: 0.6 });
+
+    const carePanel = document.getElementById('care-panel') || (() => {
+        const panel = document.createElement('div');
+        panel.className = 'care-panel';
+        panel.id = 'care-panel';
+        panel.innerHTML = `
+            <h3>🫧 Care room</h3>
+            <div class="care-meta">
+                <div class="care-chip" id="care-mood-chip">Mood: calm</div>
+                <div class="care-chip good" id="care-disease-chip">Healthy</div>
+            </div>
+            <div class="care-stats">
+                <div class="care-stat">
+                    <strong>Food</strong>
+                    <div class="care-bar"><div class="care-bar-fill" id="care-food-fill"></div></div>
+                    <span id="care-food-value">0%</span>
+                </div>
+                <div class="care-stat">
+                    <strong>Clean</strong>
+                    <div class="care-bar"><div class="care-bar-fill" id="care-clean-fill"></div></div>
+                    <span id="care-clean-value">0%</span>
+                </div>
+                <div class="care-stat">
+                    <strong>Health</strong>
+                    <div class="care-bar"><div class="care-bar-fill" id="care-health-fill"></div></div>
+                    <span id="care-health-value">0%</span>
+                </div>
+                <div class="care-stat">
+                    <strong>Joy</strong>
+                    <div class="care-bar"><div class="care-bar-fill" id="care-mood-fill"></div></div>
+                    <span id="care-mood-value">0%</span>
+                </div>
+            </div>
+            <div class="care-actions">
+                <button data-care-action="feed">🍔 Feed</button>
+                <button data-care-action="shower">🚿 Shower</button>
+                <button data-care-action="medicine">💊 Medicine</button>
+                <button data-care-action="play">🫶 Play</button>
+            </div>
+            <div class="care-log" id="care-log">Keep him fed and washed. If you ignore him, he can randomly catch diseases like cholera.</div>
+            <div class="care-hint" id="care-hint">Waterborne disease risk rises when cleanliness gets low.</div>
+        `;
+        document.body.appendChild(panel);
+        return panel;
+    })();
+
+    const careStatusEls = {
+        foodFill: document.getElementById('care-food-fill'),
+        cleanFill: document.getElementById('care-clean-fill'),
+        healthFill: document.getElementById('care-health-fill'),
+        moodFill: document.getElementById('care-mood-fill'),
+        foodValue: document.getElementById('care-food-value'),
+        cleanValue: document.getElementById('care-clean-value'),
+        healthValue: document.getElementById('care-health-value'),
+        moodValue: document.getElementById('care-mood-value'),
+        moodChip: document.getElementById('care-mood-chip'),
+        diseaseChip: document.getElementById('care-disease-chip'),
+        log: document.getElementById('care-log'),
+        hint: document.getElementById('care-hint')
+    };
+
+    const bedroomOccupantGroup = new THREE.Group();
+    bedroomOccupantGroup.position.set(-0.03, -0.11, 0.02);
+    bedroomGroup.add(bedroomOccupantGroup);
+
+    const careBodyMaterial = createOccupantBodyMaterial();
+    const createCareLimb = (geometry, position, rotation = [0, 0, 0]) => {
+        const mesh = new THREE.Mesh(geometry, careBodyMaterial);
+        mesh.position.set(position[0], position[1], position[2]);
+        mesh.rotation.set(rotation[0], rotation[1], rotation[2]);
+        bedroomOccupantGroup.add(mesh);
+        return mesh;
+    };
+
+    const { headRadius, torsoSize, upperArmSize, lowerArmSize, upperLegSize, lowerLegSize } = occupantPartSizes;
+    const bedroomGuy = {
+        head: createCareLimb(new THREE.SphereGeometry(headRadius, 16, 16), [-0.02, 0.23, -0.2]),
+        torso: createCareLimb(new THREE.BoxGeometry(torsoSize.x * 2, torsoSize.y * 2, torsoSize.z * 2), [0.02, 0.01, -0.03], [0.1, 0, 0]),
+        leftUpperArm: createCareLimb(new THREE.BoxGeometry(upperArmSize.x * 2, upperArmSize.y * 2, upperArmSize.z * 2), [-0.18, 0.08, -0.06], [0.3, 0, -0.7]),
+        rightUpperArm: createCareLimb(new THREE.BoxGeometry(upperArmSize.x * 2, upperArmSize.y * 2, upperArmSize.z * 2), [0.19, 0.07, -0.09], [0.05, 0, 0.55]),
+        leftLowerArm: createCareLimb(new THREE.BoxGeometry(lowerArmSize.x * 2, lowerArmSize.y * 2, lowerArmSize.z * 2), [-0.27, -0.05, -0.03], [0.45, 0, -0.45]),
+        rightLowerArm: createCareLimb(new THREE.BoxGeometry(lowerArmSize.x * 2, lowerArmSize.y * 2, lowerArmSize.z * 2), [0.28, -0.07, -0.07], [0.22, 0, 0.55]),
+        leftUpperLeg: createCareLimb(new THREE.BoxGeometry(upperLegSize.x * 2, upperLegSize.y * 2, upperLegSize.z * 2), [-0.06, -0.23, 0.1], [1.15, 0, 0]),
+        rightUpperLeg: createCareLimb(new THREE.BoxGeometry(upperLegSize.x * 2, upperLegSize.y * 2, upperLegSize.z * 2), [0.09, -0.24, 0.11], [1.12, 0, 0]),
+        leftLowerLeg: createCareLimb(new THREE.BoxGeometry(lowerLegSize.x * 2, lowerLegSize.y * 2, lowerLegSize.z * 2), [-0.06, -0.47, 0.2], [1.5, 0, 0]),
+        rightLowerLeg: createCareLimb(new THREE.BoxGeometry(lowerLegSize.x * 2, lowerLegSize.y * 2, lowerLegSize.z * 2), [0.09, -0.48, 0.21], [1.52, 0, 0])
+    };
+
+    const bedroomPickupLines = [
+        'What the fuck',
+        'Leave me alone bitch',
+        'Woah Now',
+        'AHHHHH'
+    ];
+    const bedroomOwLines = [
+        'Ow!',
+        'Hey, that hurt!',
+        'Careful!',
+        'Ouch!'
+    ];
+    const bedroomVoiceAudio = new Audio();
+    bedroomVoiceAudio.preload = 'auto';
+    let bedroomVoiceRequestId = 0;
+
+    const playBedroomVoiceLine = async (lines) => {
+        const speechText = lines[Math.floor(Math.random() * lines.length)];
+        const requestId = ++bedroomVoiceRequestId;
+
+        try {
+            bedroomVoiceAudio.pause();
+            bedroomVoiceAudio.currentTime = 0;
+            bedroomVoiceAudio.src = `/api/bedroom-voice?text=${encodeURIComponent(speechText)}`;
+
+            await bedroomVoiceAudio.play();
+
+            if (requestId !== bedroomVoiceRequestId) {
+                bedroomVoiceAudio.pause();
+            }
+        } catch (error) {
+            console.warn('Bedroom voice failed:', error);
+        }
+    };
+
+    const playBedroomPickupSpeech = () => playBedroomVoiceLine(bedroomPickupLines);
+    const playBedroomOwSpeech = () => playBedroomVoiceLine(bedroomOwLines);
+
+    const foodBowl = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.11, 0.05, 18),
+        new THREE.MeshStandardMaterial({ color: 0xf28f3b, roughness: 0.75 })
+    );
+    foodBowl.position.set(0.42, -0.67, 0.3);
+    bedroomGroup.add(foodBowl);
+
+    const foodPellet = new THREE.Mesh(
+        new THREE.SphereGeometry(0.028, 12, 12),
+        new THREE.MeshBasicMaterial({ color: 0xffd166 })
+    );
+    foodPellet.visible = false;
+    bedroomGroup.add(foodPellet);
+
+    const showerPipe = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.014, 0.014, 0.42, 10),
+        new THREE.MeshStandardMaterial({ color: 0xb7c5d3, roughness: 0.45, metalness: 0.2 })
+    );
+    showerPipe.position.set(-0.43, -0.35, 0.38);
+    bedroomGroup.add(showerPipe);
+
+    const showerHead = new THREE.Mesh(
+        new THREE.BoxGeometry(0.16, 0.035, 0.05),
+        new THREE.MeshStandardMaterial({ color: 0xb7c5d3, roughness: 0.45, metalness: 0.2 })
+    );
+    showerHead.position.set(-0.34, -0.16, 0.38);
+    bedroomGroup.add(showerHead);
+
+    const showerDrops = new THREE.Group();
+    for (let i = 0; i < 9; i++) {
+        const drop = new THREE.Mesh(
+            new THREE.SphereGeometry(0.012, 8, 8),
+            new THREE.MeshBasicMaterial({ color: 0x79dfff, transparent: true, opacity: 0.75 })
+        );
+        showerDrops.add(drop);
+    }
+    bedroomGroup.add(showerDrops);
+
+    const sicknessCloud = new THREE.Group();
+    for (let i = 0; i < 4; i++) {
+        const puff = new THREE.Mesh(
+            new THREE.SphereGeometry(0.04 + i * 0.01, 12, 12),
+            new THREE.MeshBasicMaterial({ color: 0xb7ff5d, transparent: true, opacity: 0.18 })
+        );
+        puff.position.set(i * 0.04, (i % 2) * 0.03, 0);
+        sicknessCloud.add(puff);
+    }
+    sicknessCloud.position.set(0.18, 0.3, -0.04);
+    sicknessCloud.visible = false;
+    bedroomOccupantGroup.add(sicknessCloud);
+
+    const careDiseases = [
+        {
+            name: 'Cholera',
+            intro: 'He caught cholera from the grime. Clean him up fast.',
+            hint: 'Cholera becomes much more likely when cleanliness tanks.',
+            risk: (state) => Math.max(0, (35 - state.cleanliness) / 35) * 0.8,
+            healthDrain: 2.1,
+            foodDrain: 1.35,
+            cleanDrain: 1.1,
+            moodDrain: 0.9
+        },
+        {
+            name: 'Flu',
+            intro: 'He is shivering with the flu.',
+            hint: 'Low mood and low health can trigger the flu.',
+            risk: (state) => Math.max(0, (55 - state.health) / 55) * 0.45 + Math.max(0, (45 - state.mood) / 45) * 0.2,
+            healthDrain: 1.3,
+            foodDrain: 1,
+            cleanDrain: 1,
+            moodDrain: 1.2
+        },
+        {
+            name: 'Rash',
+            intro: 'He picked up a rash from staying dirty.',
+            hint: 'Showers keep rashes away.',
+            risk: (state) => Math.max(0, (42 - state.cleanliness) / 42) * 0.55,
+            healthDrain: 0.95,
+            foodDrain: 0.9,
+            cleanDrain: 1.1,
+            moodDrain: 1.1
+        },
+        {
+            name: 'Stomach Bug',
+            intro: 'His stomach is upset and he needs a bit of help.',
+            hint: 'Don’t let hunger and low health stack together.',
+            risk: (state) => Math.max(0, (35 - state.food) / 35) * 0.55 + Math.max(0, (45 - state.health) / 45) * 0.2,
+            healthDrain: 1.2,
+            foodDrain: 1.2,
+            cleanDrain: 1,
+            moodDrain: 1
+        }
+    ];
+
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+    const careState = {
+        food: 78,
+        cleanliness: 76,
+        health: 90,
+        mood: 82,
+        disease: null,
+        diseaseSeverity: 0,
+        message: 'Keep him fed and washed. If you ignore him, he can randomly catch diseases like cholera.',
+        diseaseRollTimer: 0,
+        showerFx: 0,
+        feedFx: 0,
+        playFx: 0,
+        medicineFx: 0
+    };
+
+    const setCareMessage = (message) => {
+        careState.message = message;
+        careStatusEls.log.textContent = message;
+    };
+
+    const getCareBarColor = (value) => {
+        if (value > 66) return '#3dff9f';
+        if (value > 33) return '#ffd166';
+        return '#ff6b6b';
+    };
+
+    const renderCarePanel = () => {
+        const statKeys = [
+            ['food', careStatusEls.foodFill, careStatusEls.foodValue],
+            ['cleanliness', careStatusEls.cleanFill, careStatusEls.cleanValue],
+            ['health', careStatusEls.healthFill, careStatusEls.healthValue],
+            ['mood', careStatusEls.moodFill, careStatusEls.moodValue]
+        ];
+        statKeys.forEach(([key, fillEl, valueEl]) => {
+            const value = Math.round(careState[key]);
+            fillEl.style.width = `${value}%`;
+            fillEl.style.background = getCareBarColor(value);
+            valueEl.textContent = `${value}%`;
+        });
+
+        careStatusEls.moodChip.textContent = careState.mood > 75 ? 'Mood: thriving' : careState.mood > 45 ? 'Mood: okay' : 'Mood: upset';
+        if (careState.disease) {
+            careStatusEls.diseaseChip.textContent = `Disease: ${careState.disease.name}`;
+            careStatusEls.diseaseChip.className = 'care-chip alert';
+            careStatusEls.hint.textContent = careState.disease.hint;
+        } else {
+            careStatusEls.diseaseChip.textContent = 'Healthy';
+            careStatusEls.diseaseChip.className = 'care-chip good';
+            careStatusEls.hint.textContent = 'Waterborne disease risk rises when cleanliness gets low.';
+        }
+    };
+
+    const maybeCatchDisease = () => {
+        if (careState.disease) return;
+        const candidates = careDiseases
+            .map((disease) => ({ disease, risk: disease.risk(careState) }))
+            .filter(entry => entry.risk > 0.05);
+        if (!candidates.length) return;
+
+        const totalRisk = candidates.reduce((sum, entry) => sum + entry.risk, 0);
+        if (Math.random() > Math.min(0.7, totalRisk * 0.32)) return;
+
+        let pick = Math.random() * totalRisk;
+        for (const entry of candidates) {
+            pick -= entry.risk;
+            if (pick <= 0) {
+                careState.disease = entry.disease;
+                careState.diseaseSeverity = 35 + Math.random() * 25;
+                setCareMessage(entry.disease.intro);
+                renderCarePanel();
+                return;
+            }
+        }
+    };
+
+    const clearDisease = (reason) => {
+        if (!careState.disease) return;
+        const diseaseName = careState.disease.name;
+        careState.disease = null;
+        careState.diseaseSeverity = 0;
+        setCareMessage(`${reason} ${diseaseName} is gone.`);
+    };
+
+    const runCareAction = (action) => {
+        if (action === 'feed') {
+            careState.food = clamp(careState.food + 22, 0, 100);
+            careState.mood = clamp(careState.mood + 7, 0, 100);
+            careState.cleanliness = clamp(careState.cleanliness - 3, 0, 100);
+            careState.feedFx = 1.1;
+            setCareMessage('You fed him. He looks calmer already.');
+        } else if (action === 'shower') {
+            careState.cleanliness = clamp(careState.cleanliness + 32, 0, 100);
+            careState.health = clamp(careState.health + 5, 0, 100);
+            careState.mood = clamp(careState.mood + 4, 0, 100);
+            careState.showerFx = 1.8;
+            if (careState.disease) {
+                careState.diseaseSeverity = Math.max(0, careState.diseaseSeverity - 18);
+                if (careState.diseaseSeverity === 0 || (careState.disease.name === 'Cholera' && careState.cleanliness > 78)) {
+                    clearDisease('The deep clean worked and');
+                } else {
+                    setCareMessage(`He got a proper wash. ${careState.disease.name} is easing up.`);
+                }
+            } else {
+                setCareMessage('You gave him a shower. He smells much better.');
+            }
+        } else if (action === 'medicine') {
+            careState.health = clamp(careState.health + 14, 0, 100);
+            careState.medicineFx = 0.9;
+            if (careState.disease) {
+                careState.diseaseSeverity = Math.max(0, careState.diseaseSeverity - 32);
+                if (careState.diseaseSeverity === 0) {
+                    clearDisease('The medicine kicked in and');
+                } else {
+                    setCareMessage(`Medicine helped. ${careState.disease.name} is fading.`);
+                }
+            } else {
+                setCareMessage('A little medicine top-up kept him healthy.');
+            }
+        } else if (action === 'play') {
+            careState.mood = clamp(careState.mood + 18, 0, 100);
+            careState.food = clamp(careState.food - 5, 0, 100);
+            careState.cleanliness = clamp(careState.cleanliness - 4, 0, 100);
+            careState.playFx = 1.2;
+            setCareMessage('You played with him. He is way more cheerful now.');
+        }
+        renderCarePanel();
+    };
+
+    carePanel.querySelectorAll('[data-care-action]').forEach((button) => {
+        button.addEventListener('click', () => runCareAction(button.dataset.careAction));
+    });
+    renderCarePanel();
+
+    const updateCareSimulation = (deltaMs) => {
+        const deltaSeconds = deltaMs / 1000;
+        if (!deltaSeconds) return;
+
+        const disease = careState.disease;
+        const diseaseFoodDrain = disease ? disease.foodDrain : 1;
+        const diseaseCleanDrain = disease ? disease.cleanDrain : 1;
+        const diseaseMoodDrain = disease ? disease.moodDrain : 1;
+
+        careState.food = clamp(careState.food - deltaSeconds * 0.95 * diseaseFoodDrain, 0, 100);
+        careState.cleanliness = clamp(careState.cleanliness - deltaSeconds * 0.58 * diseaseCleanDrain, 0, 100);
+        careState.mood = clamp(
+            careState.mood - deltaSeconds * (0.38 * diseaseMoodDrain + (careState.food < 35 ? 0.2 : 0) + (careState.cleanliness < 35 ? 0.12 : 0)),
+            0,
+            100
+        );
+
+        let healthDelta = 0.18;
+        if (careState.food < 45) healthDelta -= (45 - careState.food) * 0.035;
+        if (careState.cleanliness < 40) healthDelta -= (40 - careState.cleanliness) * 0.03;
+        if (careState.mood < 35) healthDelta -= (35 - careState.mood) * 0.02;
+        if (disease) {
+            healthDelta -= disease.healthDrain;
+            careState.diseaseSeverity = clamp(careState.diseaseSeverity + deltaSeconds * 1.5, 0, 100);
+        }
+        careState.health = clamp(careState.health + healthDelta * deltaSeconds, 0, 100);
+
+        careState.diseaseRollTimer += deltaSeconds;
+        if (careState.diseaseRollTimer >= 8) {
+            careState.diseaseRollTimer = 0;
+            maybeCatchDisease();
+        }
+
+        if (careState.disease && careState.health > 82 && careState.cleanliness > 80 && careState.food > 70 && careState.diseaseSeverity < 18) {
+            clearDisease('He recovered naturally and');
+        }
+
+        careState.showerFx = Math.max(0, careState.showerFx - deltaSeconds);
+        careState.feedFx = Math.max(0, careState.feedFx - deltaSeconds);
+        careState.playFx = Math.max(0, careState.playFx - deltaSeconds);
+        careState.medicineFx = Math.max(0, careState.medicineFx - deltaSeconds);
+        renderCarePanel();
+    };
+
+    const updateCareVisuals = (now) => {
+        const time = now * 0.001;
+        const moodLift = (careState.mood / 100) * 0.03;
+        bedroomOccupantGroup.position.y = -0.11 + Math.sin(time * 1.8) * (0.01 + moodLift) - (careState.health < 35 ? 0.05 : 0);
+        bedroomOccupantGroup.rotation.z = (careState.health < 40 ? -0.15 : -0.05) + Math.sin(time * 0.7) * 0.02;
+
+        bedroomGuy.head.rotation.z = Math.sin(time * 1.7) * 0.08 + (careState.health < 45 ? -0.12 : 0.03);
+        bedroomGuy.leftUpperArm.rotation.z = -0.7 + Math.sin(time * 2.2) * 0.08 - careState.showerFx * 0.25;
+        bedroomGuy.rightUpperArm.rotation.z = 0.55 + Math.sin(time * 2.6) * 0.12 + careState.feedFx * 0.3;
+        bedroomGuy.rightLowerArm.rotation.z = 0.55 + Math.sin(time * 3.2) * 0.1 + careState.feedFx * 0.35;
+        bedroomGuy.leftLowerArm.rotation.z = -0.45 - careState.showerFx * 0.18;
+
+        const tint = new THREE.Color(careState.disease ? 0xd8f38d : 0xffccaa);
+        const healthyTint = new THREE.Color(0xffccaa);
+        healthyTint.lerp(tint, careState.disease ? 0.45 : 0);
+        careBodyMaterial.color.copy(healthyTint);
+
+        sicknessCloud.visible = Boolean(careState.disease);
+        sicknessCloud.children.forEach((puff, index) => {
+            puff.position.y = Math.sin(time * 1.8 + index) * 0.03;
+            puff.material.opacity = careState.disease ? 0.16 + Math.sin(time * 2 + index) * 0.04 : 0;
+        });
+
+        showerDrops.visible = careState.showerFx > 0.01;
+        showerDrops.children.forEach((drop, index) => {
+            const dropTime = (time * 1.9 + index * 0.17) % 1;
+            drop.position.set(-0.35 + (index % 3) * 0.06, -0.14 - dropTime * 0.55, 0.22 + Math.sin(time * 2 + index) * 0.05);
+        });
+
+        foodPellet.visible = careState.feedFx > 0.01;
+        if (foodPellet.visible) {
+            const t = 1 - careState.feedFx / 1.1;
+            foodPellet.position.set(
+                0.42 - t * 0.32,
+                -0.65 + Math.sin(t * Math.PI) * 0.22,
+                0.3 - t * 0.42
+            );
+        }
+    };
+    // ========== END BEDROOM ROOM SETUP ==========
     
     // Camera transition state
-    let currentRoom = 'main'; // 'main' or 'music'
+    let currentRoom = 'main';
     let cameraTransitioning = false;
     let transitionProgress = 0;
     let transitionDuration = 1500; // ms - will be updated based on audio length
     let transitionStartTime = 0;
+    let transitionFromRoom = 'main';
+    let transitionToRoom = 'main';
     
     // Transition audio
     const bwoowOutAudio = new Audio('./media/mp3/bwoow_out.mp3');
@@ -665,6 +1365,48 @@
         ? new THREE.Vector3(-0.045221601648126095, -0.10912889554809375, -1.8643641543556457)
         : new THREE.Vector3(0.005284875785393904, -0.10952345100673846, -2.3608644793870726);
     const musicRoomTarget = new THREE.Vector3(0, -0.1, musicRoomOffset);
+
+    const bedroomRoomCameraPos = isMobile
+        ? new THREE.Vector3(bedroomRoomOffset - 0.9466522247248941, 0.4868536431089318, 0.5539161449307736)
+        : new THREE.Vector3(bedroomRoomOffset - 0.32130409236298296, 0.4362341566543904, 1.0707303305682692);
+    const bedroomRoomTarget = new THREE.Vector3(bedroomRoomOffset, -0.08, 0);
+
+    const roomConfigs = {
+        main: {
+            title: 'Kaj Services',
+            cameraPos: mainRoomCameraPos,
+            target: mainRoomTarget
+        },
+        music: {
+            title: 'Kaj Queue',
+            cameraPos: musicRoomCameraPos,
+            target: musicRoomTarget
+        },
+        bedroom: {
+            title: 'Kaj Care Room',
+            cameraPos: bedroomRoomCameraPos,
+            target: bedroomRoomTarget
+        }
+    };
+
+    const titleEl = document.querySelector('.title');
+    const musicLink = document.getElementById('music-link');
+    const bedroomLink = document.getElementById('bedroom-link');
+
+    const updateRoomUI = (room) => {
+        titleEl.textContent = roomConfigs[room].title;
+        musicLink.textContent = room === 'music' ? '← back' : '🎵 music';
+        bedroomLink.textContent = room === 'bedroom' ? '← back' : '🛏 bedroom';
+        musicLink.classList.toggle('active-room', room === 'music');
+        bedroomLink.classList.toggle('active-room', room === 'bedroom');
+    };
+
+    const syncRoomPanels = (room) => {
+        document.getElementById('music-panel').classList.toggle('active', room === 'music');
+        carePanel.classList.toggle('active', room === 'bedroom');
+    };
+    updateRoomUI(currentRoom);
+    syncRoomPanels(currentRoom);
     
     // Smooth camera transition using easing
     const easeInOutCubic = (t) => {
@@ -673,24 +1415,26 @@
     
     const startCameraTransition = (toRoom) => {
         if (cameraTransitioning || currentRoom === toRoom) return;
+        transitionFromRoom = currentRoom;
+        transitionToRoom = toRoom;
         cameraTransitioning = true;
         transitionStartTime = performance.now();
         currentRoom = toRoom;
         
         // Play appropriate audio and set transition duration to match
-        if (toRoom === 'music') {
-            bwoowOutAudio.currentTime = 0;
-            bwoowOutAudio.play();
-            transitionDuration = bwoowOutAudio.duration * 1000 || 1500;
-        } else {
-            bwoowInAudio.currentTime = 0;
-            bwoowInAudio.play();
-            transitionDuration = bwoowInAudio.duration * 1000 || 1500;
+        const transitionAudio = toRoom === 'main' ? bwoowInAudio : bwoowOutAudio;
+        transitionAudio.currentTime = 0;
+        transitionAudio.play();
+        transitionDuration = transitionAudio.duration * 1000 || 1500;
+
+        if (transitionFromRoom === 'music' && toRoom !== 'music') {
+            document.getElementById('music-panel').classList.remove('active');
         }
-        
-        // Update UI
-        document.querySelector('.title').textContent = toRoom === 'music' ? 'Kaj Queue' : 'Kaj Services';
-        document.getElementById('music-link').textContent = toRoom === 'music' ? '← back' : 'music';
+        if (transitionFromRoom === 'bedroom' && toRoom !== 'bedroom') {
+            carePanel.classList.remove('active');
+        }
+
+        updateRoomUI(toRoom);
     };
     
     const updateCameraTransition = (now) => {
@@ -700,35 +1444,41 @@
         transitionProgress = Math.min(elapsed / transitionDuration, 1);
         const easedProgress = easeInOutCubic(transitionProgress);
         
-        const fromPos = currentRoom === 'music' ? mainRoomCameraPos : musicRoomCameraPos;
-        const toPos = currentRoom === 'music' ? musicRoomCameraPos : mainRoomCameraPos;
-        const fromTarget = currentRoom === 'music' ? mainRoomTarget : musicRoomTarget;
-        const toTarget = currentRoom === 'music' ? musicRoomTarget : mainRoomTarget;
+        const fromPos = roomConfigs[transitionFromRoom].cameraPos;
+        const toPos = roomConfigs[transitionToRoom].cameraPos;
+        const fromTarget = roomConfigs[transitionFromRoom].target;
+        const toTarget = roomConfigs[transitionToRoom].target;
         
         camera.position.lerpVectors(fromPos, toPos, easedProgress);
         controls.target.lerpVectors(fromTarget, toTarget, easedProgress);
         
         if (transitionProgress >= 1) {
             cameraTransitioning = false;
-            // Show/hide music panel based on room
-            if (currentRoom === 'music') {
-                document.getElementById('music-panel').classList.add('active');
-            } else {
-                document.getElementById('music-panel').classList.remove('active');
-            }
+            syncRoomPanels(currentRoom);
         }
     };
     
     // Music link click handler
-    document.getElementById('music-link').addEventListener('click', (e) => {
+    musicLink.addEventListener('click', (e) => {
         e.preventDefault();
-        if (currentRoom === 'main') {
-            startCameraTransition('music');
-        } else {
-            // Hide panel immediately when going back
-            document.getElementById('music-panel').classList.remove('active');
-            startCameraTransition('main');
+        startCameraTransition(currentRoom === 'music' ? 'main' : 'music');
+    });
+
+    bedroomLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        startCameraTransition(currentRoom === 'bedroom' ? 'main' : 'bedroom');
+    });
+
+    window.addEventListener('kaj-room-change', (event) => {
+        const requestedRoom = event.detail?.room === 'care' ? 'bedroom' : event.detail?.room;
+        if (requestedRoom && roomConfigs[requestedRoom]) {
+            startCameraTransition(requestedRoom);
         }
+    });
+
+    window.kajExperience = Object.assign(window.kajExperience || {}, {
+        careRoomId: 'bedroom',
+        goToRoom: startCameraTransition
     });
     
     // Music Panel Search Functionality
@@ -1141,15 +1891,8 @@
         const seated = pose === 'seated';
         const laying = pose === 'laying';
         
-        // Body part dimensions (scaled for our scene)
-        const headRadius = 0.08;
-        const torsoSize = { x: 0.12, y: 0.18, z: 0.08 };
-        const upperArmSize = { x: 0.04, y: 0.12, z: 0.04 };
-        const lowerArmSize = { x: 0.035, y: 0.1, z: 0.035 };
-        const upperLegSize = { x: 0.05, y: 0.14, z: 0.05 };
-        const lowerLegSize = { x: 0.04, y: 0.13, z: 0.04 };
-
-        const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xffccaa, roughness: 0.6 });
+        const { headRadius, torsoSize, upperArmSize, lowerArmSize, upperLegSize, lowerLegSize } = occupantPartSizes;
+        const bodyMaterial = createOccupantBodyMaterial();
 
         // Seated position offsets - position above chair seat
         const seatHeight = seated ? -0.15 : 0; // Torso height when seated
@@ -1515,6 +2258,56 @@
     frontWallBody.position.z = cubeHalfSize;
     world.addBody(frontWallBody);
 
+    let bedroomBody = null;
+    let bedroomBedBody = null;
+    let bedroomLastOwAt = 0;
+
+    const initBedroomPhysics = () => {
+        if (bedroomBody) return;
+
+        bedroomGroup.updateMatrixWorld(true);
+
+        const bedroomSpawnPosition = bedroomGroup.localToWorld(bedroomOccupantGroup.position.clone());
+        const bedroomSpawnQuaternion = bedroomGroup.getWorldQuaternion(new THREE.Quaternion());
+
+        bedroomBody = new CANNON.Body({
+            mass: 1.2,
+            material: sharedMaterial,
+            linearDamping: 0.88,
+            angularDamping: 1
+        });
+        bedroomBody.fixedRotation = true;
+        bedroomBody.addShape(new CANNON.Box(new CANNON.Vec3(0.28, 0.35, 0.22)));
+        bedroomBody.position.copy(bedroomSpawnPosition);
+        bedroomBody.quaternion.copy(bedroomSpawnQuaternion);
+
+        bedroomBody.addEventListener('collide', (event) => {
+            const otherBody = event.body || (event.contact.bi === bedroomBody ? event.contact.bj : event.contact.bi);
+            const impactVelocity = event.contact && typeof event.contact.getImpactVelocityAlongNormal === 'function'
+                ? Math.abs(event.contact.getImpactVelocityAlongNormal())
+                : 0;
+            const isRelevantImpact = otherBody === floorBody || otherBody === ceilingBody || otherBody === leftWallBody || otherBody === rightWallBody || otherBody === backWallBody || otherBody === frontWallBody || otherBody === bedroomBedBody;
+
+            if (!isRelevantImpact || impactVelocity < 1.2) return;
+
+            const now = Date.now();
+            if (now - bedroomLastOwAt < 650) return;
+
+            bedroomLastOwAt = now;
+            playBedroomOwSpeech();
+        });
+
+        world.addBody(bedroomBody);
+
+        bedroomBedBody = new CANNON.Body({ mass: 0, material: wallMaterial });
+        bedroomBedBody.addShape(new CANNON.Box(new CANNON.Vec3(0.44, 0.17, 0.58)));
+        bedroomBedBody.position.copy(bedroomGroup.localToWorld(new THREE.Vector3(0.14, -0.56, -0.05)));
+        bedroomBedBody.quaternion.copy(bedroomSpawnQuaternion);
+        world.addBody(bedroomBedBody);
+    };
+
+    initBedroomPhysics();
+
     // Chair physics body (will be set when chair loads)
     let chairBody = null;
     let chairMesh = null;
@@ -1526,6 +2319,7 @@
     let dragOffset = new THREE.Vector3();
     let raycaster = new THREE.Raycaster();
     let mouse = new THREE.Vector2();
+    let bedroomPointerState = null;
     let lastCameraAngle = null; // Will be set on first frame
     let lastPolarAngle = null; // Track vertical rotation
     let rotationVelocity = 0;
@@ -1557,6 +2351,61 @@
         return closest;
     };
 
+            const beginBedroomPickup = (hitPoint) => {
+                if (!bedroomBody) return false;
+
+                activatePhysics();
+                isDragging = true;
+                draggedBody = bedroomBody;
+
+                dragPlane.setFromNormalAndCoplanarPoint(
+                    camera.getWorldDirection(new THREE.Vector3()).negate(),
+                    hitPoint
+                );
+
+                dragOffset.copy(hitPoint).sub(new THREE.Vector3(bedroomBody.position.x, bedroomBody.position.y, bedroomBody.position.z));
+                playBedroomPickupSpeech();
+                return true;
+            };
+
+            const bedroomDragThreshold = 8;
+
+            const handleBedroomPointerDown = (hitPoint, pointerX, pointerY) => {
+                bedroomPointerState = {
+                    hitPoint: hitPoint.clone(),
+                    pointerX,
+                    pointerY,
+                    didStartDrag: false,
+                    isTouch: false
+                };
+            };
+
+            const startBedroomDragIfNeeded = (pointerX, pointerY) => {
+                if (!bedroomPointerState || bedroomPointerState.didStartDrag) return;
+
+                const dx = pointerX - bedroomPointerState.pointerX;
+                const dy = pointerY - bedroomPointerState.pointerY;
+                if (Math.hypot(dx, dy) < bedroomDragThreshold) return;
+
+                bedroomPointerState.didStartDrag = true;
+                beginBedroomPickup(bedroomPointerState.hitPoint);
+            };
+
+            const finishBedroomPointer = () => {
+                if (!bedroomPointerState) return;
+
+                if (!bedroomPointerState.didStartDrag) {
+                    playBedroomVoiceLine([
+                        'Hey, stop poking me.',
+                        'That tickles.',
+                        'Ow, hey!',
+                        'Watch it.'
+                    ]);
+                }
+
+                bedroomPointerState = null;
+            };
+
     // Mouse event handlers
     const onMouseDown = (event) => {
         if (event.button !== 0) return; // Only left click
@@ -1565,6 +2414,12 @@
         mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
         
         raycaster.setFromCamera(mouse, camera);
+
+        const bedroomIntersects = raycaster.intersectObjects(Object.values(bedroomGuy), true);
+        if (bedroomIntersects.length > 0) {
+            handleBedroomPointerDown(bedroomIntersects[0].point, event.clientX, event.clientY);
+            return;
+        }
         
         // Create a plane at camera distance for picking
         const intersectObjects = [...ragdollMeshes];
@@ -1599,6 +2454,8 @@
     const onMouseMove = (event) => {
         mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
         mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+        startBedroomDragIfNeeded(event.clientX, event.clientY);
         
         if (isDragging && draggedBody) {
             raycaster.setFromCamera(mouse, camera);
@@ -1634,6 +2491,7 @@
 
     const onMouseUp = (event) => {
         if (event.button !== 0) return;
+        finishBedroomPointer();
         isDragging = false;
         draggedBody = null;
     };
@@ -1653,6 +2511,12 @@
         mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
         
         raycaster.setFromCamera(mouse, camera);
+
+        const bedroomIntersects = raycaster.intersectObjects(Object.values(bedroomGuy), true);
+        if (bedroomIntersects.length > 0) {
+            handleBedroomPointerDown(bedroomIntersects[0].point, touch.clientX, touch.clientY);
+            return;
+        }
         
         const intersectObjects = [...ragdollMeshes];
         if (chairMesh) {
@@ -1683,12 +2547,14 @@
     };
 
     const onTouchMove = (event) => {
-        if (!isDragging || !draggedBody || event.touches.length !== 1) return;
-        event.preventDefault();
-        
         const touch = event.touches[0];
         mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
         mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+
+        startBedroomDragIfNeeded(touch.clientX, touch.clientY);
+
+        if (!isDragging || !draggedBody || event.touches.length !== 1) return;
+        event.preventDefault();
         
         raycaster.setFromCamera(mouse, camera);
         
@@ -1717,6 +2583,7 @@
     };
 
     const onTouchEnd = () => {
+        finishBedroomPointer();
         isDragging = false;
         draggedBody = null;
     };
@@ -2030,8 +2897,17 @@
             clampBody(body);
         }
         clampBody(chairBody);
+
+        if (bedroomBody) {
+            bedroomGroup.updateMatrixWorld(true);
+            bedroomOccupantGroup.position.copy(
+                bedroomGroup.worldToLocal(new THREE.Vector3(bedroomBody.position.x, bedroomBody.position.y, bedroomBody.position.z))
+            );
+        }
         
         updateRagdoll();
+        updateCareSimulation(delta);
+        updateCareVisuals(now);
         
         // Update EQ visualizer bars smoothly
         updateEqBars(now);
