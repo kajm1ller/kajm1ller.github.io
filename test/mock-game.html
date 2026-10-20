@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Kaj Simulator - Conformance Mock</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #000; }
+    canvas { width: 100vw; height: 100vh; display: block; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/node_modules/three/build/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="gameCanvas" width="1280" height="720"></canvas>
+  <div id="car-indicator" style="display:block;position:absolute;top:55%;left:50%;transform:translate(-50%,-50%);color:#7cff7c;font-family:Arial,sans-serif;font-size:18px;font-weight:bold;background:rgba(0,0,0,0.6);padding:8px 16px;border-radius:5px;z-index:140;pointer-events:none;"><span class='key-hint'>(E) </span>Enter Car</div>
+  <div id="car-speed-hud" style="display:none;position:absolute;bottom:20px;left:50%;transform:translateX(-50%);color:white;background:rgba(0,0,0,0.7);padding:10px 20px;border-radius:5px;font-family:Arial,sans-serif;font-size:16px;z-index:100;pointer-events:none;">Speed: <span id="car-speed-val">0</span> mph</div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { SpatialGrid } from '../js/game/spatialGrid.js';
+
+    // Initialize minimal Three.js scene
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, 1280 / 720, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('gameCanvas') });
+
+    // Initialize SpatialGrid
+    const spatialGrid = new SpatialGrid(300, 15);
+
+    // Populate mock /anothermapo parts and building collision boxes
+    const mapParts = [];
+    const buildingColliders = [];
+    const mapGroup = new THREE.Group();
+    mapGroup.name = 'anothermapo_root';
+    scene.add(mapGroup);
+
+    for (let i = 0; i < 30; i++) {
+      const partNumber = String(i).padStart(4, '0');
+      const partName = `part${partNumber}.obj`;
+      const partMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(12, 5, 12),
+        new THREE.MeshBasicMaterial({ color: 0x555555 })
+      );
+      partMesh.name = partName;
+      partMesh.position.set((i % 6) * 25 - 60, 2.5, Math.floor(i / 6) * 25 - 60);
+      partMesh.userData = { isMapPart: true, partName, isBuilding: true, height: 5.0 };
+      mapGroup.add(partMesh);
+      mapParts.push(partMesh);
+
+      // Register building collision box in spatialGrid (height > 1.5)
+      const box = {
+        min: { x: partMesh.position.x - 6, y: 0, z: partMesh.position.z - 6 },
+        max: { x: partMesh.position.x + 6, y: 5.0, z: partMesh.position.z + 6 }
+      };
+      const entry = spatialGrid.insertStatic(`building_${partName}`, box, {
+        type: 'building',
+        isBuilding: true,
+        partName,
+        height: 5.0,
+        worldBox: box
+      });
+      buildingColliders.push(entry);
+    }
+
+    // Function to create Honda Civic mesh hierarchy
+    function createHondaCivicMesh(color = 0x111111) {
+      const group = new THREE.Group();
+      group.name = 'honda_civic_group';
+
+      // 1. Sedan body / chassis
+      const bodyGeo = new THREE.BoxGeometry(2.2, 0.7, 4.5);
+      const bodyMat = new THREE.MeshBasicMaterial({ color });
+      const body = new THREE.Mesh(bodyGeo, bodyMat);
+      body.name = 'sedan_body';
+      body.position.y = 0.55;
+      group.add(body);
+
+      // 2. Cabin / Greenhouse
+      const cabinGeo = new THREE.BoxGeometry(1.9, 0.6, 2.2);
+      const cabinMat = new THREE.MeshBasicMaterial({ color: 0x1a1a1a });
+      const cabin = new THREE.Mesh(cabinGeo, cabinMat);
+      cabin.name = 'cabin';
+      cabin.position.set(0, 1.1, -0.3);
+      group.add(cabin);
+
+      // 3. Windshield (front glass)
+      const windshieldGeo = new THREE.BoxGeometry(1.7, 0.5, 0.05);
+      const glassMat = new THREE.MeshBasicMaterial({ color: 0x4488aa, transparent: true, opacity: 0.5 });
+      const windshield = new THREE.Mesh(windshieldGeo, glassMat);
+      windshield.name = 'windshield';
+      windshield.position.set(0, 1.1, -1.4);
+      windshield.rotation.x = -0.2;
+      group.add(windshield);
+
+      // 4. Headlights (left & right)
+      const hlGeo = new THREE.BoxGeometry(0.35, 0.2, 0.05);
+      const hlMat = new THREE.MeshBasicMaterial({ color: 0xffffcc });
+      const headlightL = new THREE.Mesh(hlGeo, hlMat);
+      headlightL.name = 'headlight_left';
+      headlightL.position.set(-0.7, 0.55, -2.26);
+      group.add(headlightL);
+
+      const headlightR = new THREE.Mesh(hlGeo, hlMat);
+      headlightR.name = 'headlight_right';
+      headlightR.position.set(0.7, 0.55, -2.26);
+      group.add(headlightR);
+
+      // 5. Taillights (left & right)
+      const tlGeo = new THREE.BoxGeometry(0.3, 0.15, 0.05);
+      const tlMat = new THREE.MeshBasicMaterial({ color: 0xff2222 });
+      const taillightL = new THREE.Mesh(tlGeo, tlMat);
+      taillightL.name = 'taillight_left';
+      taillightL.position.set(-0.7, 0.55, 2.26);
+      group.add(taillightL);
+
+      const taillightR = new THREE.Mesh(tlGeo, tlMat);
+      taillightR.name = 'taillight_right';
+      taillightR.position.set(0.7, 0.55, 2.26);
+      group.add(taillightR);
+
+      // 6. 4 Wheels
+      const wheelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.25, 12);
+      wheelGeo.rotateZ(Math.PI / 2);
+      const wheelMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+      const wheels = {};
+      const wheelPositions = [
+        { key: 'frontLeft', name: 'wheel_front_left', pos: [-1.0, 0.35, -1.3] },
+        { key: 'frontRight', name: 'wheel_front_right', pos: [1.0, 0.35, -1.3] },
+        { key: 'rearLeft', name: 'wheel_rear_left', pos: [-1.0, 0.35, 1.3] },
+        { key: 'rearRight', name: 'wheel_rear_right', pos: [1.0, 0.35, 1.3] }
+      ];
+      wheelPositions.forEach(w => {
+        const mesh = new THREE.Mesh(wheelGeo, wheelMat);
+        mesh.name = w.name;
+        mesh.position.set(...w.pos);
+        group.add(mesh);
+        wheels[w.key] = mesh;
+      });
+
+      return {
+        group,
+        wheels,
+        body,
+        cabin,
+        windshield,
+        headlights: [headlightL, headlightR],
+        taillights: [taillightL, taillightR]
+      };
+    }
+
+    // Mock Vehicle implementation conforming to PROJECT.md § Interface Contracts
+    class MockVehicle {
+      constructor(id, isPlayer = false, x = 0, z = 0, yaw = 0) {
+        this.id = id;
+        this.isPlayer = isPlayer;
+        this.x = x;
+        this.y = 0.5;
+        this.z = z;
+        this.yaw = yaw;
+        this.speed = 0;
+        this.steer = 0;
+        this.throttle = 0;
+        this.brake = 0;
+        this.length = 4.5;
+        this.width = 2.2;
+
+        const civic = createHondaCivicMesh(isPlayer ? 0x111111 : 0x336699);
+        this.mesh = civic.group;
+        this.wheels = civic.wheels;
+        this.mesh.position.set(x, 0, z);
+        scene.add(this.mesh);
+      }
+
+      setInputs(throttle, steer, brake, handbrake) {
+        this.throttle = throttle ? 1 : 0;
+        this.brake = brake ? 1 : (handbrake ? 1 : 0);
+        this.steer = steer ? (steer.left ? 0.35 : (steer.right ? -0.35 : 0)) : 0;
+      }
+
+      update(dt) {
+        if (this.isPlayer) {
+          const accel = (this.throttle * 8.0) - (this.brake * 12.0) - (this.speed * 0.1);
+          this.speed = Math.max(0, Math.min(25.0, this.speed + accel * dt));
+          this.yaw += this.steer * (this.speed / 5.0) * dt;
+
+          this.x += -Math.sin(this.yaw) * this.speed * dt;
+          this.z += -Math.cos(this.yaw) * this.speed * dt;
+
+          // Clamp to world bounds
+          this.x = Math.max(-280, Math.min(280, this.x));
+          this.z = Math.max(-280, Math.min(280, this.z));
+        } else {
+          // Circular road network path following
+          if (this.angle === undefined) {
+            this.angle = Math.atan2(this.z, this.x);
+          }
+          const radius = 75.0;
+          this.angle += (this.speed / radius) * dt;
+          this.x = Math.cos(this.angle) * radius;
+          this.z = Math.sin(this.angle) * radius;
+          this.yaw = this.angle + Math.PI / 2;
+        }
+
+        if (this.mesh) {
+          this.mesh.position.set(this.x, 0, this.z);
+          this.mesh.rotation.y = this.yaw;
+        }
+      }
+
+      getPosition() {
+        return { x: this.x, y: this.y, z: this.z };
+      }
+
+      getVelocity() {
+        return {
+          x: -Math.sin(this.yaw) * this.speed,
+          z: -Math.cos(this.yaw) * this.speed
+        };
+      }
+
+      getSpeed() {
+        return this.speed;
+      }
+
+      getYaw() {
+        return this.yaw;
+      }
+    }
+
+    // Initialize mock state
+    const playerVehicle = new MockVehicle('player_car', true, 0, -2, 0);
+    const trafficFleet = [];
+    for (let i = 0; i < 50; i++) {
+      const angle = (i / 50) * Math.PI * 2;
+      const x = Math.cos(angle) * 75;
+      const z = Math.sin(angle) * 75;
+      const yaw = angle + Math.PI / 2;
+      const tv = new MockVehicle(`traffic_${i}`, false, x, z, yaw);
+      tv.speed = 10.0;
+      trafficFleet.push(tv);
+    }
+
+    let playerState = 'ON_FOOT';
+    let playerPos = { x: 0, y: 1.7, z: 0 };
+    let activePlayerVehicle = null;
+
+    const carIndicatorEl = document.getElementById('car-indicator');
+    const carSpeedHud = document.getElementById('car-speed-hud');
+    const carSpeedVal = document.getElementById('car-speed-val');
+
+    function updateHudState() {
+      if (playerState === 'IN_VEHICLE') {
+        if (carIndicatorEl) carIndicatorEl.style.display = 'none';
+        if (carSpeedHud) {
+          carSpeedHud.style.display = 'block';
+          const mph = Math.round((activePlayerVehicle ? activePlayerVehicle.getSpeed() : 0) * 2.23694);
+          if (carSpeedVal) carSpeedVal.textContent = String(mph);
+        }
+      } else {
+        if (carSpeedHud) carSpeedHud.style.display = 'none';
+        const dist = Math.hypot(playerPos.x - playerVehicle.x, playerPos.z - playerVehicle.z);
+        if (carIndicatorEl) {
+          carIndicatorEl.style.display = dist <= 3.5 ? 'block' : 'none';
+        }
+      }
+    }
+    updateHudState();
+
+    // Expose window.__GAME__ API
+    window.__GAME__ = {
+      isReady: true,
+      hasVehicles: true,
+      hasMap: true,
+      map: {
+        isLoaded: true,
+        parts: mapParts,
+        buildingColliders: buildingColliders,
+        totalParts: mapParts.length,
+        loadedPartsCount: mapParts.length,
+        getBuildingCollidersCount: () => buildingColliders.length
+      },
+      spatialGrid: spatialGrid,
+      raw: {
+        scene,
+        camera,
+        renderer
+      },
+      player: {
+        getState: () => playerState,
+        getPosition: () => ({ ...playerPos }),
+        getVehicle: () => activePlayerVehicle
+      },
+      vehicles: {
+        getPlayerVehicle: () => activePlayerVehicle || playerVehicle,
+        getTrafficVehicles: () => trafficFleet,
+        getTrafficCount: () => trafficFleet.length,
+        getNearbyVehicle: (maxDist = 3.5) => {
+          if (playerState === 'IN_VEHICLE') return activePlayerVehicle;
+          const dist = Math.hypot(playerPos.x - playerVehicle.x, playerPos.z - playerVehicle.z);
+          return dist <= maxDist ? playerVehicle : null;
+        },
+        getNearestVehicle: (maxDist = 3.5) => {
+          return window.__GAME__.vehicles.getNearbyVehicle(maxDist);
+        }
+      },
+      actions: {
+        tryEnterVehicle: () => {
+          if (playerState === 'ON_FOOT') {
+            playerState = 'IN_VEHICLE';
+            activePlayerVehicle = playerVehicle;
+            updateHudState();
+            return true;
+          }
+          return false;
+        },
+        tryExitVehicle: () => {
+          if (playerState === 'IN_VEHICLE') {
+            playerState = 'ON_FOOT';
+            playerPos = {
+              x: activePlayerVehicle.x + 1.8,
+              y: 1.7,
+              z: activePlayerVehicle.z
+            };
+            activePlayerVehicle = null;
+            updateHudState();
+            return true;
+          }
+          return false;
+        },
+        setVehicleInput: (inputs) => {
+          if (activePlayerVehicle) {
+            const steer = { left: !!inputs.a, right: !!inputs.d };
+            activePlayerVehicle.setInputs(inputs.w, steer, inputs.s, inputs.space);
+          }
+        },
+        setPlayerInput: (keys) => {
+          if (playerState === 'ON_FOOT') {
+            if (keys.w) playerPos.z -= 0.1;
+            if (keys.s) playerPos.z += 0.1;
+            if (keys.a) playerPos.x -= 0.1;
+            if (keys.d) playerPos.x += 0.1;
+            updateHudState();
+          }
+        }
+      },
+      simulation: {
+        step: (dt = 1 / 60) => {
+          if (activePlayerVehicle) {
+            activePlayerVehicle.update(dt);
+            updateHudState();
+          }
+          for (let i = 0; i < trafficFleet.length; i++) {
+            trafficFleet[i].update(dt);
+          }
+        },
+        runBenchmark: async (frames) => {
+          const tickTimes = [];
+          const startHeap = (window.performance && window.performance.memory) ? window.performance.memory.usedJSHeapSize : 0;
+          for (let f = 0; f < frames; f++) {
+            const t0 = performance.now();
+            window.__GAME__.simulation.step(1 / 60);
+            const t1 = performance.now();
+            tickTimes.push(t1 - t0);
+          }
+          const endHeap = (window.performance && window.performance.memory) ? window.performance.memory.usedJSHeapSize : 0;
+          const sum = tickTimes.reduce((a, b) => a + b, 0);
+          const sorted = [...tickTimes].sort((a, b) => a - b);
+          return {
+            frames,
+            avgFrameTimeMs: sum / frames,
+            minFrameTimeMs: Math.min(...tickTimes),
+            maxFrameTimeMs: Math.max(...tickTimes),
+            p95FrameTimeMs: sorted[Math.floor(sorted.length * 0.95)],
+            fps: 1000 / (sum / frames),
+            startHeapBytes: startHeap,
+            endHeapBytes: endHeap,
+            memoryGrowthBytes: Math.max(0, endHeap - startHeap)
+          };
+        }
+      }
+    };
+  </script>
+</body>
+</html>

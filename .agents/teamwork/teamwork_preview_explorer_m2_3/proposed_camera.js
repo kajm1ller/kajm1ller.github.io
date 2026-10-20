@@ -1,0 +1,235 @@
+/**
+ * js/game/camera.js
+ * 
+ * CameraController: First-Person On-Foot & Smooth Third-Person Chase Camera.
+ * 
+ * Features:
+ * - Seamless mode transitions (FIRST_PERSON <-> CHASE)
+ * - Exponential yaw lag and heading interpolation behind vehicle
+ * - Mouse orbit look during driving with auto-centering on forward acceleration
+ * - Instant disembark realignment matching vehicle heading
+ * - Zero-allocation update loop for 60Hz benchmark stability
+ */
+
+import * as THREE from 'three';
+
+export const CameraMode = Object.freeze({
+    FIRST_PERSON: 'FIRST_PERSON',
+    CHASE: 'CHASE'
+});
+
+/**
+ * Shortest-arc angular interpolation.
+ * Handles modulo wrapping across [-PI, PI].
+ * @param {number} from 
+ * @param {number} to 
+ * @param {number} t (0 to 1)
+ * @returns {number}
+ */
+export function lerpAngle(from, to, t) {
+    let diff = (to - from) % (Math.PI * 2);
+    if (diff < -Math.PI) diff += Math.PI * 2;
+    if (diff > Math.PI) diff -= Math.PI * 2;
+    return from + diff * t;
+}
+
+export class CameraController {
+    /**
+     * @param {Object} options
+     * @param {THREE.Camera} options.camera Three.js PerspectiveCamera instance
+     * @param {HTMLElement} [options.domElement] Canvas or window element for pointer lock
+     */
+    constructor(options = {}) {
+        this.camera = options.camera || null;
+        this.domElement = options.domElement || null;
+
+        // Current Operating Mode
+        this.mode = CameraMode.FIRST_PERSON;
+        this.targetVehicle = null;
+
+        // First-Person Parameters
+        this.fpYaw = 0;
+        this.fpPitch = 0;
+        this.mouseSensitivity = 0.002;
+        this.fpMaxPitch = Math.PI / 2 - 0.1; // ~84 degrees
+        this.eyeHeight = 1.7;
+
+        // Third-Person Chase Parameters
+        this.chaseDistance = 6.8;    // Distance behind vehicle center (m)
+        this.chaseHeight = 2.5;      // Height above vehicle plane (m)
+        this.chaseYaw = 0;           // Current interpolated chase yaw
+        this.yawFollowRate = 6.0;    // Exponential follow rate for yaw (1/s)
+        this.posFollowRate = 12.0;   // Exponential follow rate for position (1/s)
+        this.targetLookHeight = 1.2; // Vertical focus offset on car
+
+        // Orbit offsets while driving
+        this.orbitYaw = 0;
+        this.orbitPitch = 0;
+
+        // Zero-allocation scratch vectors
+        this._desiredPos = new THREE.Vector3();
+        this._lookTarget = new THREE.Vector3();
+        this._forward = new THREE.Vector3();
+        this._right = new THREE.Vector3();
+        this._vPos = new THREE.Vector3();
+    }
+
+    /**
+     * Set active camera mode and target.
+     * @param {'FIRST_PERSON'|'CHASE'} mode 
+     * @param {Vehicle|THREE.Vector3} [target] Vehicle for CHASE, or position for FIRST_PERSON
+     */
+    setMode(mode, target = null) {
+        if (mode === CameraMode.CHASE) {
+            this.mode = CameraMode.CHASE;
+            this.targetVehicle = target;
+
+            if (target) {
+                const vYaw = typeof target.getYaw === 'function' ? target.getYaw() : 0;
+                this.chaseYaw = vYaw;
+                this.orbitYaw = 0;
+                this.orbitPitch = 0;
+
+                // Snap camera immediately behind vehicle on initial entry
+                const vp = target.getPosition();
+                const dist = this.chaseDistance;
+                const h = this.chaseHeight;
+                if (this.camera) {
+                    this.camera.position.set(
+                        vp.x + Math.sin(vYaw) * dist,
+                        (vp.y || 0) + h,
+                        vp.z + Math.cos(vYaw) * dist
+                    );
+                    this.camera.lookAt(vp.x, (vp.y || 0) + this.targetLookHeight, vp.z);
+                }
+            }
+        } else {
+            // Returning to FIRST_PERSON
+            this.mode = CameraMode.FIRST_PERSON;
+
+            // Align first-person heading with chase camera heading for seamless orientation
+            if (this.targetVehicle) {
+                const vYaw = typeof this.targetVehicle.getYaw === 'function' ? this.targetVehicle.getYaw() : this.chaseYaw;
+                this.fpYaw = vYaw;
+                this.fpPitch = 0;
+            }
+            this.targetVehicle = null;
+
+            if (target && this.camera) {
+                const px = target.x !== undefined ? target.x : target.position.x;
+                const py = target.y !== undefined ? target.y : target.position.y;
+                const pz = target.z !== undefined ? target.z : target.position.z;
+                this.camera.position.set(px, (py || 0) + this.eyeHeight, pz);
+                this._updateFirstPersonOrientation();
+            }
+        }
+    }
+
+    /**
+     * Mouse look movement event handler.
+     * @param {number} movementX 
+     * @param {number} movementY 
+     */
+    handleMouseMove(movementX, movementY) {
+        if (this.mode === CameraMode.FIRST_PERSON) {
+            this.fpYaw -= movementX * this.mouseSensitivity;
+            this.fpPitch -= movementY * this.mouseSensitivity;
+            this.fpPitch = Math.max(-this.fpMaxPitch, Math.min(this.fpMaxPitch, this.fpPitch));
+
+            // Wrap yaw to [-PI, PI]
+            while (this.fpYaw > Math.PI) this.fpYaw -= 2 * Math.PI;
+            while (this.fpYaw < -Math.PI) this.fpYaw += 2 * Math.PI;
+        } else if (this.mode === CameraMode.CHASE) {
+            // Orbit camera around car
+            this.orbitYaw -= movementX * this.mouseSensitivity;
+            this.orbitPitch -= movementY * this.mouseSensitivity;
+            this.orbitPitch = Math.max(-0.4, Math.min(0.6, this.orbitPitch));
+
+            while (this.orbitYaw > Math.PI) this.orbitYaw -= 2 * Math.PI;
+            while (this.orbitYaw < -Math.PI) this.orbitYaw += 2 * Math.PI;
+        }
+    }
+
+    /**
+     * Internal orientation calculation for first-person view.
+     * @private
+     */
+    _updateFirstPersonOrientation() {
+        if (!this.camera) return;
+        this._forward.set(-Math.sin(this.fpYaw), 0, -Math.cos(this.fpYaw));
+        this._right.set(Math.cos(this.fpYaw), 0, -Math.sin(this.fpYaw));
+        this._forward.applyAxisAngle(this._right, this.fpPitch);
+        this._lookTarget.copy(this.camera.position).addScaledVector(this._forward, 10);
+        this.camera.lookAt(this._lookTarget);
+    }
+
+    /**
+     * Frame update tick.
+     * @param {number} dt Constant timestep in seconds (1/60)
+     * @param {THREE.Vector3|Object} playerPos Current player position
+     */
+    update(dt = 1 / 60, playerPos = null) {
+        if (!this.camera) return;
+
+        if (this.mode === CameraMode.FIRST_PERSON) {
+            if (playerPos) {
+                const px = playerPos.x !== undefined ? playerPos.x : 0;
+                const py = playerPos.y !== undefined ? playerPos.y : 0;
+                const pz = playerPos.z !== undefined ? playerPos.z : 0;
+                this.camera.position.set(px, py + this.eyeHeight, pz);
+            }
+            this._updateFirstPersonOrientation();
+        } else if (this.mode === CameraMode.CHASE) {
+            if (!this.targetVehicle) {
+                this.setMode(CameraMode.FIRST_PERSON, playerPos);
+                return;
+            }
+
+            const vp = this.targetVehicle.getPosition();
+            const vy = typeof this.targetVehicle.getYaw === 'function' ? this.targetVehicle.getYaw() : 0;
+            const speed = typeof this.targetVehicle.getSpeed === 'function' ? this.targetVehicle.getSpeed() : 0;
+
+            // When moving forward/reverse, decay manual orbit yaw/pitch back toward 0
+            if (speed > 1.0) {
+                const orbitDecay = 1.0 - Math.exp(-dt * 2.5);
+                this.orbitYaw *= (1.0 - orbitDecay);
+                this.orbitPitch *= (1.0 - orbitDecay);
+            }
+
+            // Smooth chase yaw toward vehicle yaw
+            const yawAlpha = 1.0 - Math.exp(-dt * this.yawFollowRate);
+            this.chaseYaw = lerpAngle(this.chaseYaw, vy, yawAlpha);
+
+            const effectiveYaw = this.chaseYaw + this.orbitYaw;
+            const effectivePitch = this.orbitPitch;
+
+            // Dynamic camera distance / height based on speed
+            const speedRatio = Math.min(1.0, speed / 25.0);
+            const currentDist = this.chaseDistance + speedRatio * 1.5;
+            const currentHeight = this.chaseHeight + speedRatio * 0.4 + Math.sin(effectivePitch) * 2.0;
+
+            const distProj = currentDist * Math.cos(effectivePitch);
+
+            // Compute desired camera position behind vehicle
+            this._desiredPos.set(
+                vp.x + Math.sin(effectiveYaw) * distProj,
+                (vp.y || 0) + currentHeight,
+                vp.z + Math.cos(effectiveYaw) * distProj
+            );
+
+            // Smoothly interpolate position
+            const posBeta = 1.0 - Math.exp(-dt * this.posFollowRate);
+            this.camera.position.lerp(this._desiredPos, posBeta);
+
+            // Focus target on vehicle (slightly ahead when moving fast)
+            const lookahead = speedRatio * 1.5;
+            this._lookTarget.set(
+                vp.x - Math.sin(vy) * lookahead,
+                (vp.y || 0) + this.targetLookHeight,
+                vp.z - Math.cos(vy) * lookahead
+            );
+
+            this.camera.lookAt(this._lookTarget);
+        }
+    }
+}
