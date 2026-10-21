@@ -521,6 +521,58 @@
             z-index: 250;
             pointer-events: none;
         }
+        #damage-flash {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(ellipse at center, rgba(220, 38, 38, 0) 30%, rgba(220, 38, 38, 0.45) 100%);
+            pointer-events: none;
+            z-index: 999;
+        }
+        #player-health-hud {
+            position: absolute;
+            bottom: 25px;
+            right: 25px;
+            background: rgba(10, 15, 25, 0.85);
+            border: 2px solid rgba(34, 197, 94, 0.6);
+            border-radius: 8px;
+            padding: 8px 14px;
+            color: white;
+            font-family: Arial, sans-serif;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            z-index: 100;
+            pointer-events: none;
+            user-select: none;
+        }
+        #player-health-label {
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 1.5px;
+            color: #22c55e;
+        }
+        #player-health-bar {
+            width: 120px;
+            height: 12px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        #player-health-fill {
+            width: 100%;
+            height: 100%;
+            background: #22c55e;
+            transition: width 0.15s ease, background 0.15s ease;
+        }
+        #player-health-val {
+            font-size: 12px;
+            font-weight: 700;
+            min-width: 36px;
+        }
     </style>
 </head>
 <body>
@@ -548,6 +600,12 @@
         <div id="wanted-title">POLICE PURSUIT</div>
     </div>
     <div id="busted-overlay">BUSTED</div>
+    <div id="damage-flash"></div>
+    <div id="player-health-hud">
+        <div id="player-health-label">HEALTH</div>
+        <div id="player-health-bar"><div id="player-health-fill"></div></div>
+        <div id="player-health-val">100%</div>
+    </div>
     <!-- In-Car Radio HUD (Bottom-Left) -->
     <div id="radio-ui">
         <div id="radio-header">
@@ -609,7 +667,8 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             updateCivicHUD,
             TireSmokeSystem,
             PoliceSystem,
-            PoliceVehicle
+            PoliceVehicle,
+            PoliceOfficer
         } from './js/game/main.js';
 
         // ============ SCENE SETUP ============
@@ -824,6 +883,74 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
 
         // Police system (triggers on shooting or vehicular homicide)
         const policeSystem = new PoliceSystem(scene, spatialGrid, roadNetwork, null);
+
+        // ============ PLAYER HEALTH & DAMAGE SYSTEM ============
+        let playerHealth = 100;
+        const playerMaxHealth = 100;
+        const damageFlashEl = document.getElementById('damage-flash');
+        const healthFillEl = document.getElementById('player-health-fill');
+        const healthValEl = document.getElementById('player-health-val');
+        const healthLabelEl = document.getElementById('player-health-label');
+        let damageFlashTimer = 0;
+
+        function updatePlayerHealthHUD() {
+            if (healthFillEl) {
+                healthFillEl.style.width = `${Math.max(0, playerHealth)}%`;
+                if (playerHealth > 50) {
+                    healthFillEl.style.backgroundColor = '#22c55e';
+                    if (healthLabelEl) healthLabelEl.style.color = '#22c55e';
+                } else if (playerHealth > 25) {
+                    healthFillEl.style.backgroundColor = '#eab308';
+                    if (healthLabelEl) healthLabelEl.style.color = '#eab308';
+                } else {
+                    healthFillEl.style.backgroundColor = '#ef4444';
+                    if (healthLabelEl) healthLabelEl.style.color = '#ef4444';
+                }
+            }
+            if (healthValEl) {
+                healthValEl.textContent = `${Math.max(0, Math.round(playerHealth))}%`;
+            }
+        }
+
+        function damagePlayer(amount = 15) {
+            playerHealth = Math.max(0, playerHealth - amount);
+            updatePlayerHealthHUD();
+
+            if (damageFlashEl) {
+                damageFlashEl.style.display = 'block';
+                damageFlashTimer = 0.2;
+            }
+
+            if (playerHealth <= 0) {
+                const bustedEl = document.getElementById('busted-overlay');
+                if (bustedEl) {
+                    bustedEl.textContent = 'WASTED';
+                    bustedEl.style.display = 'block';
+                }
+                setTimeout(() => {
+                    if (bustedEl) bustedEl.style.display = 'none';
+                    playerHealth = 100;
+                    updatePlayerHealthHUD();
+                    if (playerController.getState() === 'IN_VEHICLE') {
+                        playerController.exitVehicle(spatialGrid);
+                    }
+                    myPosition.copy(playerStartPos);
+                    camera.position.set(playerStartPos.x, playerStartPos.y + 1.7, playerStartPos.z);
+                    if (policeSystem) policeSystem.clearWantedLevel();
+                }, 2500);
+            }
+        }
+
+        // Hook police callbacks
+        policeSystem.onDamagePlayer = (amt) => damagePlayer(amt);
+        const officerGunAudio = new Audio('/media/hl2-smg-shot.mp3');
+        policeSystem.onPlayOfficerGunSound = () => {
+            try {
+                const clone = officerGunAudio.cloneNode();
+                clone.volume = 0.4;
+                clone.play().catch(() => {});
+            } catch (e) {}
+        };
         
         // ============ FIRST-PERSON CONTROLS ============
         let fpCameraYaw = 0;
@@ -1917,6 +2044,10 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             return poolEntry;
         }
 
+        if (policeSystem) {
+            policeSystem.createBloodPoolCallback = (pos) => createBloodPool(pos);
+        }
+
         function updateBloodPools() {
             for (let i = 0; i < bloodPools.length; i++) {
                 const bp = bloodPools[i];
@@ -2369,13 +2500,17 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             ped.mesh.position.y = Math.max(0.35, ped.mesh.position.y + 0.35);
             ped.mesh.rotation.y = Math.atan2(fwdX, fwdZ);
 
-            // Report vehicular homicide crime to Police System
+            // Report crime or officer kill to Police System
             const isPlayerCar = !!(vehicle && (
                 vehicle === playerVehicle || 
                 vehicle.isPlayer || 
                 (playerController && playerController.getVehicle() === vehicle)
             ));
-            if (isPlayerCar && policeSystem) {
+            if (ped.isPoliceOfficer) {
+                if (policeSystem) {
+                    policeSystem.killOfficer(ped);
+                }
+            } else if (isPlayerCar && policeSystem) {
                 policeSystem.triggerCrime('vehicular_homicide', ped.mesh.position);
             }
 
@@ -2385,6 +2520,9 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
         function checkVehiclePedestrianImpacts() {
             const allCars = [playerVehicle, ...trafficVehicles];
             const hitRadius = 1.75;
+            const allPeds = (policeSystem && policeSystem.officers.length > 0)
+                ? [...pedestrians, ...policeSystem.officers]
+                : pedestrians;
 
             for (let c = 0, cLen = allCars.length; c < cLen; c++) {
                 const car = allCars[c];
@@ -2395,8 +2533,8 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                 const cx = car.position.x;
                 const cz = car.position.z;
 
-                for (let p = 0, pLen = pedestrians.length; p < pLen; p++) {
-                    const ped = pedestrians[p];
+                for (let p = 0, pLen = allPeds.length; p < pLen; p++) {
+                    const ped = allPeds[p];
                     if (!ped || ped.isDead || ped.state === 'ragdoll' || ped.state === 'carjacked') continue;
 
                     const dx = ped.mesh.position.x - cx;
@@ -2598,9 +2736,13 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                     dir.normalize();
                 }
 
-                // Immediate hitscan check along aim ray against living pedestrians
-                for (let i = 0; i < pedestrians.length; i++) {
-                    const ped = pedestrians[i];
+                // Immediate hitscan check along aim ray against living pedestrians & armed police officers
+                const hitTargets = (policeSystem && policeSystem.officers.length > 0)
+                    ? [...pedestrians, ...policeSystem.officers]
+                    : pedestrians;
+
+                for (let i = 0; i < hitTargets.length; i++) {
+                    const ped = hitTargets[i];
                     if (ped.isDead) continue;
 
                     const pedCenterX = ped.mesh.position.x;
@@ -2624,11 +2766,19 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                         if (distHoriz <= hitRadius && distVert <= (weapon.explosive ? 6.0 : 1.5)) {
                             ped.hp -= weapon.damage;
                             if (ped.hp <= 0) {
-                                killPedestrian(ped);
+                                if (ped.isPoliceOfficer && policeSystem) {
+                                    policeSystem.killOfficer(ped);
+                                } else {
+                                    killPedestrian(ped);
+                                    if (policeSystem) {
+                                        policeSystem.triggerCrime('shooting', ped.mesh.position);
+                                    }
+                                }
                                 hitCount++;
-                            }
-                            if (policeSystem) {
-                                policeSystem.triggerCrime('shooting', ped.mesh.position);
+                            } else {
+                                if (policeSystem && !ped.isPoliceOfficer) {
+                                    policeSystem.triggerCrime('shooting', ped.mesh.position);
+                                }
                             }
                             if (!weapon.explosive) break;
                         }
@@ -2672,8 +2822,12 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                 proj.distanceTraveled += stepVec.length();
 
                 let hit = false;
-                for (let j = 0; j < pedestrians.length; j++) {
-                    const ped = pedestrians[j];
+                const projTargets = (policeSystem && policeSystem.officers.length > 0)
+                    ? [...pedestrians, ...policeSystem.officers]
+                    : pedestrians;
+
+                for (let j = 0; j < projTargets.length; j++) {
+                    const ped = projTargets[j];
                     if (ped.isDead) continue;
                     const dx = proj.mesh.position.x - ped.mesh.position.x;
                     const dy = proj.mesh.position.y - (ped.mesh.position.y + 1.0);
@@ -2682,10 +2836,18 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                     if (Math.hypot(dx, dz) < hitDist && Math.abs(dy) < 1.5) {
                         ped.hp -= proj.damage;
                         if (ped.hp <= 0) {
-                            killPedestrian(ped);
-                        }
-                        if (policeSystem) {
-                            policeSystem.triggerCrime('shooting', ped.mesh.position);
+                            if (ped.isPoliceOfficer && policeSystem) {
+                                policeSystem.killOfficer(ped);
+                            } else {
+                                killPedestrian(ped);
+                                if (policeSystem) {
+                                    policeSystem.triggerCrime('shooting', ped.mesh.position);
+                                }
+                            }
+                        } else {
+                            if (policeSystem && !ped.isPoliceOfficer) {
+                                policeSystem.triggerCrime('shooting', ped.mesh.position);
+                            }
                         }
                         hit = true;
                         if (!proj.explosive) break;
@@ -3526,6 +3688,13 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                 policeSystem.update(dt, targetPos, isPlayerDriving, spatialGrid, roadNetwork, camera.position);
             }
 
+            if (damageFlashTimer > 0) {
+                damageFlashTimer -= dt;
+                if (damageFlashTimer <= 0 && damageFlashEl) {
+                    damageFlashEl.style.display = 'none';
+                }
+            }
+
             // Sync dynamic entities into spatial grid (zero-allocation)
             spatialGrid.clearDynamic();
             if (playerController.getState() === 'ON_FOOT') {
@@ -3540,6 +3709,14 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                 for (let i = 0, len = policeSystem.policeCars.length; i < len; i++) {
                     const pc = policeSystem.policeCars[i];
                     spatialGrid.insertDynamic(pc.id, pc.position.x, pc.position.z, pc.radius, pc);
+                }
+            }
+            if (policeSystem && policeSystem.officers) {
+                for (let i = 0, len = policeSystem.officers.length; i < len; i++) {
+                    const off = policeSystem.officers[i];
+                    if (!off.isDead) {
+                        spatialGrid.insertDynamic(off.id, off.position.x, off.position.z, 0.45, off);
+                    }
                 }
             }
         }
@@ -3617,6 +3794,7 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             weapons,
             selectWeapon,
             shootWeapon,
+            resetWeaponCooldown: () => { lastShotTime = 0; },
             talkToNearbyPedestrian,
             getNearbyPedestrian,
             getActiveDialog: () => activeDialog,
@@ -3653,7 +3831,12 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             getPoliceCars: () => (policeSystem ? policeSystem.policeCars : []),
             getTireSmokeCount: () => (tireSmokeSystem ? tireSmokeSystem.totalSpawned : 0),
             getActiveTireSmokeCount: () => (tireSmokeSystem ? tireSmokeSystem.getActiveCount() : 0),
-            tireSmokeParticles: tireSmokeSystem ? tireSmokeSystem.pool : []
+            tireSmokeParticles: tireSmokeSystem ? tireSmokeSystem.pool : [],
+            getPoliceOfficers: () => (policeSystem ? policeSystem.officers : []),
+            getOfficerCount: () => (policeSystem ? policeSystem.officers.length : 0),
+            getPlayerHealth: () => playerHealth,
+            damagePlayer: (amt) => damagePlayer(amt),
+            killPoliceOfficer: (off) => (policeSystem && policeSystem.killOfficer(off))
         });
 
         // Ensure player simulation is active for headless test execution

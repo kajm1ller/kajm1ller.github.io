@@ -36,7 +36,7 @@ import {
 import { InstancedVehicleFleet, mergeBufferGeometries } from './instancedFleet.js';
 import { AnothermapoLoader, OSMRoadNetwork, ANOTHERMAPO_CONFIG } from './mapLoader.js';
 import { TireSmokeSystem } from './tireSmoke.js';
-import { PoliceSystem, PoliceVehicle, PoliceSirenAudio } from './police.js';
+import { PoliceSystem, PoliceVehicle, PoliceOfficer, PoliceSirenAudio, createPoliceOfficerMesh } from './police.js';
 
 // Pre-allocated singleton spatial hash grid broadphase (40x40 cells covering 600m world)
 export const spatialGrid = new SpatialGrid(CONFIG.GRID.WORLD_HALF_SIZE, CONFIG.GRID.CELL_SIZE);
@@ -268,6 +268,11 @@ export function initGameAPI(context) {
                     return engineContext.shootWeapon();
                 }
                 return null;
+            },
+            resetWeaponCooldown: () => {
+                if (typeof engineContext.resetWeaponCooldown === 'function') {
+                    engineContext.resetWeaponCooldown();
+                }
             }
         },
 
@@ -316,7 +321,13 @@ export function initGameAPI(context) {
                 isSirenActive: engineContext.policeSystem.isSirenActive(),
                 crimeCount: engineContext.policeSystem.crimeHistory.length
             } : null),
-            triggerCrime: (type, pos) => (engineContext.policeSystem && engineContext.policeSystem.triggerCrime(type, pos))
+            triggerCrime: (type, pos) => (engineContext.policeSystem && engineContext.policeSystem.triggerCrime(type, pos)),
+            spawnPoliceCar: (pos) => (engineContext.policeSystem && engineContext.policeSystem.spawnPoliceCar(pos)),
+            getOfficers: () => (engineContext.policeSystem ? engineContext.policeSystem.officers : []),
+            getOfficerCount: () => (engineContext.policeSystem ? engineContext.policeSystem.officers.length : 0),
+            getAliveOfficerCount: () => (engineContext.policeSystem ? engineContext.policeSystem.officers.filter(o => !o.isDead).length : 0),
+            spawnOfficer: (pos, cruiser) => (engineContext.policeSystem && engineContext.policeSystem.spawnOfficer(pos, cruiser)),
+            killOfficer: (off) => (engineContext.policeSystem && engineContext.policeSystem.killOfficer(off))
         },
 
         smoke: {
@@ -450,5 +461,7 @@ export {
     TireSmokeSystem,
     PoliceSystem,
     PoliceVehicle,
-    PoliceSirenAudio
+    PoliceOfficer,
+    PoliceSirenAudio,
+    createPoliceOfficerMesh
 };

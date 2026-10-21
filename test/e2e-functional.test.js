@@ -700,6 +700,20 @@ async function runFunctionalTests(options = {}) {
         distPostRaf >= 0.5 && distPostRaf <= 5.0,
         `Exit position must remain safely placed beside vehicle across animation frames (0.5m - 5.0m), was ${distPostRaf.toFixed(2)}m`
       );
+
+      // Park disembarked vehicle safely back at its spawn zone so it does not bottleneck AI traffic in downstream tests
+      await harness.evaluate(() => {
+        const v = window.__GAME__.vehicles.getPlayerVehicle();
+        if (v) {
+          v.position.set(-118, 0, 66);
+          if (v.lastSafePosition) v.lastSafePosition.set(-118, 0, 66);
+          v.speed = 0;
+          v.velocity.set(0, 0);
+          v.yaw = 0;
+          if (v.mesh) v.mesh.position.set(-118, 0, 66);
+          window.__GAME__.player.setPosition(-120, 0, 66);
+        }
+      });
     });
 
     // ------------------------------------------------------------------------
@@ -718,9 +732,9 @@ async function runFunctionalTests(options = {}) {
         });
       });
 
-      // Step simulation for 300 ticks (5 seconds at 60Hz)
+      // Step simulation for 360 ticks (6 seconds at 60Hz)
       await harness.evaluate(() => {
-        for (let i = 0; i < 300; i++) {
+        for (let i = 0; i < 360; i++) {
           window.__GAME__.simulation.step(1 / 60);
         }
       });
@@ -1719,6 +1733,96 @@ async function runFunctionalTests(options = {}) {
       assertEqual(policeReport.clearedWanted, 0, 'Wanted level must clear to 0');
       assertEqual(policeReport.clearedPoliceCount, 0, 'Police cars must despawn on cleared wanted level');
       assertEqual(policeReport.clearedHudVisible, false, 'Wanted HUD must hide when cleared');
+    });
+
+    // ------------------------------------------------------------------------
+    // Test 26: Armed Police Officers & Increasing Stars on Officer Kill
+    // ------------------------------------------------------------------------
+    await ctx.test('Police Officers: Armed officers deploy on foot, shoot at player, and killing officers grants additional wanted stars', async () => {
+      const officerReport = await harness.evaluate(() => {
+        // Clear any previous state
+        window.__GAME__.police.clearWantedLevel();
+
+        // 1. Trigger wanted level 1
+        window.__GAME__.police.setWantedLevel(1);
+
+        // Position player on foot at (0, 0, 0)
+        window.__GAME__.player.setPosition(0, 0, 0);
+        if (window.__GAME__.player.getState() === 'IN_VEHICLE') {
+          window.__GAME__.actions.tryExitVehicle();
+        }
+
+        // Spawn a police cruiser close enough to deploy officers (< 30m)
+        const cruiser = window.__GAME__.police.spawnPoliceCar({ x: 12, z: 12 });
+        cruiser.position.set(12, 0, 12);
+
+        // Step simulation so officer disembarks
+        window.__GAME__.simulation.step(1 / 60);
+
+        const officers = window.__GAME__.police.getOfficers();
+        const hasOfficer = officers.length > 0;
+        const officer1 = officers[0];
+        const isOfficerTag = officer1 ? !!officer1.isPoliceOfficer : false;
+        const hasPistol = officer1 && officer1.mesh ? !!officer1.mesh.getObjectByName('officer_pistol') : false;
+
+        // Force officer shoot timer to 0 and step to verify officer shooting at player
+        if (officer1) officer1.shootCooldown = 0;
+        
+        for (let i = 0; i < 10; i++) {
+          window.__GAME__.simulation.step(1 / 60);
+        }
+
+        const wantedBeforeKill = window.__GAME__.police.getWantedLevel();
+
+        // 2. Kill the police officer using player weapon
+        // Aim camera directly at officer
+        const camera = window.__GAME__.raw.camera;
+        camera.position.set(officer1.position.x, officer1.position.y + 1.2, officer1.position.z + 2.5);
+        camera.lookAt(officer1.position.x, officer1.position.y + 1.0, officer1.position.z);
+        camera.updateMatrixWorld(true);
+
+        if (window.__GAME__.actions.resetWeaponCooldown) {
+          window.__GAME__.actions.resetWeaponCooldown();
+        }
+        window.__GAME__.actions.selectWeapon('Pistol');
+        window.__GAME__.actions.shootWeapon();
+
+        // Step simulation for kill processing and blood pool expansion
+        for (let i = 0; i < 15; i++) {
+          window.__GAME__.simulation.step(1 / 60);
+        }
+
+        const officerDead = officer1 ? officer1.isDead : false;
+        const wantedAfterKill = window.__GAME__.police.getWantedLevel();
+        const officerRotX = officer1 && officer1.mesh ? officer1.mesh.rotation.x : 0;
+
+        // 3. Cleanup
+        window.__GAME__.police.clearWantedLevel();
+        const clearedOfficerCount = window.__GAME__.police.getOfficerCount();
+
+        return {
+          hasOfficer,
+          isOfficerTag,
+          hasPistol,
+          wantedBeforeKill,
+          officerDead,
+          wantedAfterKill,
+          officerRotX,
+          clearedOfficerCount
+        };
+      });
+
+      assertEqual(officerReport.hasOfficer, true, 'Police cruiser must deploy armed police officer on foot');
+      assertEqual(officerReport.isOfficerTag, true, 'Officer must be tagged isPoliceOfficer');
+      assertEqual(officerReport.hasPistol, true, 'Police officer mesh must have drawn service pistol');
+      assertEqual(officerReport.wantedBeforeKill, 1, 'Initial wanted level before kill is 1');
+      assertEqual(officerReport.officerDead, true, 'Officer must die when shot by player');
+      assert(Math.abs(officerReport.officerRotX - Math.PI / 2) < 0.05, 'Dead officer must fall flat on ground');
+      assert(
+        officerReport.wantedAfterKill > officerReport.wantedBeforeKill,
+        `Killing a police officer MUST increase wanted stars (before=${officerReport.wantedBeforeKill}, after=${officerReport.wantedAfterKill})`
+      );
+      assertEqual(officerReport.clearedOfficerCount, 0, 'Officers must despawn when wanted level clears');
     });
 
   } finally {
