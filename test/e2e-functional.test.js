@@ -1534,6 +1534,193 @@ async function runFunctionalTests(options = {}) {
       assertEqual(radioReport.exitedBgmResumed, true, 'Background music must resume when exiting vehicle');
     });
 
+    // ------------------------------------------------------------------------
+    // Test 24: Vehicle Tire Smoke on Space Drift
+    // ------------------------------------------------------------------------
+    await ctx.test('Vehicles: Tires emit billowing smoke when pressing space to drift', async () => {
+      const smokeReport = await harness.evaluate(() => {
+        // Ensure player is inside vehicle
+        if (window.__GAME__.player.getState() !== 'IN_VEHICLE') {
+          window.__GAME__.actions.tryEnterVehicle();
+        }
+        const car = window.__GAME__.player.getVehicle() || window.__GAME__.vehicles.getPlayerVehicle();
+        
+        // Reset smoke pool for clean test baseline
+        window.__GAME__.smoke.reset();
+        const initialSpawnCount = window.__GAME__.smoke.getTotalSpawned();
+        const initialActiveCount = window.__GAME__.smoke.getActiveCount();
+
+        // 1. Move vehicle forward with throttle
+        car.position.set(0, 0, 0);
+        car.yaw = 0;
+        car.speed = 14.0;
+        car.velocity.set(0, -14.0);
+
+        // Press space to drift (handbrake) while moving
+        window.__GAME__.actions.setVehicleInput({ w: true, a: false, s: false, d: false, space: true });
+
+        // Step simulation 20 frames
+        for (let i = 0; i < 20; i++) {
+          window.__GAME__.simulation.step(1 / 60);
+        }
+
+        const driftingActiveCount = window.__GAME__.smoke.getActiveCount();
+        const driftingTotalSpawned = window.__GAME__.smoke.getTotalSpawned();
+        const activeParticles = window.__GAME__.smoke.getActiveParticles().map(p => ({
+          x: p.mesh.position.x,
+          y: p.mesh.position.y,
+          z: p.mesh.position.z,
+          scale: p.mesh.scale.x,
+          opacity: p.mesh.material.opacity,
+          visible: p.mesh.visible
+        }));
+
+        // 2. Release space and stop vehicle
+        window.__GAME__.actions.setVehicleInput({ w: false, a: false, s: false, d: false, space: false });
+        car.speed = 0;
+        car.velocity.set(0, 0);
+
+        // Step 60 frames so active smoke particles fade away
+        for (let i = 0; i < 60; i++) {
+          window.__GAME__.simulation.step(1 / 60);
+        }
+
+        const stoppedActiveCount = window.__GAME__.smoke.getActiveCount();
+
+        return {
+          initialActiveCount,
+          driftingActiveCount,
+          driftingTotalSpawned: driftingTotalSpawned - initialSpawnCount,
+          stoppedActiveCount,
+          sampleParticle: activeParticles.length > 0 ? activeParticles[0] : null
+        };
+      });
+
+      assertEqual(smokeReport.initialActiveCount, 0, 'No tire smoke before drifting');
+      assert(smokeReport.driftingActiveCount > 0, `Tires must emit active smoke particles while drifting (got ${smokeReport.driftingActiveCount})`);
+      assert(smokeReport.driftingTotalSpawned >= 4, `At least 4 smoke puffs must spawn during drift (got ${smokeReport.driftingTotalSpawned})`);
+      assert(smokeReport.sampleParticle !== null, 'Active smoke particle must exist');
+      assert(smokeReport.sampleParticle.visible, 'Active smoke particle must be visible');
+      assert(smokeReport.sampleParticle.opacity > 0 && smokeReport.sampleParticle.opacity <= 1.0, 'Smoke opacity must be between 0 and 1');
+      assert(smokeReport.sampleParticle.scale > 0, 'Smoke particle must have positive scale');
+      assertEqual(smokeReport.stoppedActiveCount, 0, 'All tire smoke must dissipate after stopping');
+    });
+
+    // ------------------------------------------------------------------------
+    // Test 25: Police System (Shooting & Vehicular Homicide Crimes)
+    // ------------------------------------------------------------------------
+    await ctx.test('Police System: Shooting someone or running someone over with car triggers wanted level & police pursuit', async () => {
+      const policeReport = await harness.evaluate(() => {
+        // Reset police state to clean baseline
+        window.__GAME__.police.clearWantedLevel();
+        const initialWanted = window.__GAME__.police.getWantedLevel();
+        const initialPoliceCount = window.__GAME__.police.getPoliceCount();
+        const hudEl = document.getElementById('wanted-hud');
+        const initialHudVisible = hudEl ? hudEl.style.display !== 'none' : false;
+
+        // 1. Commit Crime 1: Shoot a pedestrian
+        const peds = window.__GAME__.pedestrians.getAll().filter(p => !p.isDead);
+        const pedTarget = peds[0];
+        const camera = window.__GAME__.raw.camera;
+        camera.position.set(pedTarget.position.x, pedTarget.position.y + 1.7, pedTarget.position.z + 4.0);
+        camera.lookAt(pedTarget.position.x, pedTarget.position.y + 1.0, pedTarget.position.z);
+        camera.updateMatrixWorld(true);
+
+        window.__GAME__.actions.selectWeapon('Pistol');
+        window.__GAME__.actions.shootWeapon();
+
+        // Step a frame for crime dispatch
+        window.__GAME__.simulation.step(1 / 60);
+
+        const shotWanted = window.__GAME__.police.getWantedLevel();
+        const shotPoliceCount = window.__GAME__.police.getPoliceCount();
+        const shotHudVisible = hudEl ? hudEl.style.display !== 'none' : false;
+        const shotState = window.__GAME__.police.getState();
+
+        // 2. Verify Police Cruiser spawned and pursues player
+        const policeCars = window.__GAME__.police.getPoliceCars();
+        const pCar = policeCars.length > 0 ? policeCars[0] : null;
+        const hasPoliceCar = !!pCar;
+        const isPoliceTag = pCar ? !!pCar.isPolice : false;
+        const hasLightbar = pCar ? !!pCar.lightbarGroup : false;
+        const hasDoorDecals = pCar && pCar.getMesh() ? !!pCar.getMesh().getObjectByName('police_door_left') : false;
+
+        // Snapshot police car initial position and step 30 frames to verify pursuit towards player
+        const pCarStartPos = pCar ? { x: pCar.position.x, z: pCar.position.z } : null;
+        for (let i = 0; i < 30; i++) {
+          window.__GAME__.simulation.step(1 / 60);
+        }
+        const pCarEndPos = pCar ? { x: pCar.position.x, z: pCar.position.z } : null;
+        const pCarMoved = (pCarStartPos && pCarEndPos) 
+          ? Math.hypot(pCarEndPos.x - pCarStartPos.x, pCarEndPos.z - pCarStartPos.z)
+          : 0;
+
+        // 3. Commit Crime 2: Vehicular Homicide (Run someone over with player's car)
+        if (window.__GAME__.player.getState() !== 'IN_VEHICLE') {
+          window.__GAME__.actions.tryEnterVehicle();
+        }
+        const playerCar = window.__GAME__.player.getVehicle() || window.__GAME__.vehicles.getPlayerVehicle();
+        const livePeds = window.__GAME__.pedestrians.getAll().filter(p => !p.isDead && p.state !== 'ragdoll');
+        const pedToRunOver = livePeds[0];
+
+        // Impact pedestrian with vehicle at 15 m/s
+        playerCar.position.set(-50, 0, -50);
+        playerCar.yaw = 0;
+        playerCar.speed = 15.0;
+        playerCar.velocity.set(0, -15.0);
+        pedToRunOver.mesh.position.set(-50, 0, -51.0);
+
+        window.__GAME__.simulation.step(1 / 60);
+
+        const vehicularWanted = window.__GAME__.police.getWantedLevel();
+        const vehicularState = window.__GAME__.police.getState();
+
+        // Cleanup
+        window.__GAME__.police.clearWantedLevel();
+        const clearedWanted = window.__GAME__.police.getWantedLevel();
+        const clearedPoliceCount = window.__GAME__.police.getPoliceCount();
+        const clearedHudVisible = hudEl ? hudEl.style.display !== 'none' : false;
+
+        return {
+          initialWanted,
+          initialPoliceCount,
+          initialHudVisible,
+          shotWanted,
+          shotPoliceCount,
+          shotHudVisible,
+          shotLastCrime: shotState ? shotState.lastCrime : null,
+          hasPoliceCar,
+          isPoliceTag,
+          hasLightbar,
+          hasDoorDecals,
+          pCarMoved,
+          vehicularWanted,
+          vehicularLastCrime: vehicularState ? vehicularState.lastCrime : null,
+          clearedWanted,
+          clearedPoliceCount,
+          clearedHudVisible
+        };
+      });
+
+      assertEqual(policeReport.initialWanted, 0, 'Initial wanted level must be 0');
+      assertEqual(policeReport.initialPoliceCount, 0, 'No police cars initial');
+      assertEqual(policeReport.initialHudVisible, false, 'Wanted HUD hidden initially');
+      assert(policeReport.shotWanted >= 1, `Wanted level must increase when shooting someone (got ${policeReport.shotWanted})`);
+      assert(policeReport.shotPoliceCount >= 1, `Police car must be dispatched on shooting (got ${policeReport.shotPoliceCount})`);
+      assertEqual(policeReport.shotHudVisible, true, 'Wanted HUD must become visible after shooting');
+      assertEqual(policeReport.shotLastCrime, 'shooting', 'Last crime must be shooting');
+      assertEqual(policeReport.hasPoliceCar, true, 'Police cruiser instance must exist');
+      assertEqual(policeReport.isPoliceTag, true, 'Police vehicle must be tagged isPolice');
+      assertEqual(policeReport.hasLightbar, true, 'Police car must have roof emergency lightbar');
+      assertEqual(policeReport.hasDoorDecals, true, 'Police car must have white door decals');
+      assert(policeReport.pCarMoved > 0.1, `Police car must actively drive/pursue towards player (moved ${policeReport.pCarMoved.toFixed(2)}m)`);
+      assert(policeReport.vehicularWanted >= 2, `Wanted level must increase when running someone over (got ${policeReport.vehicularWanted})`);
+      assertEqual(policeReport.vehicularLastCrime, 'vehicular_homicide', 'Last crime must be vehicular_homicide');
+      assertEqual(policeReport.clearedWanted, 0, 'Wanted level must clear to 0');
+      assertEqual(policeReport.clearedPoliceCount, 0, 'Police cars must despawn on cleared wanted level');
+      assertEqual(policeReport.clearedHudVisible, false, 'Wanted HUD must hide when cleared');
+    });
+
   } finally {
     console.log('\n[Teardown] Shutting down browser session...');
     await harness.close();

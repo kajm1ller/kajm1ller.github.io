@@ -467,6 +467,60 @@
             min-width: 32px;
             text-align: right;
         }
+        /* Police & Wanted System HUD */
+        #wanted-hud {
+            display: none;
+            position: absolute;
+            top: 85px;
+            right: 10px;
+            background: rgba(10, 15, 25, 0.88);
+            border: 2px solid rgba(239, 68, 68, 0.7);
+            border-radius: 8px;
+            padding: 8px 16px;
+            color: white;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            z-index: 100;
+            box-shadow: 0 0 15px rgba(239, 68, 68, 0.35);
+            pointer-events: none;
+            user-select: none;
+        }
+        #wanted-stars {
+            font-size: 26px;
+            letter-spacing: 4px;
+            line-height: 1;
+            margin-bottom: 4px;
+        }
+        .wanted-star {
+            color: rgba(255, 255, 255, 0.2);
+            transition: color 0.15s, text-shadow 0.15s;
+        }
+        .wanted-star.active {
+            color: #ffd700;
+            text-shadow: 0 0 8px #ffd700, 0 0 16px #ff8800;
+        }
+        #wanted-title {
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            color: #ef4444;
+            text-transform: uppercase;
+        }
+        #busted-overlay {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 72px;
+            font-weight: 900;
+            font-family: Impact, Arial Black, sans-serif;
+            color: #dc2626;
+            text-shadow: 0 0 25px #000000, 0 0 50px #ef4444;
+            letter-spacing: 8px;
+            z-index: 250;
+            pointer-events: none;
+        }
     </style>
 </head>
 <body>
@@ -482,6 +536,18 @@
     <div id="ped-talk-indicator"><span class="key-hint">(E) </span>Talk</div>
     <div id="ped-dialog"><div id="ped-dialog-speaker">Pedestrian</div><div id="ped-dialog-text"></div></div>
     <div id="car-speed-hud">Speed: <span id="car-speed-val">0</span> mph</div>
+    <!-- Police & Wanted System HUD -->
+    <div id="wanted-hud">
+        <div id="wanted-stars">
+            <span class="wanted-star" data-star="1">★</span>
+            <span class="wanted-star" data-star="2">★</span>
+            <span class="wanted-star" data-star="3">★</span>
+            <span class="wanted-star" data-star="4">★</span>
+            <span class="wanted-star" data-star="5">★</span>
+        </div>
+        <div id="wanted-title">POLICE PURSUIT</div>
+    </div>
+    <div id="busted-overlay">BUSTED</div>
     <!-- In-Car Radio HUD (Bottom-Left) -->
     <div id="radio-ui">
         <div id="radio-header">
@@ -540,7 +606,10 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             TrafficManager,
             AnothermapoLoader,
             ensureCivicHUD,
-            updateCivicHUD
+            updateCivicHUD,
+            TireSmokeSystem,
+            PoliceSystem,
+            PoliceVehicle
         } from './js/game/main.js';
 
         // ============ SCENE SETUP ============
@@ -749,6 +818,12 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
 
         // Immediately sync initial proximity HUD so #car-indicator is shown on startup
         playerController.update(1 / 60, spatialGrid, roadNetwork);
+
+        // Tire smoke drifting particle system
+        const tireSmokeSystem = new TireSmokeSystem(scene, 80);
+
+        // Police system (triggers on shooting or vehicular homicide)
+        const policeSystem = new PoliceSystem(scene, spatialGrid, roadNetwork, null);
         
         // ============ FIRST-PERSON CONTROLS ============
         let fpCameraYaw = 0;
@@ -1326,6 +1401,10 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                 _brakeFilterNode.connect(_brakeGainNode);
                 _brakeGainNode.connect(_carAudioCtx.destination);
                 _brakeNoiseNode.start();
+
+                if (policeSystem) {
+                    policeSystem.setAudioContext(_carAudioCtx);
+                }
             } catch (e) {
                 _carAudioCtx = null;
             }
@@ -2289,6 +2368,17 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             );
             ped.mesh.position.y = Math.max(0.35, ped.mesh.position.y + 0.35);
             ped.mesh.rotation.y = Math.atan2(fwdX, fwdZ);
+
+            // Report vehicular homicide crime to Police System
+            const isPlayerCar = !!(vehicle && (
+                vehicle === playerVehicle || 
+                vehicle.isPlayer || 
+                (playerController && playerController.getVehicle() === vehicle)
+            ));
+            if (isPlayerCar && policeSystem) {
+                policeSystem.triggerCrime('vehicular_homicide', ped.mesh.position);
+            }
+
             return true;
         }
 
@@ -2537,6 +2627,9 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                                 killPedestrian(ped);
                                 hitCount++;
                             }
+                            if (policeSystem) {
+                                policeSystem.triggerCrime('shooting', ped.mesh.position);
+                            }
                             if (!weapon.explosive) break;
                         }
                     }
@@ -2590,6 +2683,9 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                         ped.hp -= proj.damage;
                         if (ped.hp <= 0) {
                             killPedestrian(ped);
+                        }
+                        if (policeSystem) {
+                            policeSystem.triggerCrime('shooting', ped.mesh.position);
                         }
                         hit = true;
                         if (!proj.explosive) break;
@@ -3416,6 +3512,20 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             updatePedestrians(dt);
             updateProjectiles(dt);
 
+            // Update drifting tire smoke particles (space handbrake / skidding)
+            const activeCar = (playerController.getState() === 'IN_VEHICLE') 
+                ? (playerController.getVehicle() || playerVehicle) 
+                : null;
+            const isSpaceDrifting = !!(playerController && playerController.keys && playerController.keys.space);
+            tireSmokeSystem.update(dt, activeCar, isSpaceDrifting);
+
+            // Update police pursuit vehicles, sirens & wanted state
+            if (policeSystem) {
+                const isPlayerDriving = (playerController.getState() === 'IN_VEHICLE');
+                const targetPos = (isPlayerDriving && activeCar) ? activeCar.position : myPosition;
+                policeSystem.update(dt, targetPos, isPlayerDriving, spatialGrid, roadNetwork, camera.position);
+            }
+
             // Sync dynamic entities into spatial grid (zero-allocation)
             spatialGrid.clearDynamic();
             if (playerController.getState() === 'ON_FOOT') {
@@ -3425,6 +3535,12 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             for (let i = 0, len = trafficVehicles.length; i < len; i++) {
                 const tv = trafficVehicles[i];
                 spatialGrid.insertDynamic(tv.id, tv.position.x, tv.position.z, tv.radius, tv);
+            }
+            if (policeSystem && policeSystem.policeCars) {
+                for (let i = 0, len = policeSystem.policeCars.length; i < len; i++) {
+                    const pc = policeSystem.policeCars[i];
+                    spatialGrid.insertDynamic(pc.id, pc.position.x, pc.position.z, pc.radius, pc);
+                }
             }
         }
 
@@ -3527,7 +3643,17 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             hitPedestrianWithVehicle,
             getCurrentWeapon: () => weapons[currentWeaponIndex],
             getLastPlayedSound: () => lastPlayedSound,
-            getShotCount: () => totalShotCount
+            getShotCount: () => totalShotCount,
+            tireSmokeSystem,
+            policeSystem,
+            getWantedLevel: () => (policeSystem ? policeSystem.wantedLevel : 0),
+            setWantedLevel: (lvl, pos) => (policeSystem && policeSystem.setWantedLevel(lvl, pos)),
+            clearWantedLevel: () => (policeSystem && policeSystem.clearWantedLevel()),
+            triggerCrime: (type, pos) => (policeSystem && policeSystem.triggerCrime(type, pos)),
+            getPoliceCars: () => (policeSystem ? policeSystem.policeCars : []),
+            getTireSmokeCount: () => (tireSmokeSystem ? tireSmokeSystem.totalSpawned : 0),
+            getActiveTireSmokeCount: () => (tireSmokeSystem ? tireSmokeSystem.getActiveCount() : 0),
+            tireSmokeParticles: tireSmokeSystem ? tireSmokeSystem.pool : []
         });
 
         // Ensure player simulation is active for headless test execution

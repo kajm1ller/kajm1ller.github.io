@@ -35,6 +35,8 @@ import {
 } from './traffic.js';
 import { InstancedVehicleFleet, mergeBufferGeometries } from './instancedFleet.js';
 import { AnothermapoLoader, OSMRoadNetwork, ANOTHERMAPO_CONFIG } from './mapLoader.js';
+import { TireSmokeSystem } from './tireSmoke.js';
+import { PoliceSystem, PoliceVehicle, PoliceSirenAudio } from './police.js';
 
 // Pre-allocated singleton spatial hash grid broadphase (40x40 cells covering 600m world)
 export const spatialGrid = new SpatialGrid(CONFIG.GRID.WORLD_HALF_SIZE, CONFIG.GRID.CELL_SIZE);
@@ -299,6 +301,32 @@ export function initGameAPI(context) {
             setVolume: (v) => (typeof engineContext.radioSetVolume === 'function' ? engineContext.radioSetVolume(v) : null)
         },
 
+        police: {
+            getWantedLevel: () => (engineContext.policeSystem ? engineContext.policeSystem.wantedLevel : 0),
+            setWantedLevel: (lvl, pos) => (engineContext.policeSystem && engineContext.policeSystem.setWantedLevel(lvl, pos)),
+            clearWantedLevel: () => (engineContext.policeSystem && engineContext.policeSystem.clearWantedLevel()),
+            getPoliceCars: () => (engineContext.policeSystem ? engineContext.policeSystem.policeCars : []),
+            getPoliceCount: () => (engineContext.policeSystem ? engineContext.policeSystem.policeCars.length : 0),
+            getState: () => (engineContext.policeSystem ? {
+                wantedLevel: engineContext.policeSystem.wantedLevel,
+                isPursuing: engineContext.policeSystem.policeCars.length > 0,
+                isEvading: engineContext.policeSystem.isEvading,
+                isBusted: engineContext.policeSystem.isBusted,
+                lastCrime: engineContext.policeSystem.lastCrimeType,
+                isSirenActive: engineContext.policeSystem.isSirenActive(),
+                crimeCount: engineContext.policeSystem.crimeHistory.length
+            } : null),
+            triggerCrime: (type, pos) => (engineContext.policeSystem && engineContext.policeSystem.triggerCrime(type, pos))
+        },
+
+        smoke: {
+            getActiveParticles: () => (engineContext.tireSmokeSystem ? engineContext.tireSmokeSystem.getActiveParticles() : []),
+            getActiveCount: () => (engineContext.tireSmokeSystem ? engineContext.tireSmokeSystem.getActiveCount() : 0),
+            getTotalSpawned: () => (engineContext.tireSmokeSystem ? engineContext.tireSmokeSystem.totalSpawned : 0),
+            isEmitting: () => (engineContext.tireSmokeSystem ? engineContext.tireSmokeSystem.isEmitting : false),
+            reset: () => (engineContext.tireSmokeSystem && engineContext.tireSmokeSystem.reset())
+        },
+
         simulation: {
             isPaused: () => isPaused,
             setPaused: (paused) => {
@@ -418,5 +446,9 @@ export {
     mergeBufferGeometries,
     AnothermapoLoader,
     OSMRoadNetwork,
-    ANOTHERMAPO_CONFIG
+    ANOTHERMAPO_CONFIG,
+    TireSmokeSystem,
+    PoliceSystem,
+    PoliceVehicle,
+    PoliceSirenAudio
 };
