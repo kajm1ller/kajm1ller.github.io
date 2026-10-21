@@ -386,7 +386,7 @@ export class TrafficAgent {
 
     update(dt, spatialGrid, roadNetwork, intersectionLocks, playerVehicle = null) {
         if (this.vehicle.driverDead) {
-            this.vehicle.setInputs(0, 0, 0.4, false);
+            this.vehicle.setInputs(0, 0, 0.9, false);
             this.vehicle.update(dt, null);
             return;
         }

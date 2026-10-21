@@ -1178,6 +1178,22 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
         backgroundMusic.preload = 'auto';
         let isBackgroundMusicActive = true;
 
+        // ============ POLICE CHASE MUSIC ============
+        // While the police are after the player (wanted level > 0), all other music
+        // (background track + car radio) is cut off. PoliceEncounter1.mp3 loops for the
+        // whole pursuit, and ActiveShooter.mp3 joins it 2 seconds into the track.
+        const policeChaseMusic = new Audio('/media/PoliceEncounter1.mp3');
+        policeChaseMusic.loop = true;
+        policeChaseMusic.volume = 0.6;
+        policeChaseMusic.preload = 'auto';
+        const activeShooterSound = new Audio('/media/ActiveShooter.mp3');
+        activeShooterSound.loop = false;
+        activeShooterSound.volume = 0.6;
+        activeShooterSound.preload = 'auto';
+        const ACTIVE_SHOOTER_DELAY = 2.0; // seconds into PoliceEncounter1 before ActiveShooter starts
+        let isPoliceChaseMusicActive = false;
+        let hasActiveShooterStarted = false; // once per police call
+
         // ============ IN-CAR RADIO SYSTEM (/media/radio) ============
         const RADIO_TRACKS = [
             { id: 'hot_in_herre', title: 'Hot In Herre', file: '/media/radio/Hot_In_Herre.mp3' },
@@ -1209,6 +1225,12 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
 
         function ensureBackgroundMusicPlaying() {
             if (!backgroundMusic.loop) backgroundMusic.loop = true;
+            // Police chase music takes over: no background music while it plays
+            if (isPoliceChaseMusicActive) {
+                isBackgroundMusicActive = false;
+                if (!backgroundMusic.paused) backgroundMusic.pause();
+                return;
+            }
             // The background music stops when the radio starts
             if (isRadioPlaying()) {
                 isBackgroundMusicActive = false;
@@ -1263,7 +1285,12 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             if (!backgroundMusic.paused) {
                 backgroundMusic.pause();
             }
-            radioAudio.play().catch(() => {});
+            if (isPoliceChaseMusicActive) {
+                // Radio stays silent while the police chase music is playing
+                radioAudio.pause();
+            } else {
+                radioAudio.play().catch(() => {});
+            }
             updateRadioUI();
         }
 
@@ -1339,6 +1366,50 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             // Background music resumes when exiting vehicle
             ensureBackgroundMusicPlaying();
         }
+
+        function resumeNormalMusic() {
+            // Resume the radio (if in a car and not user-paused), else background music
+            if (radioState.isInCar && !radioState.isUserPaused) {
+                playRadioCurrentTrack();
+            } else {
+                ensureBackgroundMusicPlaying();
+            }
+        }
+
+        function setPoliceChaseMusic(isWanted) {
+            if (isWanted) {
+                if (isPoliceChaseMusicActive) return;
+                isPoliceChaseMusicActive = true;
+                hasActiveShooterStarted = false;
+                // Cut off background music and the car radio
+                isBackgroundMusicActive = false;
+                if (!backgroundMusic.paused) backgroundMusic.pause();
+                if (!radioAudio.paused) radioAudio.pause();
+                activeShooterSound.pause();
+                activeShooterSound.currentTime = 0;
+                policeChaseMusic.currentTime = 0;
+                policeChaseMusic.play().catch(() => {});
+            } else if (isPoliceChaseMusicActive) {
+                // Cops stopped looking: stop both tracks and bring normal music back
+                isPoliceChaseMusicActive = false;
+                hasActiveShooterStarted = false;
+                policeChaseMusic.pause();
+                policeChaseMusic.currentTime = 0;
+                activeShooterSound.pause();
+                activeShooterSound.currentTime = 0;
+                resumeNormalMusic();
+            }
+        }
+
+        // Start ActiveShooter.mp3 once PoliceEncounter1.mp3 is 2 seconds in
+        policeChaseMusic.addEventListener('timeupdate', () => {
+            if (!isPoliceChaseMusicActive || hasActiveShooterStarted) return;
+            if (policeChaseMusic.currentTime >= ACTIVE_SHOOTER_DELAY) {
+                hasActiveShooterStarted = true;
+                activeShooterSound.currentTime = 0;
+                activeShooterSound.play().catch(() => {});
+            }
+        });
 
         function getRadioState() {
             return {
@@ -2603,14 +2674,19 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             if (!vehicle.mesh) return;
 
             const isFront = (windowType === 'front');
-            const winName = isFront ? 'windshield' : 'rear_glass';
+            const isSide = (windowType === 'left' || windowType === 'right');
+            const winName = isSide
+                ? (windowType === 'left' ? 'left_window_glass' : 'right_window_glass')
+                : (isFront ? 'windshield' : 'rear_glass');
             const winMesh = vehicle.mesh.getObjectByName(winName);
             if (!winMesh) return;
 
             let bloodDecal = winMesh.getObjectByName('window_blood_decal');
             if (!bloodDecal) {
                 const tex = getWindowBloodTexture();
-                const decalGeo = new THREE.PlaneGeometry(1.68, isFront ? 0.48 : 0.42);
+                const decalGeo = isSide
+                    ? new THREE.PlaneGeometry(1.7, 0.38)
+                    : new THREE.PlaneGeometry(1.68, isFront ? 0.48 : 0.42);
                 const decalMat = new THREE.MeshBasicMaterial({
                     map: tex,
                     transparent: true,
@@ -2620,7 +2696,14 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                 });
                 bloodDecal = new THREE.Mesh(decalGeo, decalMat);
                 bloodDecal.name = 'window_blood_decal';
-                bloodDecal.position.set(0, 0, 0.035);
+                if (isSide) {
+                    // Side glass is thin along X: face the decal outward
+                    const outward = (windowType === 'left') ? -1 : 1;
+                    bloodDecal.rotation.y = outward * Math.PI / 2;
+                    bloodDecal.position.set(outward * 0.035, 0, 0);
+                } else {
+                    bloodDecal.position.set(0, 0, 0.035);
+                }
                 winMesh.add(bloodDecal);
             }
 
@@ -2628,7 +2711,8 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             winMesh.userData.bloodSplatterCount = (winMesh.userData.bloodSplatterCount || 0) + 1;
 
             vehicle.hasWindowBlood = true;
-            if (isFront) vehicle.hasFrontWindowBlood = true;
+            if (isSide) vehicle.hasSideWindowBlood = true;
+            else if (isFront) vehicle.hasFrontWindowBlood = true;
             else vehicle.hasBackWindowBlood = true;
 
             vehicle.bloodSplatteredWindows = vehicle.bloodSplatteredWindows || [];
@@ -2637,7 +2721,7 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             }
         }
 
-        // Kills vehicle driver when front or back window is shot
+        // Kills vehicle driver when the front, back or a side window is shot
         function killVehicleDriver(vehicle, windowType, hitWorldPos = null) {
             if (!vehicle) return;
 
@@ -2754,6 +2838,28 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                                 distance: tRear,
                                 hitPos: rayOrigin.clone().addScaledVector(rayDir, tRear)
                             };
+                        }
+                    }
+                }
+            }
+
+            // 3. Side windows (driver / passenger doors): local X = +/-0.97
+            if (Math.abs(locDirX) > 0.001) {
+                for (let side = -1; side <= 1; side += 2) {
+                    const tSide = (side * 0.97 - locOrigX) / locDirX;
+                    if (tSide > 0 && tSide <= maxRange) {
+                        const hitZ = locOrigZ + locDirZ * tSide;
+                        const hitY = locOrigY + locDirY * tSide;
+                        // Side glass spans roughly Z in [-1.25, 0.65], Y in [0.85, 1.4]
+                        if (hitZ >= -1.25 && hitZ <= 0.65 && hitY >= 0.85 && hitY <= 1.4) {
+                            if (!closestHit || tSide < closestHit.distance) {
+                                closestHit = {
+                                    vehicle: veh,
+                                    windowType: side < 0 ? 'left' : 'right',
+                                    distance: tSide,
+                                    hitPos: rayOrigin.clone().addScaledVector(rayDir, tSide)
+                                };
+                            }
                         }
                     }
                 }
@@ -4062,6 +4168,8 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                 const isPlayerDriving = (playerController.getState() === 'IN_VEHICLE');
                 const targetPos = (isPlayerDriving && activeCar) ? activeCar.position : myPosition;
                 policeSystem.update(dt, targetPos, isPlayerDriving, spatialGrid, roadNetwork, camera.position);
+                // Police called on the player -> play ActiveShooter.mp3 and cut other music
+                setPoliceChaseMusic(policeSystem.wantedLevel > 0);
             }
 
             if (damageFlashTimer > 0) {

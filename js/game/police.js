@@ -379,7 +379,7 @@ export class PoliceVehicle extends Vehicle {
         this.updateStrobes(dt);
 
         if (this.driverDead) {
-            this.setInputs(0, 0, 0.4, false);
+            this.setInputs(0, 0, 0.9, false);
             this.update(dt, spatialGrid);
             return;
         }
@@ -467,6 +467,7 @@ export class PoliceSystem {
         this.policeProjectiles = [];
 
         this.wantedCooldown = 0;
+        this.spawnTimer = 0; // seconds since the last reinforcement cruiser spawned
         this.isEvading = false;
         this.isBusted = false;
         this.bustedTimer = 0;
@@ -547,6 +548,7 @@ export class PoliceSystem {
     clearWantedLevel() {
         this.wantedLevel = 0;
         this.wantedCooldown = 0;
+        this.spawnTimer = 0;
         this.isEvading = false;
         this.bustedTimer = 0;
 
@@ -578,17 +580,54 @@ export class PoliceSystem {
         this.updateHUD();
     }
 
+    // Max simultaneous (living-driver) cruisers per star level
     _getMaxCars() {
-        if (this.wantedLevel === 0) return 0;
-        if (this.wantedLevel <= 2) return 1;
-        if (this.wantedLevel <= 4) return 2;
-        return 3;
+        const byStars = [0, 2, 3, 4, 5, 6];
+        return byStars[Math.max(0, Math.min(5, this.wantedLevel))];
     }
 
-    _syncPoliceFleet(targetPos) {
+    // Seconds between reinforcement cruisers: more stars = much more frequent
+    _getSpawnInterval() {
+        const byStars = [Infinity, 9.0, 6.5, 4.5, 3.0, 2.0];
+        return byStars[Math.max(0, Math.min(5, this.wantedLevel))];
+    }
+
+    _getLiveCarCount() {
+        let n = 0;
+        for (let i = 0; i < this.policeCars.length; i++) {
+            if (!this.policeCars[i].driverDead) n++;
+        }
+        return n;
+    }
+
+    _syncPoliceFleet(targetPos, dt = 0) {
         const maxCars = this._getMaxCars();
-        while (this.policeCars.length < maxCars) {
+        if (maxCars <= 0) return;
+
+        // Always have at least one cruiser on the way right away
+        if (this._getLiveCarCount() === 0) {
             this.spawnPoliceCar(targetPos);
+            this.spawnTimer = 0;
+        }
+
+        // Then send reinforcements on a timer that shortens as stars go up
+        this.spawnTimer += dt;
+        if (this.spawnTimer >= this._getSpawnInterval() && this._getLiveCarCount() < maxCars) {
+            this.spawnPoliceCar(targetPos);
+            this.spawnTimer = 0;
+        }
+    }
+
+    // Remove wrecked cruisers (dead driver) once they are far from the action
+    _pruneWrecks(playerPos) {
+        for (let i = this.policeCars.length - 1; i >= 0; i--) {
+            const pc = this.policeCars[i];
+            if (!pc.driverDead) continue;
+            const d = Math.hypot(playerPos.x - pc.position.x, playerPos.z - pc.position.z);
+            if (d > 150.0) {
+                if (this.scene) this.scene.remove(pc.getMesh());
+                this.policeCars.splice(i, 1);
+            }
         }
     }
 
@@ -642,20 +681,56 @@ export class PoliceSystem {
     /**
      * Spawns a police cruiser on the road network near target position.
      */
-    spawnPoliceCar(targetPos = null) {
-        const refPos = targetPos || { x: 0, z: 0 };
-        let spawnX = refPos.x + 35.0;
-        let spawnZ = refPos.z + 35.0;
-        let spawnYaw = Math.atan2(refPos.x - spawnX, refPos.z - spawnZ);
+    /**
+     * Picks a dynamic spawn point on the road network: a random road position in a ring
+     * around the player (any direction), away from the player and from other cruisers.
+     */
+    _pickSpawnPoint(refPos) {
+        const MIN_DIST = 40.0;
+        const MAX_DIST = 115.0;
+        const MIN_FROM_OTHER_CARS = 15.0;
 
-        if (this.roadNetwork && typeof this.roadNetwork.getNearestWaypoint === 'function') {
-            const wp = this.roadNetwork.getNearestWaypoint(spawnX, spawnZ);
-            if (wp) {
-                spawnX = wp.x;
-                spawnZ = wp.z;
-                spawnYaw = Math.atan2(refPos.x - spawnX, refPos.z - spawnZ);
+        const wps = this.roadNetwork && this.roadNetwork.waypoints;
+        if (wps && wps.length > 0) {
+            for (let attempt = 0; attempt < 40; attempt++) {
+                const wp = wps[(Math.random() * wps.length) | 0];
+                const d = Math.hypot(wp.x - refPos.x, wp.z - refPos.z);
+                if (d < MIN_DIST || d > MAX_DIST) continue;
+
+                let tooClose = false;
+                for (let i = 0; i < this.policeCars.length; i++) {
+                    const pc = this.policeCars[i];
+                    if (Math.hypot(wp.x - pc.position.x, wp.z - pc.position.z) < MIN_FROM_OTHER_CARS) {
+                        tooClose = true;
+                        break;
+                    }
+                }
+                if (tooClose) continue;
+                return { x: wp.x, z: wp.z };
             }
         }
+
+        // Fallback: random direction and distance, snapped to the nearest road
+        const angle = Math.random() * Math.PI * 2;
+        const dist = MIN_DIST + Math.random() * (MAX_DIST - MIN_DIST) * 0.6;
+        let x = refPos.x + Math.cos(angle) * dist;
+        let z = refPos.z + Math.sin(angle) * dist;
+        if (this.roadNetwork && typeof this.roadNetwork.getNearestWaypoint === 'function') {
+            const wp = this.roadNetwork.getNearestWaypoint(x, z);
+            if (wp) {
+                x = wp.x;
+                z = wp.z;
+            }
+        }
+        return { x, z };
+    }
+
+    spawnPoliceCar(targetPos = null) {
+        const refPos = targetPos || { x: 0, z: 0 };
+        const pt = this._pickSpawnPoint(refPos);
+        let spawnX = pt.x;
+        let spawnZ = pt.z;
+        let spawnYaw = Math.atan2(refPos.x - spawnX, refPos.z - spawnZ);
 
         spawnX = Math.max(-270, Math.min(270, spawnX));
         spawnZ = Math.max(-270, Math.min(270, spawnZ));
@@ -730,7 +805,8 @@ export class PoliceSystem {
             return;
         }
 
-        this._syncPoliceFleet(playerPos);
+        this._pruneWrecks(playerPos);
+        this._syncPoliceFleet(playerPos, dt);
 
         let minDistanceToPlayer = Infinity;
         let minDistanceToCamera = Infinity;
