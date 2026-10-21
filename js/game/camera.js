@@ -66,12 +66,44 @@ export class CameraController {
         this.orbitYaw = 0;
         this.orbitPitch = 0;
 
+        // In-Vehicle First-Person Aiming (Drive-By Mode)
+        this.isAiming = false;
+        this.aimTransition = 0.0; // 0.0 = 3rd person chase, 1.0 = 1st person cockpit
+        this.aimYaw = 0;          // Full 360 degree aim yaw in radians
+        this.aimPitch = 0;        // Vertical aim pitch in radians
+        this.cockpitOffset = new THREE.Vector3(-0.4, 1.25, 0.05); // Driver eye position in vehicle local space
+
         // Zero-allocation scratch vectors
         this._desiredPos = new THREE.Vector3();
         this._lookTarget = new THREE.Vector3();
         this._forward = new THREE.Vector3();
         this._right = new THREE.Vector3();
         this._vPos = new THREE.Vector3();
+        this._cockpitPos = new THREE.Vector3();
+        this._cockpitAimTarget = new THREE.Vector3();
+        this._blendedLookTarget = new THREE.Vector3();
+    }
+
+    /**
+     * Toggles in-vehicle first-person aiming mode.
+     * @param {boolean} aiming 
+     */
+    setAiming(aiming) {
+        if (this.isAiming !== aiming) {
+            this.isAiming = !!aiming;
+            if (this.isAiming && this.camera) {
+                // Initialize aimYaw and aimPitch smoothly from camera's current world direction
+                const dir = new THREE.Vector3();
+                this.camera.getWorldDirection(dir);
+                if (dir.lengthSq() > 0.001) {
+                    this.aimYaw = Math.atan2(-dir.x, -dir.z);
+                    this.aimPitch = Math.asin(Math.max(-0.95, Math.min(0.95, dir.y)));
+                } else if (this.targetVehicle) {
+                    this.aimYaw = typeof this.targetVehicle.getYaw === 'function' ? this.targetVehicle.getYaw() : 0;
+                    this.aimPitch = 0;
+                }
+            }
+        }
     }
 
     /**
@@ -83,6 +115,8 @@ export class CameraController {
         if (mode === CameraMode.CHASE) {
             this.mode = CameraMode.CHASE;
             this.targetVehicle = target;
+            this.isAiming = false;
+            this.aimTransition = 0.0;
 
             if (target) {
                 const vYaw = typeof target.getYaw === 'function' ? target.getYaw() : 0;
@@ -106,6 +140,8 @@ export class CameraController {
         } else {
             // Returning to FIRST_PERSON
             this.mode = CameraMode.FIRST_PERSON;
+            this.isAiming = false;
+            this.aimTransition = 0.0;
 
             // Align first-person heading with chase camera heading for seamless orientation
             if (this.targetVehicle) {
@@ -140,13 +176,24 @@ export class CameraController {
             while (this.fpYaw > Math.PI) this.fpYaw -= 2 * Math.PI;
             while (this.fpYaw < -Math.PI) this.fpYaw += 2 * Math.PI;
         } else if (this.mode === CameraMode.CHASE) {
-            // Orbit camera around car
-            this.orbitYaw -= movementX * this.mouseSensitivity;
-            this.orbitPitch -= movementY * this.mouseSensitivity;
-            this.orbitPitch = Math.max(-0.4, Math.min(0.6, this.orbitPitch));
+            if (this.isAiming || this.aimTransition > 0.05) {
+                // Full 360 degree aiming while in vehicle
+                this.aimYaw -= movementX * this.mouseSensitivity;
+                this.aimPitch -= movementY * this.mouseSensitivity;
+                this.aimPitch = Math.max(-0.85, Math.min(0.85, this.aimPitch));
 
-            while (this.orbitYaw > Math.PI) this.orbitYaw -= 2 * Math.PI;
-            while (this.orbitYaw < -Math.PI) this.orbitYaw += 2 * Math.PI;
+                // Wrap yaw to [-PI, PI] without any clamp, allowing full 360 rotation
+                while (this.aimYaw > Math.PI) this.aimYaw -= 2 * Math.PI;
+                while (this.aimYaw < -Math.PI) this.aimYaw += 2 * Math.PI;
+            } else {
+                // Orbit camera around car
+                this.orbitYaw -= movementX * this.mouseSensitivity;
+                this.orbitPitch -= movementY * this.mouseSensitivity;
+                this.orbitPitch = Math.max(-0.4, Math.min(0.6, this.orbitPitch));
+
+                while (this.orbitYaw > Math.PI) this.orbitYaw -= 2 * Math.PI;
+                while (this.orbitYaw < -Math.PI) this.orbitYaw += 2 * Math.PI;
+            }
         }
     }
 
@@ -185,12 +232,21 @@ export class CameraController {
                 return;
             }
 
+            // Smooth transition alpha: 0.0 (3rd-person chase) <-> 1.0 (1st-person cockpit aim)
+            const targetTransition = this.isAiming ? 1.0 : 0.0;
+            const transitionSpeed = 10.0; // Smooth 0.25s transition
+            const alphaStep = 1.0 - Math.exp(-dt * transitionSpeed);
+            this.aimTransition += (targetTransition - this.aimTransition) * alphaStep;
+            if (Math.abs(this.aimTransition - targetTransition) < 0.001) {
+                this.aimTransition = targetTransition;
+            }
+
             const vp = this.targetVehicle.getPosition();
             const vy = typeof this.targetVehicle.getYaw === 'function' ? this.targetVehicle.getYaw() : 0;
             const speed = typeof this.targetVehicle.getSpeed === 'function' ? this.targetVehicle.getSpeed() : 0;
 
-            // When moving forward/reverse, decay manual orbit yaw/pitch back toward 0
-            if (speed > 1.0) {
+            // When moving forward/reverse and NOT aiming, decay manual orbit yaw/pitch back toward 0
+            if (speed > 1.0 && !this.isAiming && this.aimTransition < 0.05) {
                 const orbitDecay = 1.0 - Math.exp(-dt * 2.5);
                 this.orbitYaw *= (1.0 - orbitDecay);
                 this.orbitPitch *= (1.0 - orbitDecay);
@@ -210,16 +266,12 @@ export class CameraController {
 
             const distProj = currentDist * Math.cos(effectivePitch);
 
-            // Compute desired camera position behind vehicle
+            // Compute desired camera position behind vehicle for 3rd person
             this._desiredPos.set(
                 vp.x + Math.sin(effectiveYaw) * distProj,
                 (vp.y || 0) + currentHeight,
                 vp.z + Math.cos(effectiveYaw) * distProj
             );
-
-            // Smoothly interpolate position
-            const posBeta = 1.0 - Math.exp(-dt * this.posFollowRate);
-            this.camera.position.lerp(this._desiredPos, posBeta);
 
             // Focus target on vehicle (slightly ahead when moving fast)
             const lookahead = speedRatio * 1.5;
@@ -229,7 +281,45 @@ export class CameraController {
                 vp.z - Math.cos(vy) * lookahead
             );
 
-            this.camera.lookAt(this._lookTarget);
+            if (this.aimTransition <= 0.001) {
+                // Pure Third-Person Chase View
+                const posBeta = 1.0 - Math.exp(-dt * this.posFollowRate);
+                this.camera.position.lerp(this._desiredPos, posBeta);
+                this.camera.lookAt(this._lookTarget);
+            } else {
+                // Compute First-Person Cockpit Position (Driver seat eye position)
+                const cosY = Math.cos(vy);
+                const sinY = Math.sin(vy);
+                this._cockpitPos.set(
+                    vp.x + this.cockpitOffset.x * cosY + this.cockpitOffset.z * sinY,
+                    (vp.y || 0) + this.cockpitOffset.y,
+                    vp.z - this.cockpitOffset.x * sinY + this.cockpitOffset.z * cosY
+                );
+
+                // Compute 360-degree Cockpit Aim Target
+                const cosP = Math.cos(this.aimPitch);
+                const sinP = Math.sin(this.aimPitch);
+                const aimDirX = -Math.sin(this.aimYaw) * cosP;
+                const aimDirY = sinP;
+                const aimDirZ = -Math.cos(this.aimYaw) * cosP;
+                this._cockpitAimTarget.set(
+                    this._cockpitPos.x + aimDirX * 25.0,
+                    this._cockpitPos.y + aimDirY * 25.0,
+                    this._cockpitPos.z + aimDirZ * 25.0
+                );
+
+                // Smoothstep interpolation between 3rd person and 1st person
+                const t = this.aimTransition * this.aimTransition * (3.0 - 2.0 * this.aimTransition);
+
+                // Blend camera position smoothly
+                this._desiredPos.lerp(this._cockpitPos, t);
+                const posBeta = 1.0 - Math.exp(-dt * this.posFollowRate);
+                this.camera.position.lerp(this._desiredPos, posBeta);
+
+                // Blend look target smoothly
+                this._blendedLookTarget.lerpVectors(this._lookTarget, this._cockpitAimTarget, t);
+                this.camera.lookAt(this._blendedLookTarget);
+            }
         }
     }
 }

@@ -376,6 +376,7 @@ export class Vehicle {
         // 3D Optimized Honda Civic Mesh
         const civicData = createOptimizedHondaCivic(color, id);
         this.mesh = civicData.root;
+        this.mesh.userData.vehicle = this;
         this.wheelPivots = civicData.wheelPivots;
         this.wheels = civicData.wheels;
         this.leftDoorPivot = civicData.leftDoorPivot || null;

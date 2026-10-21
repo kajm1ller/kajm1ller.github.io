@@ -181,7 +181,9 @@ export function initGameAPI(context) {
                     return engineContext.getCarAudioState();
                 }
                 return null;
-            }
+            },
+            isDriverDead: (veh) => (typeof engineContext.isVehicleDriverDead === 'function' ? engineContext.isVehicleDriverDead(veh) : (veh ? !!veh.driverDead : false)),
+            hasWindowBlood: (veh, winType) => (typeof engineContext.hasVehicleWindowBlood === 'function' ? engineContext.hasVehicleWindowBlood(veh, winType) : false)
         },
 
         actions: {
@@ -273,7 +275,23 @@ export function initGameAPI(context) {
                 if (typeof engineContext.resetWeaponCooldown === 'function') {
                     engineContext.resetWeaponCooldown();
                 }
-            }
+            },
+            setVehicleAiming: (aiming) => {
+                if (typeof engineContext.setVehicleAiming === 'function') {
+                    return engineContext.setVehicleAiming(aiming);
+                }
+            },
+            isVehicleAiming: () => (typeof engineContext.isVehicleAiming === 'function' ? engineContext.isVehicleAiming() : false),
+            getAimTransition: () => (typeof engineContext.getAimTransition === 'function' ? engineContext.getAimTransition() : 0),
+            getAimAngles: () => (typeof engineContext.getAimAngles === 'function' ? engineContext.getAimAngles() : { yaw: 0, pitch: 0 }),
+            setAimAngles: (yaw, pitch) => {
+                if (typeof engineContext.setAimAngles === 'function') {
+                    engineContext.setAimAngles(yaw, pitch);
+                }
+            },
+            killVehicleDriver: (veh, winType) => (typeof engineContext.killVehicleDriver === 'function' ? engineContext.killVehicleDriver(veh, winType) : null),
+            applyWindowBloodSplatter: (veh, winType) => (typeof engineContext.applyWindowBloodSplatter === 'function' ? engineContext.applyWindowBloodSplatter(veh, winType) : null),
+            checkVehicleWindowIntersection: (veh, origin, dir, range) => (typeof engineContext.checkVehicleWindowIntersection === 'function' ? engineContext.checkVehicleWindowIntersection(veh, origin, dir, range) : null)
         },
 
         pedestrians: {

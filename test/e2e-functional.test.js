@@ -1825,6 +1825,211 @@ async function runFunctionalTests(options = {}) {
       assertEqual(officerReport.clearedOfficerCount, 0, 'Officers must despawn when wanted level clears');
     });
 
+    // ------------------------------------------------------------------------
+    // Test 27: In-Car Aiming, Smooth 3rd-to-1st Camera Transition & 360 Aiming
+    // ------------------------------------------------------------------------
+    await ctx.test('Drive-by: Aiming pistol transitions smoothly between 3rd and 1st person with 360 aim while driving normally', async () => {
+      const aimReport = await harness.evaluate(() => {
+        // 1. Ensure player is in a vehicle
+        const pState = window.__GAME__.player.getState();
+        if (pState !== 'IN_VEHICLE') {
+          const v = window.__GAME__.vehicles.getPlayerVehicle();
+          window.__GAME__.player.setPosition(v.position.x - 1, 0, v.position.z);
+          window.__GAME__.actions.tryEnterVehicle();
+        }
+
+        const car = window.__GAME__.player.getVehicle() || window.__GAME__.vehicles.getPlayerVehicle();
+        car.position.set(0, 0, 0);
+        car.speed = 0;
+        car.velocity.set(0, 0);
+
+        // Step a tick in 3rd person chase
+        window.__GAME__.simulation.step(1 / 60);
+
+        const initialTransition = window.__GAME__.actions.getAimTransition();
+        const camera = window.__GAME__.raw.camera;
+        const initCamDist = Math.hypot(camera.position.x - car.position.x, camera.position.z - car.position.z);
+
+        // 2. Start Aiming: simulate holding right mouse
+        window.__GAME__.actions.setVehicleAiming(true);
+
+        // Step simulation for 30 frames (~0.5s) to verify smooth transition
+        const transitions = [];
+        for (let i = 0; i < 30; i++) {
+          window.__GAME__.simulation.step(1 / 60);
+          transitions.push(window.__GAME__.actions.getAimTransition());
+        }
+
+        const endAimTransition = window.__GAME__.actions.getAimTransition();
+        const cockpitCamDist = Math.hypot(camera.position.x - car.position.x, camera.position.z - car.position.z);
+        const camHeightInCockpit = camera.position.y;
+
+        // 3. Test 360-degree aiming while driving
+        window.__GAME__.actions.setAimAngles(Math.PI * 0.75, 0); // Aiming towards rear-left
+        window.__GAME__.simulation.step(1 / 60);
+        const aimAngles = window.__GAME__.actions.getAimAngles();
+
+        // 4. Drive normally while aiming
+        window.__GAME__.actions.setVehicleInput({ w: true, a: false, s: false, d: false, space: false });
+        for (let i = 0; i < 30; i++) {
+          window.__GAME__.simulation.step(1 / 60);
+        }
+        window.__GAME__.actions.setVehicleInput({ w: false, a: false, s: false, d: false, space: false });
+        const drivenSpeed = car.getSpeed ? car.getSpeed() : car.speed;
+        const carMoved = car.position.length();
+
+        // 5. Release Right Mouse: smooth transition back to third person
+        window.__GAME__.actions.setVehicleAiming(false);
+        const exitTransitions = [];
+        for (let i = 0; i < 30; i++) {
+          window.__GAME__.simulation.step(1 / 60);
+          exitTransitions.push(window.__GAME__.actions.getAimTransition());
+        }
+        const returnTransition = window.__GAME__.actions.getAimTransition();
+        const returnCamDist = Math.hypot(camera.position.x - car.position.x, camera.position.z - car.position.z);
+
+        return {
+          initialTransition,
+          initCamDist,
+          transitions,
+          endAimTransition,
+          cockpitCamDist,
+          camHeightInCockpit,
+          aimAngles,
+          drivenSpeed,
+          carMoved,
+          exitTransitions,
+          returnTransition,
+          returnCamDist
+        };
+      });
+
+      assertEqual(aimReport.initialTransition, 0, 'Initial aim transition is 0 in 3rd person');
+      assert(aimReport.initCamDist > 3.0, `Chase camera should sit behind car (>3m), got ${aimReport.initCamDist.toFixed(2)}m`);
+      assert(aimReport.endAimTransition > 0.8, `Aim transition should smoothly approach 1.0, got ${aimReport.endAimTransition.toFixed(2)}`);
+      assert(aimReport.cockpitCamDist < 1.25, `Camera should be inside vehicle cockpit (<1.25m from center), got ${aimReport.cockpitCamDist.toFixed(2)}m`);
+      assert(Math.abs(aimReport.camHeightInCockpit - 1.25) < 0.35, `Camera height in cockpit should be at eye level ~1.25m, got ${aimReport.camHeightInCockpit.toFixed(2)}m`);
+      assert(Math.abs(aimReport.aimAngles.yaw - Math.PI * 0.75) < 0.05, 'Aim yaw supports 360-degree aiming');
+      assert(aimReport.carMoved > 1.0, `Car must still drive normally while in shooting mode (moved ${aimReport.carMoved.toFixed(2)}m)`);
+      assert(aimReport.returnTransition < 0.2, `Releasing right mouse must smoothly return transition to 0 (got ${aimReport.returnTransition.toFixed(2)})`);
+      assert(aimReport.returnCamDist > 3.0, `Camera must return to 3rd person distance (>3m), got ${aimReport.returnCamDist.toFixed(2)}m`);
+    });
+
+    // ------------------------------------------------------------------------
+    // Test 28: Shooting Car Front & Back Windows Kills Drivers & Blood Splatters
+    // ------------------------------------------------------------------------
+    await ctx.test('Vehicle Windows: Shooting front and back windows kills drivers, escalates stars, and covers windows in blood splatters', async () => {
+      const windowReport = await harness.evaluate(() => {
+        window.__GAME__.police.clearWantedLevel();
+
+        // 1. Spawn a target car in front of camera
+        const targetCar1 = new (window.__GAME__.vehicles.getPlayerVehicle().constructor)('target_sedan_front', 0, 0, -8);
+        targetCar1.yaw = 0;
+        targetCar1.position.set(0, 0, -8);
+        targetCar1.initMesh(window.__GAME__.raw.scene);
+        targetCar1.mesh.position.set(0, 0, -8);
+        window.__GAME__.raw.scene.add(targetCar1.mesh);
+
+        // Aim camera from in front of car (z = -12) directly at targetCar1 front windshield (world Z = -9.4)
+        const camera = window.__GAME__.raw.camera;
+        camera.position.set(0, 1.15, -12.0);
+        camera.lookAt(0, 1.1, -8.0);
+        camera.updateMatrixWorld(true);
+
+        if (window.__GAME__.actions.resetWeaponCooldown) {
+          window.__GAME__.actions.resetWeaponCooldown();
+        }
+        window.__GAME__.actions.selectWeapon('Pistol');
+        window.__GAME__.actions.shootWeapon();
+        window.__GAME__.simulation.step(1 / 60);
+
+        const frontDriverDead = window.__GAME__.vehicles.isDriverDead(targetCar1);
+        const frontHasBlood = window.__GAME__.vehicles.hasWindowBlood(targetCar1, 'front');
+        const frontWinMesh = targetCar1.mesh.getObjectByName('windshield');
+        const frontDecalMesh = frontWinMesh ? frontWinMesh.getObjectByName('window_blood_decal') : null;
+
+        // 2. Spawn second target car and shoot its back window
+        const targetCar2 = new (window.__GAME__.vehicles.getPlayerVehicle().constructor)('target_sedan_rear', 0, 0, 8);
+        targetCar2.yaw = 0;
+        targetCar2.position.set(0, 0, 8);
+        targetCar2.initMesh(window.__GAME__.raw.scene);
+        targetCar2.mesh.position.set(0, 0, 8);
+        window.__GAME__.raw.scene.add(targetCar2.mesh);
+
+        // Aim camera from behind car (z = 12) directly at targetCar2 back window (local Z = 0.8, world Z = 8.8)
+        camera.position.set(0, 1.1, 12.0);
+        camera.lookAt(0, 1.05, 8.0);
+        camera.updateMatrixWorld(true);
+
+        if (window.__GAME__.actions.resetWeaponCooldown) {
+          window.__GAME__.actions.resetWeaponCooldown();
+        }
+        window.__GAME__.actions.shootWeapon();
+        window.__GAME__.simulation.step(1 / 60);
+
+        const backDriverDead = window.__GAME__.vehicles.isDriverDead(targetCar2);
+        const backHasBlood = window.__GAME__.vehicles.hasWindowBlood(targetCar2, 'back');
+        const rearWinMesh = targetCar2.mesh.getObjectByName('rear_glass');
+        const rearDecalMesh = rearWinMesh ? rearWinMesh.getObjectByName('window_blood_decal') : null;
+
+        // 3. Shoot Police Cruiser window and verify wanted level escalation
+        window.__GAME__.police.setWantedLevel(1);
+        const wantedBefore = window.__GAME__.police.getWantedLevel();
+        const pCruiser = window.__GAME__.police.spawnPoliceCar({ x: 30, z: 30 });
+        pCruiser.position.set(30, 0, 30);
+        pCruiser.yaw = 0;
+        if (pCruiser.mesh) pCruiser.mesh.position.set(30, 0, 30);
+
+        camera.position.set(30, 1.15, 26.0);
+        camera.lookAt(30, 1.1, 30.0);
+        camera.updateMatrixWorld(true);
+
+        if (window.__GAME__.actions.resetWeaponCooldown) {
+          window.__GAME__.actions.resetWeaponCooldown();
+        }
+        window.__GAME__.actions.shootWeapon();
+        window.__GAME__.simulation.step(1 / 60);
+
+        const policeDriverDead = window.__GAME__.vehicles.isDriverDead(pCruiser);
+        const policeHasBlood = window.__GAME__.vehicles.hasWindowBlood(pCruiser, 'front');
+        const wantedAfter = window.__GAME__.police.getWantedLevel();
+
+        // Cleanup
+        window.__GAME__.police.clearWantedLevel();
+        window.__GAME__.raw.scene.remove(targetCar1.mesh);
+        window.__GAME__.raw.scene.remove(targetCar2.mesh);
+
+        return {
+          frontDriverDead,
+          frontHasBlood,
+          hasFrontDecal: !!frontDecalMesh,
+          backDriverDead,
+          backHasBlood,
+          hasBackDecal: !!rearDecalMesh,
+          wantedBefore,
+          policeDriverDead,
+          policeHasBlood,
+          wantedAfter
+        };
+      });
+
+      assertEqual(windowReport.frontDriverDead, true, 'Shooting front windshield must kill the driver');
+      assertEqual(windowReport.frontHasBlood, true, 'Front windshield must have blood splatter flag');
+      assertEqual(windowReport.hasFrontDecal, true, 'Front windshield must mount blood splatter decal');
+
+      assertEqual(windowReport.backDriverDead, true, 'Shooting rear window must kill the driver');
+      assertEqual(windowReport.backHasBlood, true, 'Rear window must have blood splatter flag');
+      assertEqual(windowReport.hasBackDecal, true, 'Rear window must mount blood splatter decal');
+
+      assertEqual(windowReport.wantedBefore, 1, 'Initial police wanted level is 1');
+      assertEqual(windowReport.policeDriverDead, true, 'Police cruiser driver must die when window is shot');
+      assertEqual(windowReport.policeHasBlood, true, 'Police cruiser window must have blood splatters');
+      assert(
+        windowReport.wantedAfter > windowReport.wantedBefore,
+        `Killing police cruiser driver must increase wanted stars (before=${windowReport.wantedBefore}, after=${windowReport.wantedAfter})`
+      );
+    });
+
   } finally {
     console.log('\n[Teardown] Shutting down browser session...');
     await harness.close();

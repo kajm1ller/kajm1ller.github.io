@@ -378,6 +378,12 @@ export class PoliceVehicle extends Vehicle {
     updateAI(dt, targetPos, isTargetInVehicle, spatialGrid, roadNetwork) {
         this.updateStrobes(dt);
 
+        if (this.driverDead) {
+            this.setInputs(0, 0, 0.4, false);
+            this.update(dt, spatialGrid);
+            return;
+        }
+
         const px = this.position.x;
         const pz = this.position.z;
         const tx = targetPos.x;

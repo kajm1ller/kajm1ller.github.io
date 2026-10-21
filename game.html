@@ -2466,6 +2466,302 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             return true;
         }
 
+        // ========================================================================
+        // VEHICLE WINDOW SHOOTING, BLOOD SPLATTERS & DEAD DRIVER SLUMP
+        // ========================================================================
+        let cachedWindowBloodTexture = null;
+        function getWindowBloodTexture() {
+            if (cachedWindowBloodTexture) return cachedWindowBloodTexture;
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, 256, 256);
+
+            // Center impact bullet hole & glass star fracture
+            ctx.strokeStyle = 'rgba(235, 245, 255, 0.9)';
+            ctx.lineWidth = 2.0;
+            ctx.beginPath();
+            ctx.arc(128, 128, 7, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Radiating spiderweb cracks
+            for (let i = 0; i < 9; i++) {
+                const angle = (i / 9) * Math.PI * 2 + (Math.sin(i * 1.7) * 0.3);
+                ctx.beginPath();
+                ctx.moveTo(128, 128);
+                let r = 8;
+                while (r < 75) {
+                    r += 9 + Math.sin(r * 2.3 + i) * 6;
+                    const a = angle + Math.sin(r * 0.4) * 0.25;
+                    ctx.lineTo(128 + Math.cos(a) * r, 128 + Math.sin(a) * r);
+                }
+                ctx.stroke();
+            }
+
+            // High-impact blood splatter burst
+            const colors = ['#4a0000', '#8a0000', '#bb1111', '#2e0000'];
+
+            // Central heavy splatter mass
+            for (let i = 0; i < 32; i++) {
+                const angle = (i / 32) * Math.PI * 2 + (Math.sin(i * 3.1) * 0.5);
+                const dist = Math.abs(Math.sin(i * 1.9)) * 48;
+                const radius = 6 + Math.abs(Math.cos(i * 2.5)) * 16;
+                ctx.fillStyle = colors[i % colors.length];
+                ctx.beginPath();
+                ctx.arc(128 + Math.cos(angle) * dist, 128 + Math.sin(angle) * dist, radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Radial droplets sprayed across the window glass
+            for (let i = 0; i < 80; i++) {
+                const angle = (i * 0.785) + Math.sin(i * 4.3) * 0.4;
+                const dist = 25 + Math.abs(Math.sin(i * 2.1)) * 95;
+                const radius = 1.2 + Math.abs(Math.cos(i * 3.7)) * 5.0;
+                ctx.fillStyle = colors[(i + 1) % colors.length];
+                ctx.beginPath();
+                ctx.arc(128 + Math.cos(angle) * dist, 128 + Math.sin(angle) * dist, radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Gravity drip streaks running down the window
+            for (let i = 0; i < 12; i++) {
+                const startX = 65 + (i * 11) % 125;
+                const startY = 110 + (i * 7) % 40;
+                const dripLen = 35 + ((i * 17) % 85);
+                const dripWidth = 2.0 + ((i % 3) * 1.2);
+                ctx.fillStyle = '#4a0000';
+                ctx.beginPath();
+                ctx.rect(startX, startY, dripWidth, dripLen);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(startX + dripWidth * 0.5, startY + dripLen, dripWidth * 1.4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            cachedWindowBloodTexture = new THREE.CanvasTexture(canvas);
+            cachedWindowBloodTexture.needsUpdate = true;
+            return cachedWindowBloodTexture;
+        }
+
+        // Creates or retrieves a 3D driver mesh sitting inside a vehicle
+        function ensureVehicleDriverMesh(vehicle) {
+            if (!vehicle) return null;
+            if (typeof vehicle.initMesh === 'function' && !vehicle.mesh) {
+                vehicle.initMesh(scene);
+            }
+            if (!vehicle.mesh) return null;
+
+            let driver = vehicle.mesh.getObjectByName('vehicle_driver_npc');
+            if (!driver) {
+                driver = new THREE.Group();
+                driver.name = 'vehicle_driver_npc';
+
+                const shirtMat = vehicle.isPolice
+                    ? new THREE.MeshLambertMaterial({ color: 0x142542 })
+                    : new THREE.MeshLambertMaterial({ color: 0x3d5a80 });
+                const headMat = new THREE.MeshLambertMaterial({ color: 0xf1c27d });
+
+                // Driver Torso
+                const torso = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.55, 0.28), shirtMat);
+                torso.name = 'driver_torso';
+                torso.position.set(-0.38, 0.72, 0.1);
+                driver.add(torso);
+
+                // Driver Head
+                const head = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.24, 0.24), headMat);
+                head.name = 'driver_head';
+                head.position.set(-0.38, 1.15, 0.1);
+                driver.add(head);
+
+                // Driver Peaked Cap (if police)
+                if (vehicle.isPolice) {
+                    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.08, 0.28), shirtMat);
+                    cap.name = 'driver_cap';
+                    cap.position.set(-0.38, 1.30, 0.1);
+                    driver.add(cap);
+                }
+
+                // Arms on steering wheel
+                const arms = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.12, 0.32), shirtMat);
+                arms.name = 'driver_arms';
+                arms.position.set(-0.38, 0.78, -0.12);
+                driver.add(arms);
+
+                vehicle.mesh.add(driver);
+                vehicle.driverMesh = driver;
+            }
+            return driver;
+        }
+
+        // Covers vehicle front windshield or rear glass with blood splatters
+        function applyWindowBloodSplatter(vehicle, windowType) {
+            if (!vehicle) return;
+            if (typeof vehicle.initMesh === 'function' && !vehicle.mesh) {
+                vehicle.initMesh(scene);
+            }
+            if (!vehicle.mesh) return;
+
+            const isFront = (windowType === 'front');
+            const winName = isFront ? 'windshield' : 'rear_glass';
+            const winMesh = vehicle.mesh.getObjectByName(winName);
+            if (!winMesh) return;
+
+            let bloodDecal = winMesh.getObjectByName('window_blood_decal');
+            if (!bloodDecal) {
+                const tex = getWindowBloodTexture();
+                const decalGeo = new THREE.PlaneGeometry(1.68, isFront ? 0.48 : 0.42);
+                const decalMat = new THREE.MeshBasicMaterial({
+                    map: tex,
+                    transparent: true,
+                    opacity: 0.94,
+                    depthWrite: false,
+                    side: THREE.DoubleSide
+                });
+                bloodDecal = new THREE.Mesh(decalGeo, decalMat);
+                bloodDecal.name = 'window_blood_decal';
+                bloodDecal.position.set(0, 0, 0.035);
+                winMesh.add(bloodDecal);
+            }
+
+            winMesh.userData.hasBloodSplatter = true;
+            winMesh.userData.bloodSplatterCount = (winMesh.userData.bloodSplatterCount || 0) + 1;
+
+            vehicle.hasWindowBlood = true;
+            if (isFront) vehicle.hasFrontWindowBlood = true;
+            else vehicle.hasBackWindowBlood = true;
+
+            vehicle.bloodSplatteredWindows = vehicle.bloodSplatteredWindows || [];
+            if (!vehicle.bloodSplatteredWindows.includes(windowType)) {
+                vehicle.bloodSplatteredWindows.push(windowType);
+            }
+        }
+
+        // Kills vehicle driver when front or back window is shot
+        function killVehicleDriver(vehicle, windowType, hitWorldPos = null) {
+            if (!vehicle) return;
+
+            // Apply visible blood splatter to the hit window
+            applyWindowBloodSplatter(vehicle, windowType);
+
+            if (vehicle.driverDead) return; // Already marked dead
+
+            vehicle.driverDead = true;
+            vehicle.driverState = 'dead';
+
+            // Slump driver forward over steering wheel
+            const driver = ensureVehicleDriverMesh(vehicle);
+            if (driver) {
+                const head = driver.getObjectByName('driver_head');
+                const torso = driver.getObjectByName('driver_torso');
+                const cap = driver.getObjectByName('driver_cap');
+                if (head) {
+                    head.position.set(-0.38, 0.94, -0.16);
+                    head.rotation.x = 0.58;
+                    head.rotation.z = 0.22;
+                }
+                if (cap) {
+                    cap.position.set(-0.38, 1.04, -0.22);
+                    cap.rotation.x = 0.58;
+                }
+                if (torso) {
+                    torso.rotation.x = 0.35;
+                }
+            }
+
+            // Vehicle loses engine drive and coasts to a stop
+            if (vehicle.isPolice) {
+                // Police officer driver killed!
+                vehicle.speed = Math.min(vehicle.speed, 3.0);
+                if (policeSystem) {
+                    // "If you kill the police officers you gain more stars."
+                    policeSystem.setWantedLevel(Math.min(5, policeSystem.wantedLevel + 1));
+                    policeSystem.triggerCrime('officer_killed', vehicle.position);
+                }
+            } else {
+                // Civilian driver killed - triggers police crime
+                vehicle.speed = Math.min(vehicle.speed, 2.5);
+                if (policeSystem) {
+                    policeSystem.triggerCrime('shooting', vehicle.position);
+                }
+            }
+
+            // Car horn honks briefly as driver slumps onto the wheel
+            try {
+                const honk = new Audio('/media/mp3/TheBiggestHonk.mp3');
+                honk.volume = 0.4;
+                honk.play().catch(() => {});
+            } catch (e) {}
+        }
+
+        // Raycasts against vehicle front & back windows in vehicle local coordinates
+        function checkVehicleWindowIntersection(veh, rayOrigin, rayDir, maxRange) {
+            if (!veh || !veh.position) return null;
+
+            const dx = rayOrigin.x - veh.position.x;
+            const dy = rayOrigin.y - (veh.position.y || 0);
+            const dz = rayOrigin.z - veh.position.z;
+
+            // Fast radial bounding sphere check
+            const distSq = dx * dx + dz * dz;
+            if (distSq > (maxRange + 6) * (maxRange + 6)) return null;
+
+            const vYaw = typeof veh.getYaw === 'function' ? veh.getYaw() : (veh.yaw || 0);
+            const cosY = Math.cos(vYaw);
+            const sinY = Math.sin(vYaw);
+
+            // Transform ray into vehicle local coordinate system
+            const locOrigX = dx * cosY - dz * sinY;
+            const locOrigY = dy;
+            const locOrigZ = dx * sinY + dz * cosY;
+
+            const locDirX = rayDir.x * cosY - rayDir.z * sinY;
+            const locDirY = rayDir.y;
+            const locDirZ = rayDir.x * sinY + rayDir.z * cosY;
+
+            let closestHit = null;
+
+            // 1. Front Window (windshield): local Z = -1.4
+            if (Math.abs(locDirZ) > 0.001) {
+                const tFront = (-1.4 - locOrigZ) / locDirZ;
+                if (tFront > 0 && tFront <= maxRange) {
+                    const hitX = locOrigX + locDirX * tFront;
+                    const hitY = locOrigY + locDirY * tFront;
+                    // Windshield bounds: X in [-0.88, 0.88], Y in [0.75, 1.45]
+                    if (Math.abs(hitX) <= 0.88 && hitY >= 0.75 && hitY <= 1.45) {
+                        closestHit = {
+                            vehicle: veh,
+                            windowType: 'front',
+                            distance: tFront,
+                            hitPos: rayOrigin.clone().addScaledVector(rayDir, tFront)
+                        };
+                    }
+                }
+            }
+
+            // 2. Back Window (rear glass): local Z = 0.8
+            if (Math.abs(locDirZ) > 0.001) {
+                const tRear = (0.8 - locOrigZ) / locDirZ;
+                if (tRear > 0 && tRear <= maxRange) {
+                    const hitX = locOrigX + locDirX * tRear;
+                    const hitY = locOrigY + locDirY * tRear;
+                    // Rear glass bounds: X in [-0.88, 0.88], Y in [0.75, 1.45]
+                    if (Math.abs(hitX) <= 0.88 && hitY >= 0.75 && hitY <= 1.45) {
+                        if (!closestHit || tRear < closestHit.distance) {
+                            closestHit = {
+                                vehicle: veh,
+                                windowType: 'back',
+                                distance: tRear,
+                                hitPos: rayOrigin.clone().addScaledVector(rayDir, tRear)
+                            };
+                        }
+                    }
+                }
+            }
+
+            return closestHit;
+        }
+
         // Launch an NPC into a forward ragdoll trajectory scaled by the impacting car's speed
         function hitPedestrianWithVehicle(ped, vehicle) {
             if (!ped || ped.isDead || ped.state === 'ragdoll') return false;
@@ -2783,6 +3079,49 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                             if (!weapon.explosive) break;
                         }
                     }
+                }
+
+                // Check candidate vehicles along aim ray for front and back window hits
+                const candidateVehicles = [];
+                const activePlayerVeh = (playerController && playerController.getState() === 'IN_VEHICLE')
+                    ? (playerController.getVehicle() || playerVehicle)
+                    : null;
+
+                if (trafficVehicles && Array.isArray(trafficVehicles)) {
+                    for (let v = 0; v < trafficVehicles.length; v++) {
+                        const tv = trafficVehicles[v];
+                        if (tv && tv !== activePlayerVeh) candidateVehicles.push(tv);
+                    }
+                }
+                if (policeSystem && policeSystem.policeCars) {
+                    for (let v = 0; v < policeSystem.policeCars.length; v++) {
+                        const pv = policeSystem.policeCars[v];
+                        if (pv && pv !== activePlayerVeh) candidateVehicles.push(pv);
+                    }
+                }
+                if (playerVehicle && playerVehicle !== activePlayerVeh && !candidateVehicles.includes(playerVehicle)) {
+                    candidateVehicles.push(playerVehicle);
+                }
+                if (scene && scene.children) {
+                    for (let c = 0; c < scene.children.length; c++) {
+                        const child = scene.children[c];
+                        if (child && child.userData && child.userData.vehicle && child.userData.vehicle !== activePlayerVeh && !candidateVehicles.includes(child.userData.vehicle)) {
+                            candidateVehicles.push(child.userData.vehicle);
+                        }
+                    }
+                }
+
+                let closestWinHit = null;
+                for (let v = 0; v < candidateVehicles.length; v++) {
+                    const winHit = checkVehicleWindowIntersection(candidateVehicles[v], camera.position, dir, weapon.range);
+                    if (winHit && (!closestWinHit || winHit.distance < closestWinHit.distance)) {
+                        closestWinHit = winHit;
+                    }
+                }
+
+                if (closestWinHit) {
+                    killVehicleDriver(closestWinHit.vehicle, closestWinHit.windowType, closestWinHit.hitPos);
+                    hitCount++;
                 }
 
                 // Also spawn visible 3D projectile for visual feedback & moving targets
@@ -3181,11 +3520,41 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             }
         });
         
-        // Mouse buttons - shoot gun, spray, or image paste
+        let isRightMouseDown = false;
+        let isVehicleAiming = false;
+
+        window.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+        });
+
+        // Mouse buttons - shoot gun, aim in vehicle, spray, or image paste
         renderer.domElement.addEventListener('mousedown', (e) => {
             if (!gameStarted || devMode) return;
-            if (playerController && playerController.getState() === 'IN_VEHICLE') return;
+            const inVehicle = (playerController && playerController.getState() === 'IN_VEHICLE');
+
+            if (e.button === 2) { // Right Click - Aim pistol in first person while driving
+                if (inVehicle) {
+                    isRightMouseDown = true;
+                    isVehicleAiming = true;
+                    if (cameraController) {
+                        cameraController.setAiming(true);
+                    }
+                    if (!weapons[currentWeaponIndex] || weapons[currentWeaponIndex].type !== 'gun') {
+                        selectWeapon('Pistol');
+                    }
+                }
+                return;
+            }
+
             if (e.button === 0) { // Left click
+                if (inVehicle) {
+                    // Drive-by shooting: allowed when aiming or transitioned into cockpit
+                    if (isVehicleAiming || (cameraController && cameraController.aimTransition > 0.2)) {
+                        shootWeapon();
+                    }
+                    return;
+                }
+
                 if (currentWeaponIndex > 0) {
                     isFiringGun = true;
                     shootWeapon();
@@ -3197,8 +3566,15 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                 }
             }
         });
-        
+
         document.addEventListener('mouseup', (e) => {
+            if (e.button === 2) {
+                isRightMouseDown = false;
+                isVehicleAiming = false;
+                if (cameraController) {
+                    cameraController.setAiming(false);
+                }
+            }
             if (e.button === 0) {
                 isSpraying = false;
                 isFiringGun = false;
@@ -3730,12 +4106,21 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             
             renderer.render(scene, camera);
             
-            // Render viewmodel on top (only on foot)
-            if (gameStarted && viewmodelScene && viewmodelCamera && !devMode && playerController.getState() === 'ON_FOOT') {
+            // Render viewmodel on top (on foot OR in vehicle first-person aiming)
+            const showViewmodel = (playerController.getState() === 'ON_FOOT') ||
+                (cameraController && cameraController.aimTransition > 0.4);
+            if (gameStarted && viewmodelScene && viewmodelCamera && !devMode && showViewmodel) {
                 renderer.autoClear = false;
                 renderer.clearDepth();
                 renderer.render(viewmodelScene, viewmodelCamera);
                 renderer.autoClear = true;
+            }
+
+            const crosshairEl = document.getElementById('crosshair');
+            if (crosshairEl && gameStarted) {
+                const showCrosshair = (playerController.getState() === 'ON_FOOT') ||
+                    (cameraController && cameraController.aimTransition > 0.15);
+                crosshairEl.style.display = showCrosshair ? 'block' : 'none';
             }
         }
 
@@ -3836,7 +4221,34 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             getOfficerCount: () => (policeSystem ? policeSystem.officers.length : 0),
             getPlayerHealth: () => playerHealth,
             damagePlayer: (amt) => damagePlayer(amt),
-            killPoliceOfficer: (off) => (policeSystem && policeSystem.killOfficer(off))
+            killPoliceOfficer: (off) => (policeSystem && policeSystem.killOfficer(off)),
+            cameraController,
+            setVehicleAiming: (aiming) => {
+                isVehicleAiming = !!aiming;
+                if (cameraController) cameraController.setAiming(aiming);
+                if (aiming && (!weapons[currentWeaponIndex] || weapons[currentWeaponIndex].type !== 'gun')) {
+                    selectWeapon('Pistol');
+                }
+            },
+            isVehicleAiming: () => (cameraController ? cameraController.isAiming : false),
+            getAimTransition: () => (cameraController ? cameraController.aimTransition : 0),
+            getAimAngles: () => (cameraController ? { yaw: cameraController.aimYaw, pitch: cameraController.aimPitch } : { yaw: 0, pitch: 0 }),
+            setAimAngles: (yaw, pitch) => {
+                if (cameraController) {
+                    cameraController.aimYaw = yaw;
+                    cameraController.aimPitch = pitch;
+                }
+            },
+            killVehicleDriver: (veh, winType) => killVehicleDriver(veh, winType),
+            applyWindowBloodSplatter: (veh, winType) => applyWindowBloodSplatter(veh, winType),
+            checkVehicleWindowIntersection: (veh, origin, dir, range) => checkVehicleWindowIntersection(veh, origin, dir, range),
+            isVehicleDriverDead: (veh) => (veh ? !!veh.driverDead : false),
+            hasVehicleWindowBlood: (veh, winType) => {
+                if (!veh) return false;
+                if (winType === 'front') return !!veh.hasFrontWindowBlood;
+                if (winType === 'back') return !!veh.hasBackWindowBlood;
+                return !!veh.hasWindowBlood;
+            }
         });
 
         // Ensure player simulation is active for headless test execution
