@@ -71,7 +71,7 @@ export class CameraController {
         this.aimTransition = 0.0; // 0.0 = 3rd person chase, 1.0 = 1st person cockpit
         this.aimYaw = 0;          // Full 360 degree aim yaw in radians
         this.aimPitch = 0;        // Vertical aim pitch in radians
-        this.cockpitOffset = new THREE.Vector3(-0.4, 1.25, 0.05); // Driver eye position in vehicle local space
+        this.cockpitOffset = new THREE.Vector3(-0.4, 1.25, -0.45); // Driver eye position in vehicle local space (-Z = toward the front of the car)
 
         // Zero-allocation scratch vectors
         this._desiredPos = new THREE.Vector3();
