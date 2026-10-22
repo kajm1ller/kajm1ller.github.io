@@ -107,6 +107,16 @@ export class CameraController {
     }
 
     /**
+     * Chase-camera tuning for a target. A vehicle may override the defaults with a
+     * `chaseCamera` object (e.g. aircraft sit farther back and higher than cars).
+     * @private
+     */
+    _chaseSetting(target, key) {
+        const override = target && target.chaseCamera;
+        return (override && override[key] !== undefined) ? override[key] : this[key];
+    }
+
+    /**
      * Set active camera mode and target.
      * @param {'FIRST_PERSON'|'CHASE'} mode 
      * @param {Vehicle|THREE.Vector3} [target] Vehicle for CHASE, or position for FIRST_PERSON
@@ -126,15 +136,15 @@ export class CameraController {
 
                 // Snap camera immediately behind vehicle on initial entry
                 const vp = target.getPosition();
-                const dist = this.chaseDistance;
-                const h = this.chaseHeight;
+                const dist = this._chaseSetting(target, 'chaseDistance');
+                const h = this._chaseSetting(target, 'chaseHeight');
                 if (this.camera) {
                     this.camera.position.set(
                         vp.x + Math.sin(vYaw) * dist,
                         (vp.y || 0) + h,
                         vp.z + Math.cos(vYaw) * dist
                     );
-                    this.camera.lookAt(vp.x, (vp.y || 0) + this.targetLookHeight, vp.z);
+                    this.camera.lookAt(vp.x, (vp.y || 0) + this._chaseSetting(target, 'targetLookHeight'), vp.z);
                 }
             }
         } else {
@@ -260,9 +270,12 @@ export class CameraController {
             const effectivePitch = this.orbitPitch;
 
             // Dynamic camera distance / height based on speed
+            const chaseDistance = this._chaseSetting(this.targetVehicle, 'chaseDistance');
+            const chaseHeight = this._chaseSetting(this.targetVehicle, 'chaseHeight');
+            const lookHeight = this._chaseSetting(this.targetVehicle, 'targetLookHeight');
             const speedRatio = Math.min(1.0, speed / 25.0);
-            const currentDist = this.chaseDistance + speedRatio * 1.5;
-            const currentHeight = this.chaseHeight + speedRatio * 0.4 + Math.sin(effectivePitch) * 2.0;
+            const currentDist = chaseDistance + speedRatio * 1.5;
+            const currentHeight = chaseHeight + speedRatio * 0.4 + Math.sin(effectivePitch) * 2.0;
 
             const distProj = currentDist * Math.cos(effectivePitch);
 
@@ -277,7 +290,7 @@ export class CameraController {
             const lookahead = speedRatio * 1.5;
             this._lookTarget.set(
                 vp.x - Math.sin(vy) * lookahead,
-                (vp.y || 0) + this.targetLookHeight,
+                (vp.y || 0) + lookHeight,
                 vp.z - Math.cos(vy) * lookahead
             );
 

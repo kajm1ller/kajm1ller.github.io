@@ -24,6 +24,7 @@ import {
     ensureCivicHUD,
     updateCivicHUD
 } from './vehicle.js';
+import { Plane, createPlaneMesh, PLANE_CONFIG } from './plane.js';
 import { PlayerController, PlayerState } from './player.js';
 import { CameraController, CameraMode, lerpAngle } from './camera.js';
 import {
@@ -182,6 +183,7 @@ export function initGameAPI(context) {
                 }
                 return null;
             },
+            getSpawnedVehicles: () => (typeof engineContext.getSpawnedVehicles === 'function' ? engineContext.getSpawnedVehicles() : []),
             isDriverDead: (veh) => (typeof engineContext.isVehicleDriverDead === 'function' ? engineContext.isVehicleDriverDead(veh) : (veh ? !!veh.driverDead : false)),
             hasWindowBlood: (veh, winType) => (typeof engineContext.hasVehicleWindowBlood === 'function' ? engineContext.hasVehicleWindowBlood(veh, winType) : false)
         },
@@ -198,6 +200,9 @@ export function initGameAPI(context) {
                 }
                 return false;
             },
+            // Dev menu: spawn a 'car' or 'plane' in front of the player
+            spawnVehicle: (kind, options) => (typeof engineContext.spawnVehicle === 'function' ? engineContext.spawnVehicle(kind, options) : null),
+            setDevMenuOpen: (open) => (typeof engineContext.setDevMenuOpen === 'function' ? engineContext.setDevMenuOpen(open) : null),
             carjackVehicle: (vehicle) => {
                 if (typeof engineContext.startCarjackAnimation === 'function') {
                     return engineContext.startCarjackAnimation(vehicle);
@@ -322,6 +327,13 @@ export function initGameAPI(context) {
             restart: () => (typeof engineContext.radioRestartTrack === 'function' ? engineContext.radioRestartTrack() : null),
             togglePause: () => (typeof engineContext.radioTogglePause === 'function' ? engineContext.radioTogglePause() : null),
             setVolume: (v) => (typeof engineContext.radioSetVolume === 'function' ? engineContext.radioSetVolume(v) : null)
+        },
+
+        multiplayer: {
+            getState: () => (typeof engineContext.getMultiplayerState === 'function'
+                ? engineContext.getMultiplayerState()
+                : { enabled: false, status: 'offline', id: null, onlineCount: 0, players: [] }),
+            sendChat: (text) => (typeof engineContext.sendChatMessage === 'function' ? engineContext.sendChatMessage(text) : false)
         },
 
         police: {
@@ -461,6 +473,9 @@ export {
     createHondaCivic,
     ensureCivicHUD,
     updateCivicHUD,
+    Plane,
+    createPlaneMesh,
+    PLANE_CONFIG,
     PlayerController,
     PlayerState,
     CameraController,

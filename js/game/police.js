@@ -28,6 +28,9 @@ const policeBulletMat = new THREE.MeshBasicMaterial({ color: 0xffcc00 });
 /**
  * Procedural Web Audio API police siren.
  */
+// Distance (m) within which police can see the player; beyond it the player is evading
+export const POLICE_SIGHT_RANGE = 50.0;
+
 export class PoliceSirenAudio {
     constructor(audioContext = null) {
         this.ctx = audioContext;
@@ -469,6 +472,7 @@ export class PoliceSystem {
         this.wantedCooldown = 0;
         this.spawnTimer = 0; // seconds since the last reinforcement cruiser spawned
         this.isEvading = false;
+        this.canSeePlayer = false; // a cruiser or officer is within POLICE_SIGHT_RANGE of the player
         this.isBusted = false;
         this.bustedTimer = 0;
         this.bustedOverlayTimer = 0;
@@ -550,6 +554,7 @@ export class PoliceSystem {
         this.wantedCooldown = 0;
         this.spawnTimer = 0;
         this.isEvading = false;
+        this.canSeePlayer = false;
         this.bustedTimer = 0;
 
         for (let i = 0; i < this.policeCars.length; i++) {
@@ -801,6 +806,7 @@ export class PoliceSystem {
         }
 
         if (this.wantedLevel <= 0) {
+            this.canSeePlayer = false;
             this.sirenAudio.stop();
             return;
         }
@@ -891,6 +897,9 @@ export class PoliceSystem {
             }
         }
 
+        // Police "see" the player while any living cruiser/officer is within sight range
+        this.canSeePlayer = minDistanceToPlayer <= POLICE_SIGHT_RANGE;
+
         // 4. Busted logic: if on foot and trapped within 3.2m of living police for > 2.5s
         if (!isPlayerInVehicle && minDistanceToPlayer < 3.2) {
             this.bustedTimer += dt;
@@ -909,7 +918,7 @@ export class PoliceSystem {
         }
 
         // 5. Evasion logic: if player stays beyond 50m from all police
-        if (minDistanceToPlayer > 50.0) {
+        if (minDistanceToPlayer > POLICE_SIGHT_RANGE) {
             this.isEvading = true;
             this.wantedCooldown -= dt;
             if (this.wantedCooldown <= 0) {

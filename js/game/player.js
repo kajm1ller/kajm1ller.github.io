@@ -200,6 +200,7 @@ export class PlayerController {
         let closestDistSq = maxDistSq;
 
         if (Array.isArray(vehiclesList) && vehiclesList.length > 0) {
+            let closestMargin = Infinity; // distSq relative to each vehicle's own boarding range
             for (let i = 0, len = vehiclesList.length; i < len; i++) {
                 const v = vehiclesList[i];
                 if (!v || typeof v.getPosition !== 'function') continue;
@@ -207,7 +208,10 @@ export class PlayerController {
                 const dx = pos.x - px;
                 const dz = pos.z - pz;
                 const distSq = dx * dx + dz * dz;
-                if (distSq <= closestDistSq) {
+                // Large vehicles (aircraft) can be boarded from farther out than a car
+                const range = Math.max(maxDist, v.interactionRadius || 0);
+                if (distSq <= range * range && distSq <= closestMargin) {
+                    closestMargin = distSq;
                     closestDistSq = distSq;
                     closestVehicle = v;
                 }
@@ -217,7 +221,9 @@ export class PlayerController {
 
         // Query spatial grid broadphase if available
         if (this.spatialGrid && typeof this.spatialGrid.queryRadius === 'function') {
-            this.spatialGrid.queryRadius(px, pz, maxDist, this._scratchResults, 'DYNAMIC');
+            // Query wide enough to catch large vehicles (aircraft) that have a bigger boarding range
+            this.spatialGrid.queryRadius(px, pz, Math.max(maxDist, 10), this._scratchResults, 'DYNAMIC');
+            let closestMargin = Infinity;
             for (let i = 0, len = this._scratchResults.length; i < len; i++) {
                 const item = this._scratchResults[i];
                 const v = item.entityRef || item.entity || item;
@@ -226,7 +232,9 @@ export class PlayerController {
                     const dx = pos.x - px;
                     const dz = pos.z - pz;
                     const distSq = dx * dx + dz * dz;
-                    if (distSq <= closestDistSq) {
+                    const range = Math.max(maxDist, v.interactionRadius || 0);
+                    if (distSq <= range * range && distSq <= closestMargin) {
+                        closestMargin = distSq;
                         closestDistSq = distSq;
                         closestVehicle = v;
                     }
@@ -308,8 +316,8 @@ export class PlayerController {
         const vPos = vehicle.getPosition();
         const yaw = typeof vehicle.getYaw === 'function' ? vehicle.getYaw() : 0;
 
-        const halfWidth = ((CONFIG.VEHICLE && CONFIG.VEHICLE.WIDTH) || 2.2) * 0.5;
-        const halfLength = ((CONFIG.VEHICLE && CONFIG.VEHICLE.LENGTH) || 4.5) * 0.5;
+        const halfWidth = (vehicle.width || (CONFIG.VEHICLE && CONFIG.VEHICLE.WIDTH) || 2.2) * 0.5;
+        const halfLength = (vehicle.length || (CONFIG.VEHICLE && CONFIG.VEHICLE.LENGTH) || 4.5) * 0.5;
         const sideDist = halfWidth + this.radius + 0.4;   // ~1.9m from vehicle center
         const longDist = halfLength + this.radius + 0.4;  // ~3.05m from vehicle center
 
@@ -439,12 +447,15 @@ export class PlayerController {
      * Exit active vehicle and transition back to ON_FOOT state.
      * Conforms to test/e2e-functional.test.js Test 5.
      * @param {SpatialGrid} [spatialGrid]
+     * @param {boolean} [force=false] Skip the vehicle's canExit() check (e.g. respawn after death)
      * @returns {boolean} True if successfully exited
      */
-    exitVehicle(spatialGrid = this.spatialGrid) {
+    exitVehicle(spatialGrid = this.spatialGrid, force = false) {
         if (this.state !== PlayerState.IN_VEHICLE || !this.activeVehicle) return false;
 
         const vehicle = this.activeVehicle;
+        // Aircraft can't be left mid-air or at speed
+        if (!force && typeof vehicle.canExit === 'function' && !vehicle.canExit()) return false;
         const exitPos = this.calculateSafeExitPosition(vehicle, spatialGrid);
 
         // Update player coordinates to exit position

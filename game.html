@@ -232,9 +232,9 @@
         #mobile-spray-btn {
             position: absolute;
             bottom: 30px;
-            right: 30px;
-            width: 70px;
-            height: 70px;
+            right: 24px;
+            width: 76px;
+            height: 76px;
             border-radius: 50%;
             background: rgba(255,60,60,0.5);
             border: 2px solid rgba(255,255,255,0.4);
@@ -244,16 +244,25 @@
             align-items: center;
             justify-content: center;
             font-family: Arial, sans-serif;
-            font-size: 11px;
+            font-size: 12px;
             color: white;
             text-transform: uppercase;
+            user-select: none;
+            -webkit-user-select: none;
         }
-        #mobile-mode-btn {
+        #mobile-spray-btn:active, #mobile-spray-btn.held { background: rgba(255,60,60,0.8); }
+        /* Context buttons: only the ones tagged for the current mode (foot / car / plane) are shown */
+        #mobile-actions {
             position: absolute;
-            bottom: 110px;
-            right: 35px;
-            width: 60px;
-            height: 36px;
+            bottom: 118px;
+            right: 16px;
+            display: grid;
+            grid-template-columns: repeat(2, 64px);
+            gap: 8px;
+            pointer-events: none;
+        }
+        .mbtn {
+            height: 42px;
             border-radius: 8px;
             background: rgba(0,0,0,0.6);
             border: 1px solid rgba(255,255,255,0.3);
@@ -263,45 +272,47 @@
             align-items: center;
             justify-content: center;
             font-family: Arial, sans-serif;
-            font-size: 11px;
+            font-size: 12px;
             color: white;
+            user-select: none;
+            -webkit-user-select: none;
         }
-        #mobile-upload-btn {
-            position: absolute;
-            bottom: 155px;
-            right: 35px;
-            width: 60px;
-            height: 36px;
-            border-radius: 8px;
-            background: rgba(0,0,0,0.6);
-            border: 1px solid rgba(255,255,255,0.3);
-            pointer-events: auto;
+        .mbtn:active, .mbtn.held { background: rgba(90,169,255,0.55); }
+        #mobile-controls.mode-foot .mbtn:not([data-modes~="foot"]),
+        #mobile-controls.mode-car .mbtn:not([data-modes~="car"]),
+        #mobile-controls.mode-plane .mbtn:not([data-modes~="plane"]) { display: none; }
+        #mobile-controls.mode-plane #mobile-spray-btn { display: none; }
+        /* Touch devices: keep the page still and move HUD out from under the thumbs */
+        body.is-mobile {
             touch-action: none;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-family: Arial, sans-serif;
-            font-size: 11px;
-            color: white;
+            overscroll-behavior: none;
+            -webkit-user-select: none;
+            user-select: none;
         }
-        #mobile-color-btn {
-            position: absolute;
-            bottom: 200px;
-            right: 35px;
-            width: 60px;
-            height: 36px;
-            border-radius: 8px;
-            background: rgba(0,0,0,0.6);
-            border: 1px solid rgba(255,255,255,0.3);
-            pointer-events: auto;
-            touch-action: none;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-family: Arial, sans-serif;
-            font-size: 11px;
-            color: white;
+        body.is-mobile #radio-ui {
+            bottom: auto;
+            top: 52px;
+            left: 10px;
+            min-width: 0;
+            width: 215px;
+            padding: 8px 10px;
+            transform: scale(0.85);
+            transform-origin: top left;
         }
+        body.is-mobile #radio-track-title { max-width: 110px; }
+        body.is-mobile #player-health-hud {
+            bottom: auto;
+            top: 10px;
+            right: auto;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        body.is-mobile #plane-hud-hint { display: none; }
+        body.is-mobile #mode-indicator { display: none !important; }
+        body.is-mobile.mobile-vehicle #spray-hud { display: none !important; }
+        body.is-mobile #dev-menu { max-height: 88vh; overflow-y: auto; }
+        body.is-mobile #dev-menu-btn { padding: 10px 14px; }
+        body.is-mobile #image-upload-btn { display: none !important; }
         /* Kaj Simulator Honda Civic HUD */
         #car-indicator {
             display: none;
@@ -573,6 +584,182 @@
             font-weight: 700;
             min-width: 36px;
         }
+        /* Dev menu */
+        #dev-menu-btn {
+            display: none;
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 210;
+            background: rgba(0,0,0,0.6);
+            color: #9cf;
+            border: 1px solid rgba(153,204,255,0.5);
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-family: monospace;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        #dev-menu-btn:hover { background: rgba(30,50,80,0.85); }
+        #dev-menu {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 300;
+            min-width: 280px;
+            background: rgba(10, 15, 25, 0.95);
+            border: 2px solid #5aa9ff;
+            border-radius: 10px;
+            padding: 16px 20px 14px;
+            color: #e6f0ff;
+            font-family: monospace;
+            font-size: 14px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+            user-select: none;
+        }
+        #dev-menu-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            font-weight: bold;
+            letter-spacing: 2px;
+            color: #5aa9ff;
+            margin-bottom: 12px;
+        }
+        #dev-menu-title span { font-size: 11px; font-weight: normal; letter-spacing: 0; color: #8aa; }
+        #dev-menu button.dev-action {
+            display: block;
+            width: 100%;
+            margin-bottom: 8px;
+            padding: 9px 12px;
+            text-align: left;
+            font-family: monospace;
+            font-size: 14px;
+            color: #fff;
+            background: rgba(90,169,255,0.16);
+            border: 1px solid rgba(90,169,255,0.45);
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        #dev-menu button.dev-action:hover { background: rgba(90,169,255,0.38); }
+        #dev-menu label { display: block; margin: 4px 0 10px; font-size: 13px; cursor: pointer; }
+        #dev-menu-status { min-height: 16px; margin-top: 4px; font-size: 12px; color: #9fd8a8; }
+        /* Aircraft HUD & toast */
+        #plane-hud {
+            display: none;
+            position: absolute;
+            bottom: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            pointer-events: none;
+            text-align: center;
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 8px 18px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 15px;
+        }
+        #plane-hud-hint { margin-top: 4px; font-size: 11px; color: #9ab; }
+        #plane-hud-line.warn { color: #ff8a65; }
+        /* Multiplayer: status bar, chat */
+        #mp-bar {
+            display: none;
+            position: absolute;
+            top: 10px;
+            left: 132px;
+            z-index: 210;
+            align-items: center;
+            gap: 6px;
+            font-family: monospace;
+            font-size: 13px;
+            color: #cde;
+        }
+        #mp-status {
+            background: rgba(0,0,0,0.6);
+            border: 1px solid rgba(255,255,255,0.25);
+            border-radius: 6px;
+            padding: 6px 10px;
+            cursor: default;
+        }
+        #mp-status.offline { cursor: pointer; color: #fca; }
+        #mp-chat-btn {
+            background: rgba(0,0,0,0.6);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.25);
+            border-radius: 6px;
+            padding: 5px 10px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        #chat-log {
+            position: absolute;
+            left: 10px;
+            bottom: 150px;
+            width: min(360px, 60vw);
+            z-index: 150;
+            pointer-events: none;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            color: #fff;
+            text-shadow: 0 1px 2px #000, 0 0 4px #000;
+        }
+        #chat-log .line { margin-top: 2px; word-wrap: break-word; transition: opacity 1.5s; }
+        #chat-log .line.old { opacity: 0; }
+        #chat-log .line .who { font-weight: bold; color: #9fd3ff; }
+        #chat-log .line.self .who { color: #a8f0a8; }
+        #chat-log .line.system { color: #ffd479; font-style: italic; }
+        #chat-input {
+            display: none;
+            position: absolute;
+            left: 10px;
+            bottom: 112px;
+            width: min(360px, 60vw);
+            z-index: 280;
+            box-sizing: border-box;
+            padding: 8px 10px;
+            font-size: 15px;
+            color: #fff;
+            background: rgba(0,0,0,0.75);
+            border: 1px solid #5aa9ff;
+            border-radius: 6px;
+            outline: none;
+        }
+        body.is-mobile #mp-bar { left: 132px; }
+        body.is-mobile #chat-log { bottom: auto; top: 52px; width: min(300px, 45vw); font-size: 13px; }
+        body.is-mobile #chat-input { bottom: auto; top: 52px; width: min(420px, 70vw); }
+        #death-fade {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            opacity: 0;
+            transition: opacity 1.2s ease;
+            pointer-events: none;
+            z-index: 240;
+        }
+        #game-toast {
+            display: none;
+            position: absolute;
+            top: 14%;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 260;
+            pointer-events: none;
+            color: #fff;
+            background: rgba(10, 15, 25, 0.88);
+            border: 1px solid rgba(255,255,255,0.35);
+            border-radius: 6px;
+            padding: 8px 18px;
+            font-family: Arial, sans-serif;
+            font-size: 15px;
+        }
     </style>
 </head>
 <body>
@@ -628,16 +815,46 @@
     <div id="color-picker"></div>
     <div id="dev-hud">DEV FLY MODE
 WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
+    <button id="dev-menu-btn" type="button" title="Dev menu (`)">🛠 Dev (`)</button>
+    <div id="dev-menu">
+        <div id="dev-menu-title">DEV MENU <span>` or Esc to close</span></div>
+        <button class="dev-action" id="dev-spawn-car" type="button">🚗 Spawn Car</button>
+        <button class="dev-action" id="dev-spawn-plane" type="button">✈ Spawn Plane</button>
+        <button class="dev-action" id="dev-spawn-plane-air" type="button">✈ Spawn Plane (already flying)</button>
+        <label><input type="checkbox" id="dev-board-on-spawn"> Get in after spawning</label>
+        <button class="dev-action" id="dev-clear-spawned" type="button">🧹 Remove spawned vehicles</button>
+        <button class="dev-action" id="dev-fly-cam" type="button">🎥 Toggle fly camera (F12)</button>
+        <div id="dev-menu-status"></div>
+    </div>
+    <div id="plane-hud">
+        <div id="plane-hud-line"></div>
+        <div id="plane-hud-hint">W/S throttle · A/D bank · ↓/↑ pitch up/down · Space brake · R/N radio · E exit (on ground)</div>
+    </div>
+    <div id="mp-bar"><span id="mp-status" class="offline">Single player</span><button id="mp-chat-btn" type="button" title="Chat (T)">💬</button></div>
+    <div id="chat-log"></div>
+    <input id="chat-input" type="text" maxlength="120" placeholder="Say something... (Enter to send, Esc to cancel)" autocomplete="off">
+    <div id="game-toast"></div>
+    <div id="death-fade"></div>
     <input type="file" id="image-file-input" accept="image/*" style="display:none">
     <button id="image-upload-btn">📷 Upload Image</button>
     <div id="mode-indicator">Mode: Spray</div>
-    <div id="mobile-controls">
+    <div id="mobile-controls" class="mode-foot">
         <div id="mobile-joystick"><div id="mobile-joystick-thumb"></div></div>
         <div id="mobile-look"></div>
+        <div id="mobile-actions">
+            <div class="mbtn" id="mobile-use-btn" data-modes="foot car plane">Use</div>
+            <div class="mbtn" id="mobile-weapon-btn" data-modes="foot">Weapon</div>
+            <div class="mbtn" id="mobile-aim-btn" data-modes="car">Aim</div>
+            <div class="mbtn" id="mobile-brake-btn" data-modes="car plane">Brake</div>
+            <div class="mbtn" id="mobile-thr-up-btn" data-modes="plane">Thr +</div>
+            <div class="mbtn" id="mobile-thr-down-btn" data-modes="plane">Thr −</div>
+            <div class="mbtn" id="mobile-radio-btn" data-modes="car plane">📻 R</div>
+            <div class="mbtn" id="mobile-radio-skip-btn" data-modes="car plane">⏭ N</div>
+            <div class="mbtn" id="mobile-mode-btn" data-modes="foot">Spray</div>
+            <div class="mbtn" id="mobile-color-btn" data-modes="foot">Color</div>
+            <div class="mbtn" id="mobile-upload-btn" data-modes="foot">📷 Img</div>
+        </div>
         <div id="mobile-spray-btn">Spray</div>
-        <div id="mobile-mode-btn">V Mode</div>
-        <div id="mobile-upload-btn">📷 Img</div>
-        <div id="mobile-color-btn">C Color</div>
     </div>
     
     <script type="importmap">
@@ -668,8 +885,11 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             TireSmokeSystem,
             PoliceSystem,
             PoliceVehicle,
-            PoliceOfficer
+            PoliceOfficer,
+            Plane,
+            PLANE_CONFIG
         } from './js/game/main.js';
+        import { MultiplayerClient, RemotePlayers, MP_SEND_INTERVAL, resolveServerUrl } from './js/game/multiplayer.js';
 
         // ============ SCENE SETUP ============
         const scene = new THREE.Scene();
@@ -913,6 +1133,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         }
 
         function damagePlayer(amount = 15) {
+            const wasAlive = playerHealth > 0;
             playerHealth = Math.max(0, playerHealth - amount);
             updatePlayerHealthHUD();
 
@@ -922,6 +1143,10 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
 
             if (playerHealth <= 0) {
+                if (wasAlive) {
+                    mpSend({ type: 'died', killer: lastHitBy });
+                    lastHitBy = null;
+                }
                 const bustedEl = document.getElementById('busted-overlay');
                 if (bustedEl) {
                     bustedEl.textContent = 'WASTED';
@@ -932,11 +1157,14 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     playerHealth = 100;
                     updatePlayerHealthHUD();
                     if (playerController.getState() === 'IN_VEHICLE') {
-                        playerController.exitVehicle(spatialGrid);
+                        playerController.exitVehicle(spatialGrid, true);
                     }
                     myPosition.copy(playerStartPos);
+                    // Keep the controller in step, otherwise the next on-foot tick pulls us back to the death spot
+                    playerController.position.copy(playerStartPos);
                     camera.position.set(playerStartPos.x, playerStartPos.y + 1.7, playerStartPos.z);
                     if (policeSystem) policeSystem.clearWantedLevel();
+                    afterRespawn();
                 }, 2500);
             }
         }
@@ -1172,8 +1400,10 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         }
 
         // ============ AUDIO & GUNSHOT / FOOTSTEP / BACKGROUND MUSIC (/media) ============
-        const backgroundMusic = new Audio('/media/music.mp3');
-        backgroundMusic.loop = true;
+        // music2.mp3 plays once first, then music.mp3 takes over and loops
+        const backgroundMusic = new Audio('/media/music2.mp3');
+        let isBackgroundIntroPlaying = true;
+        backgroundMusic.loop = false;
         backgroundMusic.volume = 0.4;
         backgroundMusic.preload = 'auto';
         let isBackgroundMusicActive = true;
@@ -1186,13 +1416,64 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         policeChaseMusic.loop = true;
         policeChaseMusic.volume = 0.6;
         policeChaseMusic.preload = 'auto';
-        const activeShooterSound = new Audio('/media/ActiveShooter.mp3');
-        activeShooterSound.loop = false;
-        activeShooterSound.volume = 0.6;
-        activeShooterSound.preload = 'auto';
-        const ACTIVE_SHOOTER_DELAY = 2.0; // seconds into PoliceEncounter1 before ActiveShooter starts
+        // Dispatch voice lines (/media). Only one plays at a time; the rest wait in a queue.
+        // The crime call plays once per wanted session, for the crime that started it.
+        // Unlisted crimes (e.g. killing an officer) use ActiveShooter.
+        const DISPATCH_FILES = {
+            shooting: '/media/ActiveShooter.mp3',
+            vehicular_homicide: '/media/VehicularHomicide.mp3',
+            stolen_vehicle: '/media/StolenVehicle.mp3',
+            assault_male: '/media/AssaultMale.mp3',
+            assault_female: '/media/AssaultFemale.mp3',
+            public_nudity: '/media/PublicNudity.mp3',
+            public_masturbation: '/media/PublicMasturbation.mp3',
+            suspect_identified: '/media/SuspectIdentified.mp3', // police first spot the player
+            travelling_on_foot: '/media/TravellingonFoot.mp3',  // player leaves a vehicle in sight of police
+            fleeing_vehicle: '/media/FleeingVehicle.mp3'        // player gets in a vehicle in sight of police
+        };
+        const DEFAULT_CRIME_KEY = 'shooting';
+        const dispatchSounds = {}; // key -> Audio, created on first use
+        const dispatchQueue = [];
+        let currentDispatchSound = null;
+        function getDispatchSound(key) {
+            if (!dispatchSounds[key]) {
+                const a = new Audio(DISPATCH_FILES[key] || DISPATCH_FILES[DEFAULT_CRIME_KEY]);
+                a.loop = false;
+                a.volume = 0.6;
+                a.preload = 'auto';
+                a.addEventListener('ended', pumpDispatchQueue);
+                dispatchSounds[key] = a;
+            }
+            return dispatchSounds[key];
+        }
+        function pumpDispatchQueue() {
+            if (currentDispatchSound && !currentDispatchSound.paused && !currentDispatchSound.ended) return;
+            currentDispatchSound = null;
+            if (dispatchQueue.length === 0) return;
+            const a = getDispatchSound(dispatchQueue.shift());
+            currentDispatchSound = a;
+            a.currentTime = 0;
+            a.play().catch(() => { if (currentDispatchSound === a) currentDispatchSound = null; });
+        }
+        function queueDispatch(key) {
+            if (dispatchQueue.includes(key)) return;
+            dispatchQueue.push(key);
+            pumpDispatchQueue();
+        }
+        function stopDispatchSounds() {
+            dispatchQueue.length = 0;
+            for (const a of Object.values(dispatchSounds)) {
+                a.pause();
+                a.currentTime = 0;
+            }
+            currentDispatchSound = null;
+        }
+        const ACTIVE_SHOOTER_DELAY = 2.0; // seconds into PoliceEncounter1 before the crime call starts
         let isPoliceChaseMusicActive = false;
-        let hasActiveShooterStarted = false; // once per police call
+        let hasActiveShooterStarted = false; // the crime call for this wanted session has been played
+        let sessionCrimeType = null;         // the crime that started this wanted session
+        let hasPoliceSpottedPlayer = false;  // SuspectIdentified already played this session
+        let wasPlayerInVehicle = false;      // for the exit/enter-vehicle-in-sight calls
 
         // ============ IN-CAR RADIO SYSTEM (/media/radio) ============
         const RADIO_TRACKS = [
@@ -1224,7 +1505,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         }
 
         function ensureBackgroundMusicPlaying() {
-            if (!backgroundMusic.loop) backgroundMusic.loop = true;
+            if (!isBackgroundIntroPlaying && !backgroundMusic.loop) backgroundMusic.loop = true;
             // Police chase music takes over: no background music while it plays
             if (isPoliceChaseMusicActive) {
                 isBackgroundMusicActive = false;
@@ -1381,12 +1662,14 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 if (isPoliceChaseMusicActive) return;
                 isPoliceChaseMusicActive = true;
                 hasActiveShooterStarted = false;
+                // Only the crime that started this wanted session gets announced (2 s into the chase music)
+                sessionCrimeType = (policeSystem && policeSystem.crimeHistory.length > 0) ? policeSystem.lastCrimeType : null;
+                hasPoliceSpottedPlayer = false;
                 // Cut off background music and the car radio
                 isBackgroundMusicActive = false;
                 if (!backgroundMusic.paused) backgroundMusic.pause();
                 if (!radioAudio.paused) radioAudio.pause();
-                activeShooterSound.pause();
-                activeShooterSound.currentTime = 0;
+                stopDispatchSounds();
                 policeChaseMusic.currentTime = 0;
                 policeChaseMusic.play().catch(() => {});
             } else if (isPoliceChaseMusicActive) {
@@ -1395,19 +1678,18 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 hasActiveShooterStarted = false;
                 policeChaseMusic.pause();
                 policeChaseMusic.currentTime = 0;
-                activeShooterSound.pause();
-                activeShooterSound.currentTime = 0;
+                stopDispatchSounds();
+                hasPoliceSpottedPlayer = false;
                 resumeNormalMusic();
             }
         }
 
-        // Start ActiveShooter.mp3 once PoliceEncounter1.mp3 is 2 seconds in
+        // Start the crime's dispatch call once PoliceEncounter1.mp3 is 2 seconds in
         policeChaseMusic.addEventListener('timeupdate', () => {
             if (!isPoliceChaseMusicActive || hasActiveShooterStarted) return;
             if (policeChaseMusic.currentTime >= ACTIVE_SHOOTER_DELAY) {
                 hasActiveShooterStarted = true;
-                activeShooterSound.currentTime = 0;
-                activeShooterSound.play().catch(() => {});
+                if (sessionCrimeType) queueDispatch(sessionCrimeType);
             }
         });
 
@@ -1461,6 +1743,13 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         document.addEventListener('mousedown', ensureBackgroundMusicPlaying);
         document.addEventListener('touchstart', ensureBackgroundMusicPlaying, { passive: true });
         backgroundMusic.addEventListener('ended', () => {
+            if (isBackgroundIntroPlaying) {
+                // music2.mp3 finished: switch to the looping music.mp3
+                isBackgroundIntroPlaying = false;
+                backgroundMusic.src = '/media/music.mp3';
+                backgroundMusic.loop = true;
+                backgroundMusic.load();
+            }
             backgroundMusic.currentTime = 0;
             ensureBackgroundMusicPlaying();
         });
@@ -1643,11 +1932,19 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             const isBrakingWhileMoving = isBrakingInput && spd > 0.15;
 
             // Compute simulated gear RPM & engine pitch
-            const gearRatio = (speedRatio * 3.2) % 1.0;
-            const rpmNorm = Math.min(1.0, 0.18 + speedRatio * 0.55 + gearRatio * 0.22 + (isThrottling ? 0.18 : 0));
-            const baseFreq = 52 + rpmNorm * 165;
-            const engineGain = isThrottling ? 0.16 : (spd > 0.5 ? 0.11 : 0.06);
-            const brakeGain = isBrakingWhileMoving ? Math.min(0.18, 0.05 + speedRatio * 0.15) : 0;
+            let gearRatio = (speedRatio * 3.2) % 1.0;
+            let rpmNorm = Math.min(1.0, 0.18 + speedRatio * 0.55 + gearRatio * 0.22 + (isThrottling ? 0.18 : 0));
+            let baseFreq = 52 + rpmNorm * 165;
+            let engineGain = isThrottling ? 0.16 : (spd > 0.5 ? 0.11 : 0.06);
+            let brakeGain = isBrakingWhileMoving ? Math.min(0.18, 0.05 + speedRatio * 0.15) : 0;
+            if (vehicle.isPlane) {
+                // Prop engine: pitch follows the throttle lever rather than road speed, no gear changes
+                rpmNorm = 0.2 + 0.8 * (vehicle.throttle || 0);
+                baseFreq = 60 + rpmNorm * 110;
+                engineGain = 0.08 + 0.12 * (vehicle.throttle || 0);
+                // Tyre squeal only from wheel braking on the runway
+                brakeGain = (vehicle.onGround && vehicle.inputHandbrake && spd > 3) ? Math.min(0.14, 0.04 + speedRatio * 0.2) : 0;
+            }
 
             let mode = 'idle';
             if (isBrakingWhileMoving) {
@@ -2200,6 +2497,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
         function startCarjackAnimation(targetVehicle) {
             if (!targetVehicle || carjackState.active) return null;
+            if (policeSystem) policeSystem.triggerCrime('stolen_vehicle', targetVehicle.position);
 
             // Stop the moving car immediately and claim it from AI traffic control
             targetVehicle.isPlayer = true;
@@ -2399,12 +2697,13 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         function tryBoardOrJackVehicle() {
             if (carjackState.active) return true;
             if (playerController.getState() !== 'ON_FOOT') return false;
-            const candidateVehicles = [playerVehicle, ...trafficVehicles];
+            const candidateVehicles = [playerVehicle, ...trafficVehicles, ...spawnedVehicles];
             const nearCar = playerController.getNearbyVehicle(candidateVehicles);
             if (!nearCar) return false;
 
             const carSpeed = Math.abs(typeof nearCar.getSpeed === 'function' ? nearCar.getSpeed() : (nearCar.speed || 0));
-            const isMovingTrafficCar = (nearCar !== playerVehicle && !nearCar.isPlayer && carSpeed > 0.5);
+            // Only AI traffic gets carjacked; dev-spawned cars and planes are simply boarded
+            const isMovingTrafficCar = (nearCar !== playerVehicle && !nearCar.isPlayer && !nearCar.isSpawned && carSpeed > 0.5);
             if (isMovingTrafficCar) {
                 startCarjackAnimation(nearCar);
                 return true;
@@ -2780,7 +3079,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
         // Raycasts against vehicle front & back windows in vehicle local coordinates
         function checkVehicleWindowIntersection(veh, rayOrigin, rayDir, maxRange) {
-            if (!veh || !veh.position) return null;
+            if (!veh || !veh.position || veh.isPlane) return null; // window hit boxes are car-shaped
 
             const dx = rayOrigin.x - veh.position.x;
             const dy = rayOrigin.y - (veh.position.y || 0);
@@ -2920,7 +3219,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         }
 
         function checkVehiclePedestrianImpacts() {
-            const allCars = [playerVehicle, ...trafficVehicles];
+            const allCars = [playerVehicle, ...trafficVehicles, ...spawnedVehicles];
             const hitRadius = 1.75;
             const allPeds = (policeSystem && policeSystem.officers.length > 0)
                 ? [...pedestrians, ...policeSystem.officers]
@@ -2929,6 +3228,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             for (let c = 0, cLen = allCars.length; c < cLen; c++) {
                 const car = allCars[c];
                 if (!car) continue;
+                if (car.isPlane && car.position.y > 1.5) continue; // aircraft overhead can't run people over
                 const spd = Math.abs(typeof car.getSpeed === 'function' ? car.getSpeed() : (car.speed || 0));
                 if (spd < 1.2) continue;
 
@@ -3125,6 +3425,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
             const muzzleOrigin = camera.position.clone().addScaledVector(aimDir, 0.6);
             makeNearbyPedestriansFlee(myPosition);
+            mpSend({ type: 'fire', weapon: weapon.name, ox: muzzleOrigin.x, oy: muzzleOrigin.y, oz: muzzleOrigin.z, dx: aimDir.x, dy: aimDir.y, dz: aimDir.z });
 
             let hitCount = 0;
             const pellets = weapon.pellets || 1;
@@ -3182,6 +3483,25 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                                     policeSystem.triggerCrime('shooting', ped.mesh.position);
                                 }
                             }
+                            if (!weapon.explosive) break;
+                        }
+                    }
+                }
+
+                // Other players (multiplayer): hitscan against their bodies / vehicles
+                if (mp && mp.isOnline) {
+                    const targets = remotePlayers.getHitTargets();
+                    for (let i = 0; i < targets.length; i++) {
+                        const t = targets[i];
+                        const proj = (t.x - camera.position.x) * dir.x + (t.y - camera.position.y) * dir.y + (t.z - camera.position.z) * dir.z;
+                        if (proj <= 0 || proj > weapon.range) continue;
+                        const cx = camera.position.x + dir.x * proj;
+                        const cy = camera.position.y + dir.y * proj;
+                        const cz = camera.position.z + dir.z * proj;
+                        const reach = weapon.explosive ? 6.0 : t.radius;
+                        if (Math.hypot(t.x - cx, t.z - cz) <= reach && Math.abs(t.y - cy) <= (weapon.explosive ? 6.0 : t.halfHeight)) {
+                            mpSend({ type: 'shoot', targetId: t.id, weapon: weapon.name, damage: mpShotDamage(weapon) });
+                            hitCount++;
                             if (!weapon.explosive) break;
                         }
                     }
@@ -3445,6 +3765,511 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             return false;
         }
         
+        // ============ SPAWNED VEHICLES & DEV MENU ============
+        const spawnedVehicles = []; // cars and planes created from the dev menu
+        const MAX_SPAWNED = { car: 8, plane: 4 };
+        const SPAWN_DISTANCE = { car: 7.0, plane: 10.5 }; // metres in front of the player
+        const SPAWN_COLORS = {
+            car: [0xcc2222, 0x2255cc, 0xeeeeee, 0xe8b923, 0x22aa55, 0x8844cc, 0xff7a1a],
+            plane: [0xf2f2f2, 0xf5d142, 0x6fb7ff, 0xff8a65]
+        };
+        let spawnCounter = 0;
+        let devMenuOpen = false;
+        const _spawnDir = new THREE.Vector3();
+
+        const gameToastEl = document.getElementById('game-toast');
+        let gameToastTimer = null;
+        function showToast(text, ms = 2200) {
+            if (!gameToastEl) return;
+            gameToastEl.textContent = text;
+            gameToastEl.style.display = 'block';
+            clearTimeout(gameToastTimer);
+            gameToastTimer = setTimeout(() => { gameToastEl.style.display = 'none'; }, ms);
+        }
+
+        function getActivePlane() {
+            const v = playerController.getState() === 'IN_VEHICLE' ? playerController.getVehicle() : null;
+            return (v && v.isPlane) ? v : null;
+        }
+
+        // Flight HUD: altitude, airspeed, throttle (DOM is only touched when the text changes)
+        const planeHudEl = document.getElementById('plane-hud');
+        const planeHudLineEl = document.getElementById('plane-hud-line');
+        let _planeHudText = '';
+        function updatePlaneHUD(plane) {
+            if (!planeHudEl) return;
+            if (!plane) {
+                if (planeHudEl.style.display !== 'none') planeHudEl.style.display = 'none';
+                _planeHudText = '';
+                return;
+            }
+            const stalling = !plane.onGround && plane.speed < PLANE_CONFIG.STALL_SPEED;
+            const text = `ALT ${Math.round(plane.position.y * 3.281)} ft   SPD ${Math.round(plane.speed * 2.237)} mph   ` +
+                `THR ${Math.round(plane.throttle * 100)}%` +
+                (plane.onGround ? '   [ON GROUND]' : '') + (stalling ? '   ⚠ STALL' : '');
+            if (planeHudEl.style.display !== 'block') planeHudEl.style.display = 'block';
+            if (text !== _planeHudText) {
+                _planeHudText = text;
+                planeHudLineEl.textContent = text;
+                planeHudLineEl.classList.toggle('warn', stalling);
+            }
+        }
+
+        // The in-car radio is shared with planes; only its badge changes
+        const radioBadgeEl = document.getElementById('radio-badge');
+        function setRadioBadge(text) {
+            if (radioBadgeEl && radioBadgeEl.textContent !== text) radioBadgeEl.textContent = text;
+        }
+
+        function removeSpawnedVehicle(v) {
+            const idx = spawnedVehicles.indexOf(v);
+            if (idx < 0) return false;
+            if (playerController.getVehicle() === v) return false; // never delete the one being driven
+            spawnedVehicles.splice(idx, 1);
+            if (v.mesh && v.mesh.parent) v.mesh.parent.remove(v.mesh);
+            return true;
+        }
+
+        // ---- Plane crashes: fireball, pilot dies, fade to black, respawn at the house ----
+        const deathFadeEl = document.getElementById('death-fade');
+        const explosions = [];
+        let isCrashDying = false;
+        const planeCrashSound = new Audio('/media/explosion-meme_dTCfAHs.mp3');
+        planeCrashSound.volume = 0.6;
+
+        function spawnExplosion(x, y, z) {
+            const group = new THREE.Group();
+            const mk = (radius, color, opacity) => {
+                const m = new THREE.Mesh(
+                    new THREE.SphereGeometry(radius, 14, 10),
+                    new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false })
+                );
+                group.add(m);
+                return m;
+            };
+            const fire = mk(1, 0xff6a1a, 0.9);
+            const core = mk(0.6, 0xffe27a, 1.0);
+            const smoke = mk(1, 0x222222, 0.55);
+            const light = new THREE.PointLight(0xff8833, 8, 90);
+            group.add(light);
+            group.position.set(x, y, z);
+            scene.add(group);
+            explosions.push({ group, fire, core, smoke, light, age: 0 });
+            try {
+                const s = planeCrashSound.cloneNode();
+                s.volume = 0.6;
+                s.play().catch(() => {});
+            } catch (e) {}
+        }
+
+        function updateExplosions(dt) {
+            for (let i = explosions.length - 1; i >= 0; i--) {
+                const e = explosions[i];
+                e.age += dt;
+                const t = e.age / 1.8;
+                if (t >= 1) {
+                    scene.remove(e.group);
+                    for (const m of [e.fire, e.core, e.smoke]) { m.geometry.dispose(); m.material.dispose(); }
+                    explosions.splice(i, 1);
+                    continue;
+                }
+                const grow = 1 - Math.pow(1 - Math.min(1, t * 2.2), 3);
+                e.fire.scale.setScalar(2 + 9 * grow);
+                e.fire.material.opacity = 0.9 * (1 - t);
+                e.core.scale.setScalar(1 + 5 * grow);
+                e.core.material.opacity = Math.max(0, 1 - t * 2.2);
+                e.smoke.scale.setScalar(3 + 12 * t);
+                e.smoke.position.y = 2 + 8 * t;
+                e.smoke.material.opacity = 0.55 * Math.sin(Math.min(1, t * 1.6) * Math.PI) * (1 - t);
+                e.light.intensity = 8 * (1 - t);
+            }
+        }
+
+        function explodePlane(plane) {
+            if (!plane || plane.wrecked) return;
+            plane.wrecked = true;
+            plane.speed = 0;
+            plane.throttle = 0;
+            if (plane.mesh) plane.mesh.visible = false;
+            spawnExplosion(plane.position.x, plane.position.y + 1.5, plane.position.z);
+            if (plane.isPlayer) mpSend({ type: 'event', kind: 'explosion', x: plane.position.x, y: plane.position.y + 1.5, z: plane.position.z });
+
+            if (playerController.getVehicle() === plane) {
+                killPilotInCrash();
+            } else {
+                removeSpawnedVehicle(plane);
+            }
+        }
+
+        function killPilotInCrash() {
+            if (isCrashDying) return;
+            isCrashDying = true;
+            // Release the controls so the husk doesn't keep reading held keys
+            for (const k of ['w', 'a', 's', 'd', 'space']) playerController.keys[k] = false;
+            damagePlayer(playerMaxHealth); // WASTED overlay; respawns at the start house after 2.5 s
+            if (deathFadeEl) {
+                deathFadeEl.style.display = 'block';
+                void deathFadeEl.offsetWidth; // let the transition start from opacity 0
+                deathFadeEl.style.opacity = '1';
+            }
+        }
+
+        // Called from damagePlayer's respawn timeout once the player is back at the house
+        function afterRespawn() {
+            for (const v of spawnedVehicles.slice()) {
+                if (v.wrecked) removeSpawnedVehicle(v);
+            }
+            isCrashDying = false;
+            if (deathFadeEl) {
+                deathFadeEl.style.opacity = '0';
+                setTimeout(() => { if (!isCrashDying) deathFadeEl.style.display = 'none'; }, 1300);
+            }
+        }
+
+        function clearSpawnedVehicles() {
+            let removed = 0;
+            for (const v of spawnedVehicles.slice()) {
+                if (removeSpawnedVehicle(v)) removed++;
+            }
+            return removed;
+        }
+
+        /**
+         * Spawns a car or a plane directly in front of the player (or of the vehicle they are driving),
+         * facing the same way. Returns the new vehicle.
+         */
+        function spawnVehicle(kind = 'car', options = {}) {
+            if (kind !== 'car' && kind !== 'plane') return null;
+
+            const activeV = playerController.getState() === 'IN_VEHICLE' ? playerController.getVehicle() : null;
+            let ox, oz, dx, dz, extra = 0;
+            if (activeV) {
+                // The chase camera sits behind the vehicle, so measure from the vehicle itself
+                ox = activeV.position.x;
+                oz = activeV.position.z;
+                dx = -Math.sin(activeV.yaw);
+                dz = -Math.cos(activeV.yaw);
+                extra = (activeV.radius || 2.25) + 1.0;
+            } else {
+                camera.getWorldDirection(_spawnDir);
+                ox = camera.position.x;
+                oz = camera.position.z;
+                dx = _spawnDir.x;
+                dz = _spawnDir.z;
+                if (Math.hypot(dx, dz) < 0.05) { // looking straight up/down
+                    dx = -Math.sin(fpCameraYaw);
+                    dz = -Math.cos(fpCameraYaw);
+                }
+            }
+            const len = Math.hypot(dx, dz) || 1;
+            dx /= len;
+            dz /= len;
+
+            const dist = SPAWN_DISTANCE[kind] + extra;
+            const x = ox + dx * dist;
+            const z = oz + dz * dist;
+            const yaw = Math.atan2(-dx, -dz);
+            const palette = SPAWN_COLORS[kind];
+            const color = palette[spawnCounter % palette.length];
+            const id = `spawned_${kind}_${++spawnCounter}`;
+
+            const vehicle = (kind === 'plane')
+                ? new Plane(id, x, z, yaw, color)
+                : new Vehicle(id, x, z, yaw, color, false);
+            vehicle.isSpawned = true;
+            vehicle.spawnKind = kind;
+            if (kind === 'plane' && options.airborne) {
+                // Cruising at 120 m so the player doesn't need a clear runway between the houses
+                vehicle.position.y = 120;
+                vehicle.speed = 45;
+                vehicle.throttle = 0.7;
+                vehicle.onGround = false;
+                vehicle._updateMeshTransform(0);
+            }
+            scene.add(vehicle.getMesh());
+            spawnedVehicles.push(vehicle);
+            spatialGrid.insertDynamic(vehicle.id, vehicle.position.x, vehicle.position.z, vehicle.radius, vehicle);
+
+            // Keep the world tidy: drop the oldest unoccupied vehicles of this kind over the cap
+            const ofKind = spawnedVehicles.filter(v => v.spawnKind === kind);
+            for (let i = 0; ofKind.length - i > MAX_SPAWNED[kind] && i < ofKind.length; i++) {
+                if (ofKind[i] !== vehicle) removeSpawnedVehicle(ofKind[i]);
+            }
+
+            // A plane spawned in the air is useless unless someone is flying it, so it always boards
+            const board = (kind === 'plane' && options.airborne) ||
+                (options.board !== undefined ? !!options.board : !!document.getElementById('dev-board-on-spawn')?.checked);
+            if (board && playerController.getState() === 'ON_FOOT' && !carjackState.active) {
+                if (playerController.enterVehicle(vehicle)) handleEnterVehicleRadio();
+            }
+            return vehicle;
+        }
+
+        // Let go of every held movement key (menus and chat take over the keyboard)
+        function releaseHeldKeys() {
+            for (const k of ['w', 'a', 's', 'd', 'shift']) fpKeys[k] = false;
+            for (const k of ['w', 'a', 's', 'd', 'shift', 'space']) playerController.keys[k] = false;
+            for (const k of Object.keys(arrowLookKeys)) arrowLookKeys[k] = false;
+        }
+
+        function setDevMenuOpen(open) {
+            open = !!open;
+            if (open && !gameStarted) return false;
+            devMenuOpen = open;
+            const menu = document.getElementById('dev-menu');
+            if (menu) menu.style.display = open ? 'block' : 'none';
+            if (open) {
+                try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) {}
+                releaseHeldKeys();
+                const status = document.getElementById('dev-menu-status');
+                if (status) status.textContent = `${spawnedVehicles.length} spawned vehicle(s) in the world`;
+            } else {
+                if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
+                if (!isMobile && !devMode) {
+                    try {
+                        const lock = renderer.domElement.requestPointerLock();
+                        if (lock && typeof lock.catch === 'function') lock.catch(() => {});
+                    } catch (e) {}
+                }
+            }
+            return devMenuOpen;
+        }
+
+        function devSpawn(kind, options = {}) {
+            const v = spawnVehicle(kind, options);
+            const status = document.getElementById('dev-menu-status');
+            if (status) {
+                status.textContent = v
+                    ? `Spawned ${kind} (${spawnedVehicles.length} spawned in world)`
+                    : `Could not spawn ${kind}`;
+            }
+            // Boarding a flying plane: get the menu out of the way so you can fly
+            if (v && options.airborne) setDevMenuOpen(false);
+            return v;
+        }
+        document.getElementById('dev-spawn-car')?.addEventListener('click', () => devSpawn('car'));
+        document.getElementById('dev-spawn-plane')?.addEventListener('click', () => devSpawn('plane'));
+        document.getElementById('dev-spawn-plane-air')?.addEventListener('click', () => devSpawn('plane', { airborne: true }));
+        document.getElementById('dev-clear-spawned')?.addEventListener('click', () => {
+            const n = clearSpawnedVehicles();
+            const status = document.getElementById('dev-menu-status');
+            if (status) status.textContent = `Removed ${n} vehicle(s)`;
+        });
+        document.getElementById('dev-fly-cam')?.addEventListener('click', () => {
+            setDevMenuOpen(false);
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F12' }));
+        });
+        document.getElementById('dev-menu-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setDevMenuOpen(!devMenuOpen);
+        });
+        const devMenuRoot = document.getElementById('dev-menu');
+        if (devMenuRoot) {
+            devMenuRoot.addEventListener('mousedown', (e) => e.stopPropagation());
+            // Don't leave a menu button focused: Space/Enter in-game would "click" it again
+            devMenuRoot.addEventListener('click', (e) => {
+                if (e.target && typeof e.target.blur === 'function' && e.target.tagName === 'BUTTON') e.target.blur();
+            });
+        }
+
+        // ============ MULTIPLAYER ============
+        // Players, their vehicles, chat, gunfire, hits and plane explosions are shared through the game server.
+        // Everything else (traffic, pedestrians, police) is simulated locally by each player.
+        const remotePlayers = new RemotePlayers(scene);
+        let mp = null;
+        let mpSendTimer = 0;
+        let lastHitBy = null; // who last shot us, for the kill feed
+        const mpStatusEl = document.getElementById('mp-status');
+        const mpBarEl = document.getElementById('mp-bar');
+        const chatLogEl = document.getElementById('chat-log');
+        const chatInputEl = document.getElementById('chat-input');
+        let chatOpen = false;
+        let mpOnlineCount = 0;
+
+        function mpSend(message) {
+            return mp ? mp.send(message) : false;
+        }
+
+        // Multiplayer damage is milder than the single-player one-shot kills
+        function mpShotDamage(weapon) {
+            if (weapon.explosive) return 75;
+            return Math.max(10, Math.min(40, Math.round((weapon.damage || 40) * 0.25)));
+        }
+
+        function setMpStatus(status) {
+            if (!mpStatusEl) return;
+            mpStatusEl.className = status === 'online' ? 'online' : (status === 'connecting' ? 'connecting' : 'offline');
+            if (status === 'online') {
+                mpStatusEl.textContent = `🟢 ${Math.max(1, mpOnlineCount)} online`;
+            } else if (status === 'connecting') {
+                mpStatusEl.textContent = '🟡 Connecting...';
+            } else {
+                mpStatusEl.textContent = 'Offline (tap to retry)';
+                remotePlayers.dispose();
+            }
+        }
+
+        function addChatLine(who, text, cls = '') {
+            if (!chatLogEl) return;
+            const line = document.createElement('div');
+            line.className = 'line ' + cls;
+            if (who) {
+                const w = document.createElement('span');
+                w.className = 'who';
+                w.textContent = who + ': ';
+                line.appendChild(w);
+            }
+            line.appendChild(document.createTextNode(text)); // textContent only: chat is untrusted
+            chatLogEl.appendChild(line);
+            while (chatLogEl.children.length > 7) chatLogEl.removeChild(chatLogEl.firstChild);
+            setTimeout(() => line.classList.add('old'), 12000);
+            setTimeout(() => { if (line.parentNode) line.parentNode.removeChild(line); }, 14000);
+        }
+
+        function openChat() {
+            if (!mp || chatOpen || !chatInputEl) return;
+            chatOpen = true;
+            try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) {}
+            releaseHeldKeys();
+            chatInputEl.value = '';
+            chatInputEl.style.display = 'block';
+            chatInputEl.focus();
+        }
+
+        function closeChat(send) {
+            if (!chatOpen) return;
+            chatOpen = false;
+            const text = chatInputEl.value.trim();
+            chatInputEl.value = '';
+            chatInputEl.style.display = 'none';
+            chatInputEl.blur();
+            if (send && text) sendChatMessage(text);
+            if (!isMobile && !devMode && !devMenuOpen) {
+                try {
+                    const lock = renderer.domElement.requestPointerLock();
+                    if (lock && typeof lock.catch === 'function') lock.catch(() => {});
+                } catch (e) {}
+            }
+        }
+
+        function sendChatMessage(text) {
+            text = String(text || '').trim().slice(0, 120);
+            if (!text) return false;
+            return mpSend({ type: 'chat', text });
+        }
+
+        if (chatInputEl) {
+            chatInputEl.addEventListener('keydown', (e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter') { e.preventDefault(); closeChat(true); }
+                else if (e.key === 'Escape') { e.preventDefault(); closeChat(false); }
+            });
+            chatInputEl.addEventListener('keyup', (e) => e.stopPropagation());
+        }
+        document.getElementById('mp-chat-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (e.currentTarget && e.currentTarget.blur) e.currentTarget.blur();
+            if (chatOpen) closeChat(false); else openChat();
+        });
+        mpStatusEl?.addEventListener('click', () => {
+            if (mp && mp.status === 'offline') mp.retry();
+        });
+
+        // Pose we report to other players
+        function mpPose() {
+            const veh = playerController.getState() === 'IN_VEHICLE' ? playerController.getVehicle() : null;
+            if (veh) {
+                return {
+                    x: veh.position.x, y: veh.position.y, z: veh.position.z,
+                    yaw: veh.yaw, pitch: veh.pitch || 0, roll: veh.roll || 0,
+                    state: veh.isPlane ? 'plane' : 'car',
+                    color: (typeof veh.color === 'number') ? veh.color : 0x111111
+                };
+            }
+            return { x: myPosition.x, y: myPosition.y, z: myPosition.z, yaw: fpCameraYaw, pitch: 0, roll: 0, state: 'foot', color: 0 };
+        }
+
+        function playRemoteShot(msg) {
+            const w = weapons.find((x) => x.name === msg.weapon);
+            if (!w) return;
+            const d = Math.hypot(msg.ox - camera.position.x, msg.oz - camera.position.z);
+            if (d > 220) return;
+            try {
+                const base = w.audioObj || gunFallbackSound;
+                const a = base.cloneNode();
+                a.volume = Math.max(0, 0.7 * (1 - d / 220));
+                a.play().catch(() => {});
+            } catch (e) {}
+        }
+
+        function handleMpMessage(msg) {
+            switch (msg.type) {
+                case 'welcome':
+                    addChatLine('', 'Connected to multiplayer', 'system');
+                    break;
+                case 'players':
+                    remotePlayers.sync(msg.players, mp ? mp.id : null);
+                    mpOnlineCount = msg.players.length;
+                    if (mp && mp.status === 'online' && mpStatusEl) mpStatusEl.textContent = `🟢 ${mpOnlineCount} online`;
+                    break;
+                case 'chat':
+                    addChatLine(msg.name, msg.text, (mp && msg.id === mp.id) ? 'self' : '');
+                    break;
+                case 'kill':
+                    addChatLine('', msg.killer ? `${msg.killer} killed ${msg.victim}` : `${msg.victim} died`, 'system');
+                    break;
+                case 'shot':
+                    playRemoteShot(msg);
+                    break;
+                case 'event':
+                    if (msg.kind === 'explosion') spawnExplosion(msg.x, msg.y, msg.z);
+                    break;
+                case 'hit':
+                    lastHitBy = msg.shooterName || null;
+                    damagePlayer(Math.max(1, Math.round(msg.damage || 15)));
+                    break;
+                case 'full':
+                    addChatLine('', 'Server is full - playing single player', 'system');
+                    break;
+            }
+        }
+
+        function startMultiplayer(name) {
+            if (mp) return;
+            if (new URLSearchParams(location.search).get('multiplayer') === '0') return;
+            const url = resolveServerUrl();
+            if (mpBarEl) mpBarEl.style.display = 'flex';
+            if (!url) { setMpStatus('offline'); return; }
+            mp = new MultiplayerClient({
+                url,
+                getJoinInfo: () => Object.assign({ name }, mpPose()),
+                onMessage: handleMpMessage,
+                onStatus: setMpStatus
+            });
+            mp.connect();
+        }
+
+        // Per fixed step: smooth remote players and send our own pose ~15 times a second
+        function mpTick(dt) {
+            if (!mp) return;
+            remotePlayers.update(dt);
+            mpSendTimer += dt;
+            if (mpSendTimer >= MP_SEND_INTERVAL) {
+                mpSendTimer = 0;
+                if (mp.isOnline) mp.send(Object.assign({ type: 'update' }, mpPose()));
+            }
+        }
+
+        function getMultiplayerState() {
+            return {
+                enabled: !!mp,
+                status: mp ? mp.status : 'offline',
+                id: mp ? mp.id : null,
+                onlineCount: mpOnlineCount,
+                players: remotePlayers.getSummary()
+            };
+        }
+
         // ============ DEV FLY MODE ============
         let devMode = false;
         const devFlySpeed = 1.5;
@@ -3583,6 +4408,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             // Show HUD
             document.getElementById('crosshair').style.display = 'block';
             document.getElementById('spray-hud').style.display = 'block';
+            document.getElementById('dev-menu-btn').style.display = 'block';
+            startMultiplayer((playerNameInput.value || '').trim() || 'Player');
             imageUploadBtn.style.display = 'block';
             modeIndicator.style.display = 'block';
             updateModeIndicator();
@@ -3604,7 +4431,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         
         // Pointer lock
         renderer.domElement.addEventListener('click', () => {
-            if (gameStarted && !devMode) {
+            if (gameStarted && !devMode && !devMenuOpen && !chatOpen) {
                 renderer.domElement.requestPointerLock();
             }
         });
@@ -3654,8 +4481,10 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
         // Mouse buttons - shoot gun, aim in vehicle, spray, or image paste
         renderer.domElement.addEventListener('mousedown', (e) => {
-            if (!gameStarted || devMode) return;
+            if (!gameStarted || devMode || devMenuOpen || chatOpen) return;
             const inVehicle = (playerController && playerController.getState() === 'IN_VEHICLE');
+            // Drive-by aiming and shooting use the car cockpit, so they don't apply while piloting a plane
+            if (inVehicle && getActivePlane()) return;
 
             if (e.button === 2) { // Right Click - Aim pistol in first person while driving
                 if (inVehicle) {
@@ -3732,6 +4561,23 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         
         // Keyboard
         document.addEventListener('keydown', (event) => {
+            // ` toggles the dev menu (Esc closes it); ignored while typing in a text field
+            const typing = event.target && (event.target.tagName === 'INPUT' && event.target.type === 'text' || event.target.tagName === 'TEXTAREA');
+            if (!typing && gameStarted && (event.key === '`' || (event.key === 'Escape' && devMenuOpen))) {
+                event.preventDefault();
+                setDevMenuOpen(event.key === 'Escape' ? false : !devMenuOpen);
+                return;
+            }
+            // Everything else is ignored while the menu is open (keyup still releases held keys)
+            if (devMenuOpen) return;
+            // ...and while typing a chat message (the input handles Enter / Esc itself)
+            if (chatOpen) return;
+            if (!typing && gameStarted && mp && (event.key === 't' || event.key === 'T' || event.key === 'Enter')) {
+                event.preventDefault();
+                openChat();
+                return;
+            }
+
             // F12 toggles dev fly mode
             if (event.key === 'F12') {
                 event.preventDefault();
@@ -3783,8 +4629,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             if (keyLower === 'e') {
                 if (playerController.getState() === 'ON_FOOT') {
                     const nearPed = getNearbyPedestrian(4.0);
-                    const nearCar = playerController.getNearbyVehicle([playerVehicle, ...trafficVehicles]);
-                    if (nearPed && (!nearCar || Math.hypot(nearPed.mesh.position.x - myPosition.x, nearPed.mesh.position.z - myPosition.z) <= Math.hypot(nearCar.position.x - myPosition.x, nearCar.position.z - myPosition.z))) {
+                    const nearCar = playerController.getNearbyVehicle([playerVehicle, ...trafficVehicles, ...spawnedVehicles]);
+                    if (nearPed &&(!nearCar || Math.hypot(nearPed.mesh.position.x - myPosition.x, nearPed.mesh.position.z - myPosition.z) <= Math.hypot(nearCar.position.x - myPosition.x, nearCar.position.z - myPosition.z))) {
                         talkToNearbyPedestrian();
                     } else {
                         tryBoardOrJackVehicle();
@@ -3795,6 +4641,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                         handleExitVehicleRadio();
                         myPosition.copy(playerController.position);
                         camera.position.set(playerController.position.x, playerController.position.y + 1.7, playerController.position.z);
+                    } else if (getActivePlane()) {
+                        showToast('Land and slow down before leaving the plane');
                     }
                 }
                 return;
@@ -3956,30 +4804,86 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         updateWeaponHUD();
         
         // ============ MOBILE CONTROLS ============
+        // Touch input is translated into the same keyboard / mouse events the desktop controls use, so
+        // walking, driving, flying, weapons, the radio and the dev menu all behave identically.
         const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+        if (isMobile) document.body.classList.add('is-mobile');
         const mobileControls = document.getElementById('mobile-controls');
         const mobileJoystick = document.getElementById('mobile-joystick');
         const mobileJoystickThumb = document.getElementById('mobile-joystick-thumb');
         const mobileLook = document.getElementById('mobile-look');
         const mobileSprayBtn = document.getElementById('mobile-spray-btn');
         const mobileModeBtn = document.getElementById('mobile-mode-btn');
-        const mobileUploadBtn = document.getElementById('mobile-upload-btn');
         const mobileColorBtn = document.getElementById('mobile-color-btn');
-        
+
         let joystickTouchId = null;
         let joystickCenterX = 0, joystickCenterY = 0;
         let joystickDx = 0, joystickDy = 0;
         let lookTouchId = null;
         let lookLastX = 0, lookLastY = 0;
         const mobileLookSensitivity = 0.004;
-        
+        const mobileLookPixelScale = mobileLookSensitivity / fpMouseSensitivity; // touch px -> equivalent mouse px
+
         function showMobileControls() {
             if (isMobile) {
                 mobileControls.style.display = 'block';
             }
         }
-        
-        // Joystick touch handlers
+
+        // ---- Virtual keys: dispatch real key events, only on change ----
+        const virtualKeys = {};
+        function setVirtualKey(key, down) {
+            if (!!virtualKeys[key] === down) return;
+            virtualKeys[key] = down;
+            document.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { key, bubbles: true, cancelable: true }));
+        }
+        function releaseVirtualKeys() {
+            for (const key of Object.keys(virtualKeys)) setVirtualKey(key, false);
+        }
+        function tapVirtualKey(key) {
+            setVirtualKey(key, true);
+            setVirtualKey(key, false);
+        }
+        function fireMouse(type, button, target) {
+            (target || renderer.domElement).dispatchEvent(new MouseEvent(type, { button, bubbles: true, cancelable: true }));
+        }
+
+        /**
+         * Binds a touch button. onDown runs on touchstart, onUp on touchend/touchcancel.
+         * The button highlights while held.
+         */
+        function bindMobileButton(el, onDown, onUp) {
+            if (!el) return;
+            let activeTouch = null;
+            el.addEventListener('touchstart', (e) => {
+                e.preventDefault(); e.stopPropagation();
+                if (activeTouch !== null) return;
+                activeTouch = e.changedTouches[0].identifier;
+                el.classList.add('held');
+                if (onDown) onDown();
+            }, { passive: false });
+            const end = (e) => {
+                for (const t of e.changedTouches) {
+                    if (t.identifier === activeTouch) {
+                        activeTouch = null;
+                        el.classList.remove('held');
+                        if (onUp) onUp();
+                    }
+                }
+            };
+            el.addEventListener('touchend', (e) => { e.preventDefault(); end(e); }, { passive: false });
+            el.addEventListener('touchcancel', end);
+        }
+
+        // ---- Context: what the player is doing decides which buttons show and what the stick does ----
+        let mobileMode = 'foot';
+        function getMobileMode() {
+            if (playerController.getState() !== 'IN_VEHICLE') return 'foot';
+            const v = playerController.getVehicle();
+            return (v && v.isPlane) ? 'plane' : 'car';
+        }
+
+        // Joystick
         mobileJoystick.addEventListener('touchstart', (e) => {
             e.preventDefault();
             const touch = e.changedTouches[0];
@@ -3988,7 +4892,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             joystickCenterX = rect.left + rect.width / 2;
             joystickCenterY = rect.top + rect.height / 2;
         }, { passive: false });
-        
+
         mobileJoystick.addEventListener('touchmove', (e) => {
             e.preventDefault();
             for (const touch of e.changedTouches) {
@@ -4004,15 +4908,15 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 }
             }
         }, { passive: false });
-        
+
         function resetJoystick() {
             joystickTouchId = null;
             joystickDx = 0;
             joystickDy = 0;
             mobileJoystickThumb.style.transform = 'translate(-50%, -50%)';
-            fpKeys.w = false; fpKeys.a = false; fpKeys.s = false; fpKeys.d = false;
+            for (const key of ['w', 'a', 's', 'd', 'Shift', 'ArrowUp', 'ArrowDown']) setVirtualKey(key, false);
         }
-        
+
         mobileJoystick.addEventListener('touchend', (e) => {
             for (const touch of e.changedTouches) {
                 if (touch.identifier === joystickTouchId) resetJoystick();
@@ -4023,8 +4927,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 if (touch.identifier === joystickTouchId) resetJoystick();
             }
         });
-        
-        // Look touch handlers
+
+        // Look / camera orbit (goes through the same path as the mouse so first person, chase orbit and aiming all work)
         mobileLook.addEventListener('touchstart', (e) => {
             e.preventDefault();
             const touch = e.changedTouches[0];
@@ -4032,7 +4936,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             lookLastX = touch.clientX;
             lookLastY = touch.clientY;
         }, { passive: false });
-        
+
         mobileLook.addEventListener('touchmove', (e) => {
             e.preventDefault();
             for (const touch of e.changedTouches) {
@@ -4041,13 +4945,11 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     const dy = touch.clientY - lookLastY;
                     lookLastX = touch.clientX;
                     lookLastY = touch.clientY;
-                    fpCameraYaw -= dx * mobileLookSensitivity;
-                    fpCameraPitch -= dy * mobileLookSensitivity;
-                    fpCameraPitch = Math.max(-fpMaxPitch, Math.min(fpMaxPitch, fpCameraPitch));
+                    if (!devMenuOpen) applyLookDelta(dx * mobileLookPixelScale, dy * mobileLookPixelScale);
                 }
             }
         }, { passive: false });
-        
+
         mobileLook.addEventListener('touchend', (e) => {
             for (const touch of e.changedTouches) {
                 if (touch.identifier === lookTouchId) lookTouchId = null;
@@ -4058,50 +4960,92 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 if (touch.identifier === lookTouchId) lookTouchId = null;
             }
         });
-        
-        // Spray button
-        mobileSprayBtn.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            if (imageMode) {
-                pasteImageAtTarget();
-            } else {
-                isSpraying = true;
-                sprayAtTarget();
-            }
-        }, { passive: false });
-        mobileSprayBtn.addEventListener('touchend', (e) => { e.preventDefault(); isSpraying = false; }, { passive: false });
-        mobileSprayBtn.addEventListener('touchcancel', (e) => { isSpraying = false; });
-        
-        // Mode toggle button
-        mobileModeBtn.addEventListener('touchstart', (e) => {
-            e.preventDefault(); e.stopPropagation();
+
+        // Fire / spray: same as holding the left mouse button
+        bindMobileButton(mobileSprayBtn, () => fireMouse('mousedown', 0), () => fireMouse('mouseup', 0, document));
+
+        // Use (E): enter / exit vehicle, talk to a pedestrian
+        bindMobileButton(document.getElementById('mobile-use-btn'), () => tapVirtualKey('e'));
+        // Weapon switch (Q)
+        bindMobileButton(document.getElementById('mobile-weapon-btn'), () => tapVirtualKey('q'));
+        // Drive-by aim: hold = right mouse button
+        bindMobileButton(document.getElementById('mobile-aim-btn'), () => fireMouse('mousedown', 2), () => fireMouse('mouseup', 2, document));
+        // Handbrake in cars / wheel brake in planes: Space
+        bindMobileButton(document.getElementById('mobile-brake-btn'), () => setVirtualKey(' ', true), () => setVirtualKey(' ', false));
+        // Plane throttle lever: W up, S down
+        bindMobileButton(document.getElementById('mobile-thr-up-btn'), () => setVirtualKey('w', true), () => setVirtualKey('w', false));
+        bindMobileButton(document.getElementById('mobile-thr-down-btn'), () => setVirtualKey('s', true), () => setVirtualKey('s', false));
+        // Radio: R pause/play, N next track
+        bindMobileButton(document.getElementById('mobile-radio-btn'), () => tapVirtualKey('r'));
+        bindMobileButton(document.getElementById('mobile-radio-skip-btn'), () => tapVirtualKey('n'));
+
+        // Spray / image mode toggle
+        bindMobileButton(mobileModeBtn, () => {
             toggleMode();
             mobileModeBtn.textContent = imageMode ? 'Image' : 'Spray';
-            mobileSprayBtn.textContent = imageMode ? 'Paste' : 'Spray';
-        }, { passive: false });
-        
-        // Upload button
-        mobileUploadBtn.addEventListener('touchstart', (e) => {
-            e.preventDefault(); e.stopPropagation();
-            imageFileInput.click();
-        }, { passive: false });
-        
-        // Color button
-        mobileColorBtn.addEventListener('touchstart', (e) => {
-            e.preventDefault(); e.stopPropagation();
-            toggleColorPicker();
-        }, { passive: false });
-        
-        // Update movement from joystick each frame
+        });
+
+        // Color picker
+        bindMobileButton(mobileColorBtn, () => toggleColorPicker());
+
+        // Upload an image to paste
+        bindMobileButton(document.getElementById('mobile-upload-btn'), () => imageFileInput.click());
+
+        let _mobileFireLabel = '';
+        let _mobileUseLabel = '';
+        const mobileUseBtn = document.getElementById('mobile-use-btn');
+
+        // Per-frame: map the stick onto keys for the current mode, and keep the button set / labels in sync
         function updateMobileJoystick() {
-            if (!isMobile || joystickTouchId === null) return;
+            if (!isMobile) return;
+
+            const mode = getMobileMode();
+            if (mode !== mobileMode) {
+                // Stick meaning changes (e.g. walking -> flying): let go of everything first
+                releaseVirtualKeys();
+                if (joystickTouchId !== null) {
+                    joystickTouchId = null;
+                    joystickDx = joystickDy = 0;
+                    mobileJoystickThumb.style.transform = 'translate(-50%, -50%)';
+                }
+                mobileMode = mode;
+                mobileControls.classList.remove('mode-foot', 'mode-car', 'mode-plane');
+                mobileControls.classList.add('mode-' + mode);
+                document.body.classList.toggle('mobile-vehicle', mode !== 'foot');
+            }
+
+            const useLabel = mode === 'foot' ? 'Use' : 'Exit';
+            if (useLabel !== _mobileUseLabel) {
+                _mobileUseLabel = useLabel;
+                mobileUseBtn.textContent = useLabel;
+            }
+            let fireLabel = 'Fire';
+            if (mode === 'foot') {
+                fireLabel = currentWeaponIndex > 0 ? 'Fire' : (imageMode ? 'Paste' : 'Spray');
+            }
+            if (fireLabel !== _mobileFireLabel) {
+                _mobileFireLabel = fireLabel;
+                mobileSprayBtn.textContent = fireLabel;
+            }
+
+            if (joystickTouchId === null) return;
             const deadzone = 0.15;
-            fpKeys.w = joystickDy < -deadzone;
-            fpKeys.s = joystickDy > deadzone;
-            fpKeys.a = joystickDx < -deadzone;
-            fpKeys.d = joystickDx > deadzone;
+            if (mode === 'plane') {
+                // Stick left/right banks; stick up pushes the nose down, stick down pulls it up
+                setVirtualKey('a', joystickDx < -deadzone);
+                setVirtualKey('d', joystickDx > deadzone);
+                setVirtualKey('ArrowUp', joystickDy < -0.2);
+                setVirtualKey('ArrowDown', joystickDy > 0.2);
+            } else {
+                setVirtualKey('w', joystickDy < -deadzone);
+                setVirtualKey('s', joystickDy > deadzone);
+                setVirtualKey('a', joystickDx < -deadzone);
+                setVirtualKey('d', joystickDx > deadzone);
+                // Pushing the stick to its edge on foot runs
+                setVirtualKey('Shift', mode === 'foot' && Math.hypot(joystickDx, joystickDy) > 0.92);
+            }
         }
-        
+
         // ============ WINDOW RESIZE ============
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
@@ -4146,11 +5090,16 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     }
                     const activeV = playerController.getVehicle() || playerVehicle;
                     playerController.update(dt, spatialGrid, roadNetwork);
+                    if (activeV.isPlane) {
+                        // Arrow Down pulls the nose up, Arrow Up pushes it down
+                        activeV.setPitchInput((arrowLookKeys.ArrowDown ? 1 : 0) - (arrowLookKeys.ArrowUp ? 1 : 0));
+                    }
                     activeV.update(dt, spatialGrid);
+                    if (activeV.isPlane && activeV.crashed) explodePlane(activeV);
                     myPosition.set(activeV.position.x, activeV.position.y, activeV.position.z);
                     cameraController.update(dt, myPosition);
                     updateCivicHUD(activeV, false, true);
-                    updateCarAudio(activeV, true);
+                    updateCarAudio(activeV, !activeV.wrecked);
                 } else {
                     if (radioState.isInCar) {
                         handleExitVehicleRadio();
@@ -4169,6 +5118,22 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 previousPlayerState = currentState;
             }
 
+            // Step dev-spawned cars and planes (the one being driven was already stepped above)
+            const drivenVehicle = (playerController.getState() === 'IN_VEHICLE') ? playerController.getVehicle() : null;
+            // Backwards: a crashed plane removes itself from the list while we iterate
+            for (let i = spawnedVehicles.length - 1; i >= 0; i--) {
+                const sv = spawnedVehicles[i];
+                if (sv !== drivenVehicle) {
+                    sv.update(dt, spatialGrid);
+                    if (sv.isPlane && sv.crashed) explodePlane(sv);
+                }
+            }
+            updateExplosions(dt);
+            mpTick(dt);
+            const pilotedPlane = getActivePlane();
+            updatePlaneHUD(pilotedPlane && !pilotedPlane.wrecked ? pilotedPlane : null);
+            setRadioBadge(pilotedPlane ? '✈ RADIO' : '📻 RADIO');
+
             // Update sky dome, sun position, and directional shadow frustum to follow player
             skyDomeMesh.position.set(myPosition.x, 0, myPosition.z);
             sunSkyGroup.position.set(
@@ -4180,7 +5145,9 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             sunLight.target.position.set(myPosition.x, 0, myPosition.z);
 
             // Update 12 autonomous AI traffic fleet (Pure Pursuit + IDM + Anti-Overlap + InstancedMesh)
-            trafficManager.update(dt, playerController.getVehicle() || playerVehicle);
+            // (A plane flying overhead is not a road obstacle, so traffic keeps using the Civic as its reference.)
+            const trafficRef = (drivenVehicle && !drivenVehicle.isPlane) ? drivenVehicle : playerVehicle;
+            trafficManager.update(dt, trafficRef);
 
             // Check vehicle-pedestrian impacts (ragdoll launch scaled by car speed) & update pedestrians/projectiles
             checkVehiclePedestrianImpacts();
@@ -4188,11 +5155,13 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             updateProjectiles(dt);
 
             // Update drifting tire smoke particles (space handbrake / skidding)
-            const activeCar = (playerController.getState() === 'IN_VEHICLE') 
-                ? (playerController.getVehicle() || playerVehicle) 
+            const activeCar = (playerController.getState() === 'IN_VEHICLE')
+                ? (playerController.getVehicle() || playerVehicle)
                 : null;
+            // Aircraft have no tyre smoke; only cars feed the drift smoke system
+            const smokeCar = (activeCar && activeCar.isPlane) ? null : activeCar;
             const isSpaceDrifting = !!(playerController && playerController.keys && playerController.keys.space);
-            tireSmokeSystem.update(dt, activeCar, isSpaceDrifting);
+            tireSmokeSystem.update(dt, smokeCar, isSpaceDrifting);
 
             // Update police pursuit vehicles, sirens & wanted state
             if (policeSystem) {
@@ -4201,6 +5170,17 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 policeSystem.update(dt, targetPos, isPlayerDriving, spatialGrid, roadNetwork, camera.position);
                 // Police called on the player -> play ActiveShooter.mp3 and cut other music
                 setPoliceChaseMusic(policeSystem.wantedLevel > 0);
+                // Police dispatch calls that depend on what the cops can see
+                const inVehicleNow = playerController.getState() === 'IN_VEHICLE';
+                if (isPoliceChaseMusicActive && policeSystem.canSeePlayer) {
+                    if (!hasPoliceSpottedPlayer) {
+                        hasPoliceSpottedPlayer = true;
+                        queueDispatch('suspect_identified');
+                    } else if (inVehicleNow !== wasPlayerInVehicle) {
+                        queueDispatch(inVehicleNow ? 'fleeing_vehicle' : 'travelling_on_foot');
+                    }
+                }
+                wasPlayerInVehicle = inVehicleNow;
             }
 
             if (damageFlashTimer > 0) {
@@ -4216,6 +5196,12 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 spatialGrid.insertDynamic('player', myPosition.x, myPosition.z, playerRadius, _playerEntity);
             }
             spatialGrid.insertDynamic(playerVehicle.id, playerVehicle.position.x, playerVehicle.position.z, playerVehicle.radius, playerVehicle);
+            for (let i = 0, len = spawnedVehicles.length; i < len; i++) {
+                const sv = spawnedVehicles[i];
+                // Planes only collide with ground traffic while they are on (or just above) the ground
+                if (sv.isPlane && sv.position.y > 3) continue;
+                spatialGrid.insertDynamic(sv.id, sv.position.x, sv.position.z, sv.radius, sv);
+            }
             for (let i = 0, len = trafficVehicles.length; i < len; i++) {
                 const tv = trafficVehicles[i];
                 spatialGrid.insertDynamic(tv.id, tv.position.x, tv.position.z, tv.radius, tv);
@@ -4327,6 +5313,11 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             getActiveDialog: () => activeDialog,
             getFootstepHistory: () => footstepHistory,
             tryBoardOrJackVehicle,
+            getMultiplayerState,
+            sendChatMessage,
+            spawnVehicle,
+            getSpawnedVehicles: () => spawnedVehicles,
+            setDevMenuOpen,
             startCarjackAnimation,
             getCarjackState: () => carjackState,
             getCarAudioState: () => carAudioState,

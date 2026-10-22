@@ -305,52 +305,8 @@ app.get('/api/spotify/status', (req, res) => {
 });
 
 // ============ MULTIPLAYER GAME SERVER ============
-const WebSocket = require('ws');
-const players = new Map();
-
-function broadcastPlayerList(wss) {
-  const playerList = Array.from(players.values()).map(p => ({
-    id: p.id,
-    name: p.name,
-    x: p.x,
-    y: p.y,
-    z: p.z,
-    yaw: p.yaw,
-    ragdoll: p.ragdoll || false
-  }));
-  
-  const message = JSON.stringify({ type: 'players', players: playerList });
-  wss.clients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(message);
-    }
-  });
-}
-
-// Map to track WebSocket connections to player IDs
-const wsToPlayerId = new Map();
-const playerIdToWs = new Map();
-
-// Send hit notification to a specific player
-function sendHitNotification(targetId, shooterName, weapon) {
-  const targetWs = playerIdToWs.get(targetId);
-  if (targetWs && targetWs.readyState === WebSocket.OPEN) {
-    targetWs.send(JSON.stringify({
-      type: 'hit',
-      shooterName: shooterName,
-      weapon: weapon
-    }));
-  }
-}
-
-function broadcastVatsEvent(wss, event) {
-  const message = JSON.stringify(event);
-  wss.clients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(message);
-    }
-  });
-}
+// Player sync, chat and PvP hits live in multiplayerServer.js
+const { attachMultiplayer } = require('./multiplayerServer');
 
 function createServer() {
   if (!hasTlsCerts) {
@@ -363,97 +319,8 @@ function createServer() {
   }, app);
 }
 
-function attachWebSocketServer(server) {
-  const wss = new WebSocket.Server({ server });
-
-  wss.on('connection', (ws) => {
-    const playerId = Math.random().toString(36).slice(2, 11);
-    console.log(`Player connected: ${playerId}`);
-    wsToPlayerId.set(ws, playerId);
-    playerIdToWs.set(playerId, ws);
-
-    ws.on('message', (data) => {
-      try {
-        const msg = JSON.parse(data);
-
-        if (msg.type === 'join') {
-          players.set(playerId, {
-            id: playerId,
-            name: msg.name || 'Player',
-            x: msg.x || 0,
-            y: msg.y || 1.7,
-            z: msg.z || 0,
-            yaw: msg.yaw || 0,
-            ragdoll: false
-          });
-          ws.send(JSON.stringify({ type: 'welcome', id: playerId }));
-          broadcastPlayerList(wss);
-        }
-
-        if (msg.type === 'update') {
-          const player = players.get(playerId);
-          if (player) {
-            player.x = msg.x;
-            player.y = msg.y;
-            player.z = msg.z;
-            player.yaw = msg.yaw;
-            broadcastPlayerList(wss);
-          }
-        }
-
-        if (msg.type === 'shoot') {
-          const shooter = players.get(playerId);
-          if (shooter && msg.targetId) {
-            sendHitNotification(msg.targetId, shooter.name, msg.weapon);
-          }
-        }
-
-        if (msg.type === 'ragdoll') {
-          const player = players.get(playerId);
-          if (player) {
-            player.ragdoll = msg.ragdoll;
-            broadcastPlayerList(wss);
-          }
-        }
-
-        if (msg.type === 'vats') {
-          const shooter = players.get(playerId);
-          if (shooter && msg.targetId) {
-            const event = {
-              type: 'vats',
-              shooterId: playerId,
-              shooterName: shooter.name,
-              targetId: msg.targetId,
-              part: msg.part,
-              shots: msg.shots,
-              weapon: msg.weapon,
-              success: msg.success
-            };
-            if (msg.success) {
-              sendHitNotification(msg.targetId, shooter.name, msg.weapon);
-            }
-            broadcastVatsEvent(wss, event);
-          }
-        }
-      } catch (e) {
-        console.error('WebSocket message error:', e);
-      }
-    });
-
-    ws.on('close', () => {
-      console.log(`Player disconnected: ${playerId}`);
-      players.delete(playerId);
-      wsToPlayerId.delete(ws);
-      playerIdToWs.delete(playerId);
-      broadcastPlayerList(wss);
-    });
-  });
-
-  return wss;
-}
-
 const server = createServer();
-attachWebSocketServer(server);
+attachMultiplayer(server, { log: console.log });
 
 server.listen(PORT, HOST, () => {
   const wsProtocol = hasTlsCerts ? 'wss' : 'ws';
