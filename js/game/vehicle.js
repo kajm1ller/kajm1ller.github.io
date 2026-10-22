@@ -13,7 +13,7 @@
  * - Project coordinate frame: yaw=0 points along -Z (Three.js standard camera & roadNetwork convention)
  * - 2D planar collision detection (3-circle decomposition with zero-gap capsule coverage)
  * - Contact normal MTV separation and impulse reflection against SpatialGrid obstacles
- * - World boundary clamping within [-280, 280]
+ * - World boundary clamping at the edge of the map (CONFIG.WORLD.SAFE_BOUNDS)
  * - Defensive Number.isFinite() validation with lastSafePosition corruption recovery
  * - Zero GC allocation during active 60Hz physics stepping
  * - PROJECT.md § Interface Contracts (3. Vehicle Interface)
@@ -589,7 +589,7 @@ export class Vehicle {
             this._syncCollisionCircles();
         }
 
-        // 6. Hard world boundary clamping within [-280, 280]
+        // 6. Hard world boundary clamping at the edge of the map
         this._enforceWorldBounds();
 
         // 7. Defensive validation & lastSafePosition recovery
@@ -802,25 +802,25 @@ export class Vehicle {
     }
 
     /**
-     * Enforces world bounds clamping within [-280, 280] meters.
+     * Enforces world bounds clamping at the edge of the map (CONFIG.WORLD.SAFE_BOUNDS).
      */
     _enforceWorldBounds() {
-        const bound = 280.0;
+        const bounds = CONFIG.WORLD.SAFE_BOUNDS;
         const margin = this.circleRadius;
 
-        if (this.position.x < -bound + margin) {
-            this.position.x = -bound + margin;
+        if (this.position.x < bounds.MIN_X + margin) {
+            this.position.x = bounds.MIN_X + margin;
             if (this.velocity.x < 0) this.velocity.x = -0.2 * this.velocity.x;
-        } else if (this.position.x > bound - margin) {
-            this.position.x = bound - margin;
+        } else if (this.position.x > bounds.MAX_X - margin) {
+            this.position.x = bounds.MAX_X - margin;
             if (this.velocity.x > 0) this.velocity.x = -0.2 * this.velocity.x;
         }
 
-        if (this.position.z < -bound + margin) {
-            this.position.z = -bound + margin;
+        if (this.position.z < bounds.MIN_Z + margin) {
+            this.position.z = bounds.MIN_Z + margin;
             if (this.velocity.y < 0) this.velocity.y = -0.2 * this.velocity.y;
-        } else if (this.position.z > bound - margin) {
-            this.position.z = bound - margin;
+        } else if (this.position.z > bounds.MAX_Z - margin) {
+            this.position.z = bounds.MAX_Z - margin;
             if (this.velocity.y > 0) this.velocity.y = -0.2 * this.velocity.y;
         }
     }

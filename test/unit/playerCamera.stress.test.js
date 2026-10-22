@@ -415,8 +415,9 @@ test('V3.3: 4-sided total entrapment triggers safe bounded fallback without cras
     const fallback = pc.calculateSafeExitPosition(car, grid);
     assert.ok(fallback, 'Must return fallback position');
     assert.ok(Number.isFinite(fallback.x) && Number.isFinite(fallback.y) && Number.isFinite(fallback.z), 'Coordinates must be finite');
-    assert.ok(fallback.x >= -280 && fallback.x <= 280, 'Fallback X must be in safe bounds');
-    assert.ok(fallback.z >= -280 && fallback.z <= 280, 'Fallback Z must be in safe bounds');
+    const bounds = CONFIG.WORLD.SAFE_BOUNDS;
+    assert.ok(fallback.x >= bounds.MIN_X && fallback.x <= bounds.MAX_X, 'Fallback X must be in safe bounds');
+    assert.ok(fallback.z >= bounds.MIN_Z && fallback.z <= bounds.MAX_Z, 'Fallback Z must be in safe bounds');
 
     const exited = pc.exitVehicle(grid);
     assert.equal(exited, true, 'Exit must succeed even under total cage obstruction');

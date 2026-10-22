@@ -15,7 +15,7 @@
  *    - Deep penetration inside static obstacles
  *    - Opposing obstacle crushing vice (opposing MTVs)
  *    - Dynamic vehicle vs vehicle head-on collision at 56 m/s closing speed
- *    - World boundary clamping across all 4 cardinal directions and corners within [-280, 280]
+ *    - World boundary clamping across all 4 cardinal directions and corners at the map edge (CONFIG.WORLD.SAFE_BOUNDS)
  *    - lastSafePosition recovery activation under numerical corruption
  * 3. RoadNetwork Waypoint Queries & Lookaheads (50,000 randomized queries):
  *    - 50,000 randomized getNearestWaypoint() queries over wide coordinate spaces
@@ -28,6 +28,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { Vehicle } from '../../js/game/vehicle.js';
+import { CONFIG } from '../../js/game/config.js';
+
+const BOUNDS = CONFIG.WORLD.SAFE_BOUNDS;
+const inBoundsX = (x) => x >= BOUNDS.MIN_X && x <= BOUNDS.MAX_X;
+const inBoundsZ = (z) => z >= BOUNDS.MIN_Z && z <= BOUNDS.MAX_Z;
 import { RoadNetwork } from '../../js/game/roadNetwork.js';
 import { SpatialGrid } from '../../js/game/spatialGrid.js';
 
@@ -122,8 +127,8 @@ test('Challenger 1.2: Infinite, NaN, and corrupt inputs in setInputs()', () => {
 
     // Vehicle state must remain clean and bounded
     const finalPos = v.getPosition();
-    assert(finalPos.x >= -280 && finalPos.x <= 280);
-    assert(finalPos.z >= -280 && finalPos.z <= 280);
+    assert(inBoundsX(finalPos.x));
+    assert(inBoundsZ(finalPos.z));
 });
 
 test('Challenger 1.3: Extreme dt spikes (lag spikes, microsteps, negative dt, non-finite dt)', () => {
@@ -137,14 +142,14 @@ test('Challenger 1.3: Extreme dt spikes (lag spikes, microsteps, negative dt, no
     // 1. Extreme lag spike: dt = 5.0 seconds
     v.update(5.0);
     assertVehicleFinite(v, 'dt = 5.0s');
-    assert(v.getPosition().x <= 280 && v.getPosition().x >= -280);
-    assert(v.getPosition().z <= 280 && v.getPosition().z >= -280);
+    assert(inBoundsX(v.getPosition().x));
+    assert(inBoundsZ(v.getPosition().z));
 
     // 2. Huge lag spike: dt = 100.0 seconds (must clamp to bounds)
     v.update(100.0);
     assertVehicleFinite(v, 'dt = 100.0s');
-    assert(Math.abs(v.getPosition().x) <= 280);
-    assert(Math.abs(v.getPosition().z) <= 280);
+    assert(inBoundsX(v.getPosition().x));
+    assert(inBoundsZ(v.getPosition().z));
 
     // 3. Microsteps: dt = 0.000001 seconds
     for (let i = 0; i < 100; i++) {
@@ -185,8 +190,8 @@ test('Challenger 1.4: High-frequency adversarial input chatter (600 ticks)', () 
         assertVehicleFinite(v, `Chatter tick ${tick}`);
     }
 
-    assert(Math.abs(v.getPosition().x) <= 280);
-    assert(Math.abs(v.getPosition().z) <= 280);
+    assert(inBoundsX(v.getPosition().x));
+    assert(inBoundsZ(v.getPosition().z));
 });
 
 // -----------------------------------------------------------------------------
@@ -216,7 +221,7 @@ test('Challenger 2.1: High-velocity obstacle impact at 28 m/s (MTV reflection & 
     // Bounding hull must be pushed outside rock surface (rock z max is -17)
     // Vehicle center + front circle offset (1.35) + circleRadius (1.10) = front bumper at z - 2.45
     assert(pos.z > -18.5, `Vehicle must be deflected outside obstacle: z=${pos.z}`);
-    assert(Math.abs(pos.x) <= 280);
+    assert(inBoundsX(pos.x));
 });
 
 test('Challenger 2.2: Dense obstacle field traversal at max velocity (120+ static obstacles)', () => {
@@ -243,8 +248,8 @@ test('Challenger 2.2: Dense obstacle field traversal at max velocity (120+ stati
     }
 
     const pos = v.getPosition();
-    assert(Math.abs(pos.x) <= 280);
-    assert(Math.abs(pos.z) <= 280);
+    assert(inBoundsX(pos.x));
+    assert(inBoundsZ(pos.z));
 });
 
 test('Challenger 2.3: Opposing obstacle crushing vice (opposing MTV equilibrium)', () => {
@@ -329,14 +334,14 @@ test('Challenger 2.5: High-speed dynamic head-on vehicle collision at 56 m/s clo
     assert(dist > 0.5, `Vehicles should bounce apart, distance=${dist}`);
 });
 
-test('Challenger 2.6: World boundary containment across all bounds and corners [-280, 280]', () => {
+test('Challenger 2.6: World boundary containment across all bounds and corners at the map edge', () => {
     const boundTests = [
-        { name: 'North', x: 0, z: -270, yaw: 0, vx: 0, vz: -28 },
-        { name: 'South', x: 0, z: 270, yaw: Math.PI, vx: 0, vz: 28 },
-        { name: 'East', x: 270, z: 0, yaw: -Math.PI / 2, vx: 28, vz: 0 },
-        { name: 'West', x: -270, z: 0, yaw: Math.PI / 2, vx: -28, vz: 0 },
-        { name: 'Corner NE', x: 275, z: -275, yaw: -Math.PI / 4, vx: 20, vz: -20 },
-        { name: 'Corner SW', x: -275, z: 275, yaw: 3 * Math.PI / 4, vx: -20, vz: 20 }
+        { name: 'North', x: 0, z: BOUNDS.MIN_Z + 10, yaw: 0, vx: 0, vz: -28 },
+        { name: 'South', x: 0, z: BOUNDS.MAX_Z - 10, yaw: Math.PI, vx: 0, vz: 28 },
+        { name: 'East', x: BOUNDS.MAX_X - 10, z: 0, yaw: -Math.PI / 2, vx: 28, vz: 0 },
+        { name: 'West', x: BOUNDS.MIN_X + 10, z: 0, yaw: Math.PI / 2, vx: -28, vz: 0 },
+        { name: 'Corner NE', x: BOUNDS.MAX_X - 5, z: BOUNDS.MIN_Z + 5, yaw: -Math.PI / 4, vx: 20, vz: -20 },
+        { name: 'Corner SW', x: BOUNDS.MIN_X + 5, z: BOUNDS.MAX_Z - 5, yaw: 3 * Math.PI / 4, vx: -20, vz: 20 }
     ];
 
     for (const testCase of boundTests) {
@@ -351,8 +356,8 @@ test('Challenger 2.6: World boundary containment across all bounds and corners [
         }
 
         const p = v.getPosition();
-        assert(p.x >= -280 && p.x <= 280, `${testCase.name}: X out of bounds: ${p.x}`);
-        assert(p.z >= -280 && p.z <= 280, `${testCase.name}: Z out of bounds: ${p.z}`);
+        assert(inBoundsX(p.x), `${testCase.name}: X out of bounds: ${p.x}`);
+        assert(inBoundsZ(p.z), `${testCase.name}: Z out of bounds: ${p.z}`);
     }
 });
 

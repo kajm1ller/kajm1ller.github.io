@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { Vehicle } from '../../js/game/vehicle.js';
 import { SpatialGrid } from '../../js/game/spatialGrid.js';
+import { CONFIG } from '../../js/game/config.js';
 
 test('Vehicle: Initialization pose and bounding circles', () => {
     const v = new Vehicle('car_test', 10, 20, 0, 0xff0000, true);
@@ -79,7 +80,7 @@ test('Vehicle: Contradictory inputs handling (W+S, A+D, handbrake)', () => {
     assert(Number.isFinite(v.getSpeed()));
 });
 
-test('Vehicle: Static collision and boundary clamping within [-280, 280]', () => {
+test('Vehicle: Static collision and boundary clamping at the map edge (CONFIG.WORLD.SAFE_BOUNDS)', () => {
     const grid = new SpatialGrid(300, 15);
     // Obstacle at (0, -10)
     grid.insertStatic('obs_1', {
@@ -101,9 +102,10 @@ test('Vehicle: Static collision and boundary clamping within [-280, 280]', () =>
     assert(pos.z > -10.5, `Should not penetrate deep into static obstacle: z=${pos.z}`);
     
     // Boundary enforcement test
-    v.position.set(300, 0, 300);
+    const bounds = CONFIG.WORLD.SAFE_BOUNDS;
+    v.position.set(bounds.MAX_X + 20, 0, bounds.MAX_Z + 20);
     v.update(1 / 60);
     const clampedPos = v.getPosition();
-    assert(clampedPos.x <= 280, `X clamped: ${clampedPos.x}`);
-    assert(clampedPos.z <= 280, `Z clamped: ${clampedPos.z}`);
+    assert(clampedPos.x <= bounds.MAX_X, `X clamped: ${clampedPos.x}`);
+    assert(clampedPos.z <= bounds.MAX_Z, `Z clamped: ${clampedPos.z}`);
 });

@@ -627,7 +627,7 @@
     <div id="spray-hud">Spray Can | Scroll to resize | C colors | V mode</div>
     <div id="color-picker"></div>
     <div id="dev-hud">DEV FLY MODE
-WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
+WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
     <input type="file" id="image-file-input" accept="image/*" style="display:none">
     <button id="image-upload-btn">📷 Upload Image</button>
     <div id="mode-indicator">Mode: Spray</div>
@@ -678,7 +678,7 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
         
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.25, 3000);
         
-        // Player starting position at Kaj's house in /anothermapo
+        // Player starting position at Kaj's house in /mapfinal
         const playerStartPos = new THREE.Vector3(
             ANOTHERMAPO_CONFIG.SPAWN.PLAYER_START.x,
             ANOTHERMAPO_CONFIG.SPAWN.PLAYER_START.y,
@@ -871,7 +871,7 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
         scene.add(playerVehicle.getMesh());
         spatialGrid.insertDynamic(playerVehicle.id, playerVehicle.position.x, playerVehicle.position.z, playerVehicle.radius, playerVehicle);
 
-        // Spawn 12 autonomous AI traffic Honda Civics along /anothermapo streets using GPU InstancedVehicleFleet
+        // Spawn 12 autonomous AI traffic Honda Civics along /mapfinal streets using GPU InstancedVehicleFleet
         const trafficManager = new TrafficManager(roadNetwork, spatialGrid, { useInstancing: true });
         const trafficVehicles = trafficManager.initFleet(12, scene);
 
@@ -3475,7 +3475,7 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             camera.rotation.z = 0;
             
             const hud = document.getElementById('dev-hud');
-            hud.textContent = `DEV FLY MODE | X:${devCamPos.x.toFixed(1)} Y:${devCamPos.y.toFixed(1)} Z:${devCamPos.z.toFixed(1)}\nWASD + Space/Shift | Ctrl = Sprint | F12 = Exit`;
+            hud.textContent = `DEV FLY MODE | X:${devCamPos.x.toFixed(1)} Y:${devCamPos.y.toFixed(1)} Z:${devCamPos.z.toFixed(1)}\nWASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit`;
         }
         
         // ============ PLAYER MOVEMENT (Zero-allocation scratch vectors) ============
@@ -3609,22 +3609,41 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             }
         });
         
-        // Mouse look
-        document.addEventListener('mousemove', (event) => {
-            if (document.pointerLockElement !== renderer.domElement) return;
-            
+        // Turn the view by a mouse-style delta (pixels); shared by mouse look and arrow-key look
+        function applyLookDelta(movementX, movementY) {
             if (cameraController) {
-                cameraController.handleMouseMove(event.movementX, event.movementY);
+                cameraController.handleMouseMove(movementX, movementY);
                 fpCameraYaw = cameraController.fpYaw;
                 fpCameraPitch = cameraController.fpPitch;
             } else {
-                fpCameraYaw -= event.movementX * fpMouseSensitivity;
-                fpCameraPitch -= event.movementY * fpMouseSensitivity;
+                fpCameraYaw -= movementX * fpMouseSensitivity;
+                fpCameraPitch -= movementY * fpMouseSensitivity;
                 fpCameraPitch = Math.max(-fpMaxPitch, Math.min(fpMaxPitch, fpCameraPitch));
                 while (fpCameraYaw > Math.PI) fpCameraYaw -= 2 * Math.PI;
                 while (fpCameraYaw < -Math.PI) fpCameraYaw += 2 * Math.PI;
             }
+        }
+
+        // Mouse look
+        document.addEventListener('mousemove', (event) => {
+            if (document.pointerLockElement !== renderer.domElement) return;
+            applyLookDelta(event.movementX, event.movementY);
         });
+
+        // Arrow-key look (first person on foot and dev fly mode)
+        const arrowLookKeys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
+        const arrowLookSpeed = 2.0; // radians per second
+
+        function updateArrowKeyLook(dt) {
+            const turn = (arrowLookKeys.ArrowLeft ? 1 : 0) - (arrowLookKeys.ArrowRight ? 1 : 0);
+            const tilt = (arrowLookKeys.ArrowUp ? 1 : 0) - (arrowLookKeys.ArrowDown ? 1 : 0);
+            if (turn === 0 && tilt === 0) return;
+            const inFirstPerson = gameStarted && playerController.getState() === 'ON_FOOT';
+            if (!devMode && !inFirstPerson) return;
+            // Express the turn as the equivalent mouse movement so it follows the same clamping and wrapping
+            const pixels = (arrowLookSpeed * dt) / fpMouseSensitivity;
+            applyLookDelta(-turn * pixels, -tilt * pixels);
+        }
         
         let isRightMouseDown = false;
         let isVehicleAiming = false;
@@ -3733,7 +3752,13 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                 }
                 return;
             }
-            
+
+            if (event.key in arrowLookKeys && (gameStarted || devMode)) {
+                event.preventDefault();
+                arrowLookKeys[event.key] = true;
+                return;
+            }
+
             if (devMode) {
                 switch(event.key.toLowerCase()) {
                     case 'w': devFlyKeys.w = true; break;
@@ -3824,6 +3849,11 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
         });
         
         document.addEventListener('keyup', (event) => {
+            if (event.key in arrowLookKeys) {
+                arrowLookKeys[event.key] = false;
+                return;
+            }
+
             if (devMode) {
                 switch(event.key.toLowerCase()) {
                     case 'w': devFlyKeys.w = false; break;
@@ -3866,15 +3896,9 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
             }
         });
         
-        // ============ /ANOTHERMAPO 3D MAP LOADER (NO PROCEDURAL MAP) ============
+        // ============ /MAPFINAL 3D MAP LOADER (NO PROCEDURAL MAP) ============
         const loadingDiv = document.getElementById('loading');
-        
-        // Insert perimeter boundary walls into spatial grid at +-280m
-        spatialGrid.insertStatic('wall_n', { min: { x: -300, y: 0, z: 280 }, max: { x: 300, y: 5, z: 300 } });
-        spatialGrid.insertStatic('wall_s', { min: { x: -300, y: 0, z: -300 }, max: { x: 300, y: 5, z: -280 } });
-        spatialGrid.insertStatic('wall_e', { min: { x: 280, y: 0, z: -300 }, max: { x: 300, y: 5, z: 300 } });
-        spatialGrid.insertStatic('wall_w', { min: { x: -300, y: 0, z: -300 }, max: { x: -280, y: 5, z: 300 } });
-        
+
         // Build flat list of meshes for spray raycasting
         function buildSprayTargets() {
             sprayTargetMeshes = [];
@@ -3888,18 +3912,21 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
         const mapState = {
             isLoaded: false,
             parts: [],
+            failedParts: [],
+            textureFailures: [],
+            totalParts: 0,
             loadedPartsCount: 0,
             obstacleCount: 0,
             totalTriangles: 0
         };
+        // Loads every /mapfinal part (part0000.obj .. part0620.obj) plus all materials.mtl textures
         const anothermapoLoader = new AnothermapoLoader({
-            basePath: '/anothermapo/',
-            startPart: 0,
-            endPart: 8,
+            basePath: '/mapfinal/',
             batchSize: 6,
             roadNetwork,
             collisionMeshes
         });
+        mapState.totalParts = anothermapoLoader.totalParts;
         anothermapoLoader.load(scene, spatialGrid, (progress) => {
             if (loadingDiv) {
                 loadingDiv.textContent = 'Loading map... ' + progress.percent + '%';
@@ -3907,6 +3934,8 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
         }).then((result) => {
             mapState.isLoaded = true;
             mapState.parts = result.parts;
+            mapState.failedParts = result.failedParts;
+            mapState.textureFailures = result.textureFailures;
             mapState.loadedPartsCount = result.loadedPartsCount;
             mapState.obstacleCount = result.obstacleCount;
             mapState.totalTriangles = result.totalTriangles;
@@ -3914,7 +3943,8 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
                 loadingDiv.style.display = 'none';
             }
             buildSprayTargets();
-        }).catch(() => {
+        }).catch((err) => {
+            console.error('[Map] /mapfinal failed to load:', err);
             mapState.isLoaded = true;
             if (loadingDiv) {
                 loadingDiv.style.display = 'none';
@@ -4099,7 +4129,8 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
          */
         function stepSimulation(dt = FIXED_DELTA) {
             updateMobileJoystick();
-            
+            updateArrowKeyLook(dt);
+
             if (devMode) {
                 updateDevFlyCamera();
                 updateCarAudio(null, false);
@@ -4211,6 +4242,9 @@ WASD + Space/Shift | Ctrl = Sprint | F12 = Exit</div>
         function renderFrame() {
             sunHaloMesh.lookAt(camera.position);
             updateViewmodel();
+            
+            // Skip map tiles that sit entirely past the fog (or the far plane when fog is off in dev fly mode)
+            anothermapoLoader.updateVisibility(camera.position, scene.fog ? scene.fog.far : camera.far);
             
             renderer.render(scene, camera);
             

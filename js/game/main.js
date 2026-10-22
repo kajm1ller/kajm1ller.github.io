@@ -5,7 +5,7 @@
  * Modular entry providing:
  * - 60Hz fixed-timestep physics accumulator
  * - Spatial hash grid broadphase integration
- * - /anothermapo 3D map loader & OSM road network integration
+ * - /mapfinal 3D map loader & OSM road network integration
  * - Kaj Simulator Honda Civic vehicle physics & HUD integration
  * - Autonomous AI traffic fleet & GPU instanced rendering
  * - Testing Automation API (`window.__GAME__`) conforming to PROJECT.md §6

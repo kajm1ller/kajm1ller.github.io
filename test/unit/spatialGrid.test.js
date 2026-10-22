@@ -4,14 +4,25 @@ import { SpatialGrid } from '../../js/game/spatialGrid.js';
 import { CONFIG } from '../../js/game/config.js';
 
 test('SpatialGrid initialization dimensions and cell counts', () => {
-    const grid = new SpatialGrid(CONFIG.GRID.WORLD_HALF_SIZE, CONFIG.GRID.CELL_SIZE);
+    const mapGrid = new SpatialGrid(CONFIG.GRID.WORLD_HALF_SIZE, CONFIG.GRID.CELL_SIZE);
+    assert.equal(mapGrid.cols, CONFIG.GRID.COLS);
+    assert.equal(mapGrid.rows, CONFIG.GRID.ROWS);
+    assert.equal(mapGrid.totalCells, CONFIG.GRID.TOTAL_CELLS);
+    assert.equal(mapGrid.cells.length, CONFIG.GRID.TOTAL_CELLS);
+
+    const grid = new SpatialGrid(300, 15);
     assert.equal(grid.cols, 40);
     assert.equal(grid.rows, 40);
     assert.equal(grid.totalCells, 1600);
     assert.equal(grid.cells.length, 1600);
 
+    // Untouched cells are the shared empty placeholder until something is inserted
+    assert.equal(grid.cells[0].staticItems.length, 0);
+    assert.equal(grid.cells[0].dynamicCount, 0);
+
     // Verify cell 0 extents
-    const cell0 = grid.cells[0];
+    const cell0 = grid._getOrCreateCell(0);
+    assert.equal(grid.cells[0], cell0);
     assert.equal(cell0.col, 0);
     assert.equal(cell0.row, 0);
     assert.equal(cell0.minX, -300);

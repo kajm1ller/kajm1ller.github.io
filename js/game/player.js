@@ -371,7 +371,7 @@ export class PlayerController {
             }
         }
 
-        // Final safe fallback: Clamp Candidate 1 within safe bounds [-280, 280]
+        // Final safe fallback: Clamp Candidate 1 within the map's safe bounds
         const fallback = candidates[0];
         const safeBounds = (CONFIG.WORLD && CONFIG.WORLD.SAFE_BOUNDS) || { MIN_X: -280, MAX_X: 280, MIN_Z: -280, MAX_Z: 280 };
         return {

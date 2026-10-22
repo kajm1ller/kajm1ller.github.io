@@ -9,6 +9,21 @@
  * Conforms to PROJECT.md § Interface Contracts (SpatialGrid).
  */
 
+// Shared stand-in for cells that have never held anything; real cells are created on first insert.
+// It is never written to, and mirrors the real cell shape so query loops stay monomorphic.
+const EMPTY_CELL = {
+    id: -1,
+    col: -1,
+    row: -1,
+    minX: 0,
+    maxX: 0,
+    minZ: 0,
+    maxZ: 0,
+    staticItems: [],
+    dynamicItems: [],
+    dynamicCount: 0
+};
+
 export class SpatialGrid {
     /**
      * @param {number} worldSize Half-extent of world in meters (default 300 for [-300, 300])
@@ -21,27 +36,12 @@ export class SpatialGrid {
         this.rows = this.cols;
         this.totalCells = this.cols * this.rows;
 
-        // Pre-allocate 1D flattened cell array (40x40 = 1,600 cells)
-        this.cells = new Array(this.totalCells);
-        for (let i = 0; i < this.totalCells; i++) {
-            const col = i % this.cols;
-            const row = Math.floor(i / this.cols);
-            this.cells[i] = {
-                id: i,
-                col,
-                row,
-                minX: col * cellSize - worldSize,
-                maxX: (col + 1) * cellSize - worldSize,
-                minZ: row * cellSize - worldSize,
-                maxZ: (row + 1) * cellSize - worldSize,
-                staticItems: [],
-                dynamicItems: [],
-                dynamicCount: 0
-            };
-        }
+        // 1D flattened cell array; every slot starts as EMPTY_CELL and becomes a real cell on first insert,
+        // so a map-sized grid (millions of cells) only pays for the cells that hold something
+        this.cells = new Array(this.totalCells).fill(EMPTY_CELL);
 
         // Active dynamic cell tracker for O(active) zero-allocation clears
-        this.activeCells = new Array(this.totalCells);
+        this.activeCells = [];
         this.activeCellCount = 0;
 
         // Monotonic query timestamp counter for O(1) deduplication without Set or GC allocations
@@ -67,6 +67,33 @@ export class SpatialGrid {
      */
     _getRow(z) {
         return Math.max(0, Math.min(this.rows - 1, Math.floor((z + this.worldSize) / this.cellSize)));
+    }
+
+    /**
+     * Returns the real cell at a flattened index, creating it the first time something is inserted there.
+     * @param {number} index Flattened cell index (row * cols + col)
+     * @returns {Object} Mutable cell
+     */
+    _getOrCreateCell(index) {
+        let cell = this.cells[index];
+        if (cell === EMPTY_CELL) {
+            const col = index % this.cols;
+            const row = Math.floor(index / this.cols);
+            cell = {
+                id: index,
+                col,
+                row,
+                minX: col * this.cellSize - this.worldSize,
+                maxX: (col + 1) * this.cellSize - this.worldSize,
+                minZ: row * this.cellSize - this.worldSize,
+                maxZ: (row + 1) * this.cellSize - this.worldSize,
+                staticItems: [],
+                dynamicItems: [],
+                dynamicCount: 0
+            };
+            this.cells[index] = cell;
+        }
+        return cell;
     }
 
     /**
@@ -117,7 +144,7 @@ export class SpatialGrid {
         for (let r = minRow; r <= maxRow; r++) {
             const rowOffset = r * this.cols;
             for (let c = minCol; c <= maxCol; c++) {
-                this.cells[rowOffset + c].staticItems.push(entry);
+                this._getOrCreateCell(rowOffset + c).staticItems.push(entry);
             }
         }
         return entry;
@@ -125,7 +152,7 @@ export class SpatialGrid {
 
     /**
      * Inserts or updates a dynamic entity (player, vehicle) into all cells it overlaps.
-     * Guaranteed zero heap allocations after initial insertion via two-tier entry pooling.
+     * Zero heap allocations after initial insertion via two-tier entry pooling (a cell is allocated once, the first time anything enters it).
      * 
      * @param {string|number} id Unique entity ID
      * @param {number} x World X position
@@ -190,7 +217,7 @@ export class SpatialGrid {
         for (let r = minRow; r <= maxRow; r++) {
             const rowOffset = r * this.cols;
             for (let c = minCol; c <= maxCol; c++) {
-                const cell = this.cells[rowOffset + c];
+                const cell = this._getOrCreateCell(rowOffset + c);
                 if (cell.dynamicCount === 0) {
                     this.activeCells[this.activeCellCount++] = cell;
                 }

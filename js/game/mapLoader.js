@@ -1,26 +1,29 @@
 /**
  * js/game/mapLoader.js
- * 
- * High-Performance /anothermapo 3D Map Loader & Aligned OSM Road Network for Kaj Simulator.
- * 
+ *
+ * High-Performance /mapfinal 3D Map Loader & Aligned OSM Road Network for Kaj Simulator.
+ *
  * Key Capabilities:
  * 1. Fast Asynchronous Loading:
- *    - Loads /anothermapo/materials.mtl and part0000.obj .. part0029.obj.
- *    - Concurrency-controlled chunked pipeline (4 concurrent workers).
+ *    - Loads /mapfinal/materials.mtl and every part (part0000.obj .. part0620.obj).
+ *    - Concurrency-controlled chunked pipeline (6 concurrent workers).
  * 2. Spatial Hash Grid Collision Optimization:
  *    - Parses building, wall, fence, and obstacle geometry during loading.
  *    - Computes static AABB bounds and registers them into SpatialGrid.insertStatic()
  *      for O(1) broadphase collision queries with zero heap allocation during gameplay.
  * 3. 60 FPS Performance Pipeline:
- *    - Automatic frustum culling (child.frustumCulled = true).
+ *    - Re-buckets all part geometry into square world tiles (one indexed mesh per tile),
+ *      so frustum culling and view-distance culling skip everything off screen.
+ *    - Collapses the ~2100 OSM2World materials into a few dozen shared batch materials
+ *      (per-material Kd colour is baked into a vertex colour attribute).
  *    - Static matrix freeze (child.matrixAutoUpdate = false; child.updateMatrix()).
  */
 
 import * as THREE from 'three';
-import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 
 export const ANOTHERMAPO_CONFIG = Object.freeze({
+    // Game world projection (world origin sits in Kaj's neighbourhood)
     PROJECTION: Object.freeze({
         ORIGIN_LAT: 41.36928,
         ORIGIN_LON: -83.62857,
@@ -32,25 +35,29 @@ export const ANOTHERMAPO_CONFIG = Object.freeze({
     }),
 
     PATHS: Object.freeze({
-        MAP_DIR: '/anothermapo/',
+        MAP_DIR: '/mapfinal/',
         MTL_FILE: 'materials.mtl',
         PART_PREFIX: 'part',
         PART_EXT: '.obj'
     }),
 
+    // /mapfinal was exported by OSM2World around lat 41.376, lon -83.6564 rather than the game
+    // world origin above. Translating its geometry by this offset keeps the world origin, spawn
+    // points, road waypoints and boundary walls where they were. Measured by matching identical
+    // building vertices in both exports (Building25 by Kaj's house, Frickers downtown).
+    MAP_OFFSET: Object.freeze({ x: -2324.73, y: 0.0, z: -748.02 }),
+
     LOADING: Object.freeze({
-        DEFAULT_PART_START: 0,
-        DEFAULT_PART_END: 8,
-        CORE_PARTS: Object.freeze([
-            90, 91,
-            0, 1, 2, 3, 4, 5, 6, 7, 8,
-            15, 16, 17, 18,
-            43, 45, 56, 66, 80,
-            84, 85, 86, 87, 88
-        ]),
-        MAX_PART_COUNT: 92,
+        PART_COUNT: 621,
+        // part0594 .. part0620 are the flat TERRAIN_DEFAULT ground strips
+        TERRAIN_PART_START: 594,
+        TERRAIN_PART_END: 620,
         CONCURRENT_CHUNKS: 6,
         TIMEOUT_MS: 30000
+    }),
+
+    RENDER: Object.freeze({
+        TILE_SIZE: 400
     }),
 
     SPAWN: Object.freeze({
@@ -221,30 +228,115 @@ export const OSM_NEIGHBORHOOD_ROADS = [
     }
 ];
 
+// OSM2World material naming decides depth offset, culling side and alpha handling for each surface type
+function classifyMapMaterial(mName, isTerrainPart) {
+    if (isTerrainPart || mName.includes('TERRAIN')) return 'TERRAIN';
+    if (
+        mName.includes('GRASS') ||
+        mName.includes('EARTH') ||
+        mName.includes('GROUND') ||
+        mName.includes('SCRUB') ||
+        mName.includes('WATER')
+    ) return 'GROUND';
+    if (mName.includes('CONCRETE') || mName.includes('PAVING_STONE')) return 'PAVEMENT';
+    if (mName.includes('ASPHALT') || mName.includes('GRAVEL') || mName.endsWith('_0')) return 'ROAD';
+    if (!mName.endsWith('_0') && (mName.includes('ROAD_MARKING') || mName.endsWith('_1'))) return 'MARKING';
+    if (mName.includes('TREE_BILLBOARD') || mName.includes('FENCE') || mName.includes('HEDGE')) return 'CUTOUT';
+    return 'SOLID';
+}
+
+function applyMapMaterialClass(material, materialClass) {
+    switch (materialClass) {
+        case 'TERRAIN':
+            material.side = THREE.DoubleSide;
+            material.polygonOffset = true;
+            material.polygonOffsetFactor = 2;
+            material.polygonOffsetUnits = 2;
+            break;
+        case 'GROUND':
+            material.side = THREE.DoubleSide;
+            material.polygonOffset = true;
+            material.polygonOffsetFactor = 1;
+            material.polygonOffsetUnits = 1;
+            break;
+        case 'PAVEMENT':
+            material.side = THREE.DoubleSide;
+            material.polygonOffset = true;
+            material.polygonOffsetFactor = -1;
+            material.polygonOffsetUnits = -1;
+            break;
+        case 'ROAD':
+            material.side = THREE.DoubleSide;
+            break;
+        case 'MARKING':
+            material.side = THREE.DoubleSide;
+            material.transparent = true;
+            material.alphaTest = 0.1;
+            material.depthWrite = false;
+            material.polygonOffset = true;
+            material.polygonOffsetFactor = -2;
+            material.polygonOffsetUnits = -2;
+            break;
+        case 'CUTOUT':
+            material.side = THREE.DoubleSide;
+            material.alphaTest = 0.5;
+            material.transparent = true;
+            break;
+        default:
+            material.side = THREE.FrontSide;
+            break;
+    }
+}
+
+// Resolve a 1-based (or negative, relative) OBJ index to a 0-based index; -1 when absent
+function resolveObjIndex(token, count) {
+    const n = parseInt(token, 10);
+    if (!Number.isFinite(n) || n === 0) return -1;
+    return n > 0 ? n - 1 : count + n;
+}
+
 export class AnothermapoLoader {
     constructor(options = {}) {
         this.basePath = options.basePath || ANOTHERMAPO_CONFIG.PATHS.MAP_DIR;
-        this.startPart = options.startPart !== undefined ? options.startPart : ANOTHERMAPO_CONFIG.LOADING.DEFAULT_PART_START;
-        this.endPart = options.endPart !== undefined ? options.endPart : ANOTHERMAPO_CONFIG.LOADING.DEFAULT_PART_END;
+        this.partCount = options.partCount !== undefined ? options.partCount : ANOTHERMAPO_CONFIG.LOADING.PART_COUNT;
         this.batchSize = options.batchSize || ANOTHERMAPO_CONFIG.LOADING.CONCURRENT_CHUNKS;
-        this.enableFrustumCulling = options.enableFrustumCulling !== false;
+        this.tileSize = options.tileSize || ANOTHERMAPO_CONFIG.RENDER.TILE_SIZE;
+        this.offset = options.offset || ANOTHERMAPO_CONFIG.MAP_OFFSET;
         this.freezeTransforms = options.freezeTransforms !== false;
         this.registerColliders = options.registerColliders !== false;
         this.roadNetwork = options.roadNetwork || null;
         this.collisionMeshes = options.collisionMeshes || null;
 
         this.materials = null;
-        this.sharedMaterialCache = new Map();
+        this.materialInfoCache = new Map();
+        this.batchMaterials = new Map();
+        this.tileBuckets = new Map();
+        this.texturePromises = [];
+        this.textureFailures = [];
+        this.terrainBounds = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
+
         this.mapRoot = new THREE.Group();
         this.mapRoot.name = 'anothermapo_world_root';
         this.mapRoot.userData.isMap = true;
 
         this.parts = [];
+        this.failedParts = [];
+        this.tiles = [];
         this.isLoaded = false;
         this.loadedCount = 0;
-        this.totalParts = this.endPart - this.startPart + 1;
+        this.totalParts = this.partCount;
         this.obstacleCount = 0;
         this.totalTriangles = 0;
+    }
+
+    _partName(partIndex) {
+        const { PART_PREFIX, PART_EXT } = ANOTHERMAPO_CONFIG.PATHS;
+        return `${PART_PREFIX}${String(partIndex).padStart(4, '0')}${PART_EXT}`;
+    }
+
+    _isTerrainPart(partIndex) {
+        const { TERRAIN_PART_START, TERRAIN_PART_END } = ANOTHERMAPO_CONFIG.LOADING;
+        return partIndex >= TERRAIN_PART_START && partIndex <= TERRAIN_PART_END;
     }
 
     async load(scene, spatialGrid = null, onProgress = null) {
@@ -269,14 +361,30 @@ export class AnothermapoLoader {
                 mtlLoader.load(
                     ANOTHERMAPO_CONFIG.PATHS.MTL_FILE,
                     (materials) => {
-                        // Share a single Texture instance per texture URL across all materials to avoid 400+ duplicate HTTP requests
+                        // Share a single Texture instance per texture URL across all materials to avoid thousands of duplicate HTTP requests,
+                        // and track every texture so load() only resolves once they have all arrived
                         const texCache = new Map();
                         const texLoader = new THREE.TextureLoader(materials.manager);
-                        materials.loadTexture = function (url, mapping, onLoad, onProgress, onError) {
+                        materials.loadTexture = (url, mapping, onLoad, onProgress, onError) => {
                             if (texCache.has(url)) {
                                 return texCache.get(url);
                             }
-                            const texture = texLoader.load(url, onLoad, onProgress, onError);
+                            let settle;
+                            this.texturePromises.push(new Promise((r) => { settle = r; }));
+                            const texture = texLoader.load(
+                                url,
+                                (tex) => {
+                                    settle();
+                                    if (onLoad) onLoad(tex);
+                                },
+                                onProgress,
+                                (err) => {
+                                    this.textureFailures.push(url);
+                                    console.warn(`[AnothermapoLoader] Warning: texture ${url} failed to load:`, err);
+                                    settle();
+                                    if (onError) onError(err);
+                                }
+                            );
                             if (mapping !== undefined) texture.mapping = mapping;
                             texture.wrapS = THREE.RepeatWrapping;
                             texture.wrapT = THREE.RepeatWrapping;
@@ -286,7 +394,10 @@ export class AnothermapoLoader {
                         resolve(materials);
                     },
                     undefined,
-                    () => resolve(null)
+                    (err) => {
+                        console.warn('[AnothermapoLoader] Warning: materials.mtl failed to load:', err);
+                        resolve(null);
+                    }
                 );
             });
         } catch (e) {
@@ -295,50 +406,26 @@ export class AnothermapoLoader {
 
         report(15, `Loaded materials. Loading ${this.totalParts} map parts...`);
 
-        const fallbackMaterial = new THREE.MeshLambertMaterial({
-            color: 0x888888,
-            side: THREE.DoubleSide
-        });
-
-        // Build part list prioritizing terrain (part0090, part0091), roads (0..8), and Kaj's neighborhood (84..88, 15..41)
-        const partSet = new Set();
-        for (const pIdx of ANOTHERMAPO_CONFIG.LOADING.CORE_PARTS) {
-            partSet.add(`part${String(pIdx).padStart(4, '0')}.obj`);
-        }
-        for (let i = this.startPart; i <= this.endPart; i++) {
-            partSet.add(`part${String(i).padStart(4, '0')}.obj`);
-        }
-        const partNames = Array.from(partSet);
-        this.totalParts = partNames.length;
-
         let currentIndex = 0;
         const loadPartWorker = async () => {
-            // Give each worker its own OBJLoader instance to avoid state race conditions
-            const objLoader = new OBJLoader();
-            objLoader.setPath(this.basePath);
-            if (this.materials) {
-                objLoader.setMaterials(this.materials);
-            }
-
-            while (currentIndex < partNames.length) {
-                const idx = currentIndex++;
-                const partName = partNames[idx];
+            while (currentIndex < this.partCount) {
+                const partIndex = currentIndex++;
+                const partName = this._partName(partIndex);
 
                 try {
-                    const obj = await this._loadObjFile(objLoader, partName, spatialGrid);
-                    if (obj) {
-                        obj.name = partName;
-                        obj.userData.isMapPart = true;
-                        obj.userData.partName = partName;
-                        this._processPartMeshes(obj, fallbackMaterial, spatialGrid, partName);
-                        this.mapRoot.add(obj);
-                        this.parts.push(obj);
+                    const resp = await fetch(this.basePath + partName);
+                    if (!resp.ok) {
+                        throw new Error(`HTTP ${resp.status}`);
                     }
+                    const rawText = await resp.text();
+                    this._ingestObjText(rawText, partName, this._isTerrainPart(partIndex), spatialGrid);
+                    this.parts.push(partName);
                 } catch (err) {
+                    this.failedParts.push(partName);
                     console.warn(`[AnothermapoLoader] Warning: part ${partName} skipped:`, err);
                 } finally {
                     this.loadedCount++;
-                    const pct = 15 + ((this.loadedCount / this.totalParts) * 80);
+                    const pct = 15 + ((this.loadedCount / this.totalParts) * 75);
                     report(pct, `Loaded ${this.loadedCount}/${this.totalParts} map parts...`);
                 }
                 // Yield briefly to keep main thread responsive
@@ -352,39 +439,41 @@ export class AnothermapoLoader {
         }
         await Promise.all(workers);
 
-        // Add a sub-terrain base catcher at y = -0.08 inside mapRoot so any OSM2World triangulation seam or unloaded cutout never shows the void
-        const subTerrainMat = this.sharedMaterialCache.get('TERRAIN_DEFAULT_0__TERRAIN') ||
-            new THREE.MeshLambertMaterial({
-                name: 'SUBTERRAIN_BASE',
-                color: 0x4f6d32,
-                side: THREE.DoubleSide,
-                polygonOffset: true,
-                polygonOffsetFactor: 6,
-                polygonOffsetUnits: 6
-            });
-        const subTerrainGeo = new THREE.PlaneGeometry(3200, 3200);
-        subTerrainGeo.rotateX(-Math.PI / 2);
-        const subTerrainMesh = new THREE.Mesh(subTerrainGeo, subTerrainMat);
-        subTerrainMesh.name = 'anothermapo_subterrain_base';
-        subTerrainMesh.position.y = -0.08;
-        subTerrainMesh.frustumCulled = false;
-        subTerrainMesh.matrixAutoUpdate = false;
-        subTerrainMesh.updateMatrix();
-        subTerrainMesh.userData.isMapPart = true;
-        subTerrainMesh.userData.isSubTerrain = true;
-        this.mapRoot.add(subTerrainMesh);
+        report(90, 'Building map tiles...');
+        await this._buildTileMeshes((built, total) => {
+            report(90 + ((built / total) * 7), `Building map tiles ${built}/${total}...`);
+        });
+
+        report(97, `Loading ${this.texturePromises.length} map textures...`);
+        await Promise.all(this.texturePromises);
+
+        const terrainFiller = this._buildTerrainFiller();
+        if (terrainFiller) {
+            this.mapRoot.add(terrainFiller);
+        }
 
         if (scene) {
             scene.add(this.mapRoot);
         }
         this.isLoaded = true;
 
-        report(100, `Map ready! ${this.loadedCount} parts loaded (${this.obstacleCount} colliders registered).`);
+        if (this.failedParts.length > 0 || this.textureFailures.length > 0) {
+            console.warn(
+                `[AnothermapoLoader] Map loaded with ${this.failedParts.length} failed parts and ${this.textureFailures.length} failed textures.`,
+                this.failedParts,
+                this.textureFailures
+            );
+        }
+
+        report(100, `Map ready! ${this.parts.length}/${this.totalParts} parts loaded (${this.obstacleCount} colliders registered).`);
 
         return {
             isLoaded: true,
             mapRoot: this.mapRoot,
             parts: this.parts,
+            tiles: this.tiles,
+            failedParts: this.failedParts,
+            textureFailures: this.textureFailures,
             loadedPartsCount: this.parts.length,
             loadedCount: this.loadedCount,
             obstacleCount: this.obstacleCount,
@@ -392,51 +481,173 @@ export class AnothermapoLoader {
         };
     }
 
-    async _loadObjFile(objLoader, partName, spatialGrid = null) {
-        const extractColliders = (
-            partName === 'part0084.obj' ||
-            partName === 'part0086.obj' ||
-            partName === 'part0015.obj'
-        );
+    /**
+     * The OSM2World export has a few genuine holes where no surface was generated. Fill them with a
+     * ground sheet just below the terrain that uses the terrain's own batch material, colour and
+     * world-scale texture mapping (vt = source x, -source z), so wherever it overlaps the terrain it
+     * renders identical pixels and never shows as a separate, stretched texture.
+     */
+    _buildTerrainFiller() {
+        const tb = this.terrainBounds;
+        const terrainInfo = this.materialInfoCache.get('TERRAIN_DEFAULT_0|T');
+        if (!terrainInfo || !Number.isFinite(tb.minX) || !Number.isFinite(tb.minZ)) return null;
 
-        if (typeof fetch === 'function') {
-            try {
-                const resp = await fetch(this.basePath + partName);
-                if (!resp.ok) return null;
-                const rawText = await resp.text();
-                if (extractColliders && this.registerColliders && spatialGrid) {
-                    this._extractCollidersFromRawObj(rawText, spatialGrid, partName);
-                }
-                const textToParse = rawText.replace(/^[og]\s+.*$/gm, '');
-                const parsed = objLoader.parse(textToParse);
-                parsed.userData.isMergedPart = true;
-                return parsed;
-            } catch (e) {
-                // Fall back to standard objLoader.load
-            }
+        const corners = [
+            [tb.minX, tb.minZ],
+            [tb.minX, tb.maxZ],
+            [tb.maxX, tb.maxZ],
+            [tb.maxX, tb.minZ]
+        ];
+        const y = -0.05;
+        const pos = new Float32Array(12);
+        const nrm = new Int16Array(12);
+        const uv = new Float32Array(8);
+        const col = new Uint16Array(12);
+        for (let i = 0; i < 4; i++) {
+            const [x, z] = corners[i];
+            pos[i * 3] = x;
+            pos[i * 3 + 1] = y;
+            pos[i * 3 + 2] = z;
+            nrm[i * 3 + 1] = 32767;
+            uv[i * 2] = x - this.offset.x;
+            uv[i * 2 + 1] = -(z - this.offset.z);
+            col[i * 3] = terrainInfo.r;
+            col[i * 3 + 1] = terrainInfo.g;
+            col[i * 3 + 2] = terrainInfo.b;
         }
-        return new Promise((resolve) => {
-            objLoader.load(
-                partName,
-                (object) => resolve(object),
-                undefined,
-                () => resolve(null)
-            );
-        });
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geometry.setAttribute('normal', new THREE.BufferAttribute(nrm, 3, true));
+        geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+        geometry.setAttribute('color', new THREE.BufferAttribute(col, 3, true));
+        // Counter-clockwise when seen from above so the face normal points up
+        geometry.setIndex([0, 1, 2, 0, 2, 3]);
+        geometry.computeBoundingBox();
+        geometry.computeBoundingSphere();
+
+        const mesh = new THREE.Mesh(geometry, this.batchMaterials.get(terrainInfo.batchKey));
+        mesh.name = 'anothermapo_terrain_filler';
+        mesh.userData.isMapPart = true;
+        mesh.userData.isTerrainFiller = true;
+        mesh.frustumCulled = false;
+        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        mesh.matrixAutoUpdate = false;
+        mesh.updateMatrix();
+        return mesh;
     }
 
-    _extractCollidersFromRawObj(rawText, spatialGrid, partName) {
+    /**
+     * Hide tiles that are entirely beyond viewDistance (e.g. past the fog's far plane).
+     * Tiles live at the world origin, so their geometry bounding spheres are already in world space.
+     */
+    updateVisibility(cameraPosition, viewDistance) {
+        for (let i = 0, len = this.tiles.length; i < len; i++) {
+            const tile = this.tiles[i];
+            const sphere = tile.geometry.boundingSphere;
+            const dx = sphere.center.x - cameraPosition.x;
+            const dy = sphere.center.y - cameraPosition.y;
+            const dz = sphere.center.z - cameraPosition.z;
+            tile.visible = Math.sqrt(dx * dx + dy * dy + dz * dz) - sphere.radius <= viewDistance;
+        }
+    }
+
+    _getMaterialInfo(name, isTerrainPart) {
+        const cacheKey = name + (isTerrainPart ? '|T' : '|M');
+        const cached = this.materialInfoCache.get(cacheKey);
+        if (cached) return cached;
+
+        const mName = name.toUpperCase();
+        const materialClass = classifyMapMaterial(mName, isTerrainPart);
+
+        let color = new THREE.Color(0x888888);
+        let map = null;
+        let alphaMap = null;
+        let transparent = false;
+        let opacity = 1.0;
+        if (this.materials) {
+            const source = this.materials.create(name);
+            if (source) {
+                if (source.color) color = source.color.clone();
+                map = source.map || null;
+                alphaMap = source.alphaMap || null;
+                transparent = !!source.transparent;
+                opacity = source.opacity !== undefined ? source.opacity : 1.0;
+            }
+        }
+
+        // Materials that only differ by Kd colour share one batch material; the colour moves into the vertex colour attribute
+        const batchKey = [
+            materialClass,
+            map ? map.uuid : '-',
+            alphaMap ? alphaMap.uuid : '-',
+            transparent ? 1 : 0,
+            opacity
+        ].join('|');
+
+        if (!this.batchMaterials.has(batchKey)) {
+            const batchMaterial = new THREE.MeshLambertMaterial({
+                name: name,
+                color: 0xffffff,
+                vertexColors: true,
+                map,
+                alphaMap,
+                transparent,
+                opacity
+            });
+            if (batchMaterial.map) {
+                batchMaterial.map.wrapS = THREE.RepeatWrapping;
+                batchMaterial.map.wrapT = THREE.RepeatWrapping;
+            }
+            applyMapMaterialClass(batchMaterial, materialClass);
+            batchMaterial.userData.batchKey = batchKey;
+            this.batchMaterials.set(batchKey, batchMaterial);
+        }
+
+        const toUnorm16 = (v) => Math.max(0, Math.min(65535, Math.round(v * 65535)));
+        const info = {
+            batchKey,
+            // Lift road markings slightly above the asphalt; terrain, grass, sidewalks and roads stay flush at y = 0
+            lift: (!isTerrainPart && !mName.endsWith('_0') && (mName.includes('ROAD_MARKING') || mName.endsWith('_1'))) ? 0.012 : 0,
+            r: toUnorm16(color.r),
+            g: toUnorm16(color.g),
+            b: toUnorm16(color.b)
+        };
+        this.materialInfoCache.set(cacheKey, info);
+        return info;
+    }
+
+    /**
+     * Parse one OSM2World OBJ part, register its obstacle colliders, and append its triangles
+     * (offset into game world space) to the per-tile, per-batch-material vertex buckets.
+     */
+    _ingestObjText(rawText, partName, isTerrainPart, spatialGrid) {
+        const ox = this.offset.x;
+        const oy = this.offset.y;
+        const oz = this.offset.z;
+        const extractColliders = !isTerrainPart && this.registerColliders && !!spatialGrid;
+
+        const positions = [];
+        const uvs = [];
+        const normals = [];
+        const corners = [];          // 9 ints per triangle: (v, vt, vn) x 3, 0-based, -1 when absent
+        const triangleSlots = [];    // material slot per triangle
+        const slotNames = [];
+        const slotByName = new Map();
+        let currentSlot = -1;
+
+        // Per OBJ 'o'/'g' block AABB for obstacle colliders
         const ignoredMaterials = ANOTHERMAPO_CONFIG.COLLISION.IGNORED_MATERIALS;
         const minHeight = ANOTHERMAPO_CONFIG.COLLISION.MIN_OBSTACLE_HEIGHT;
         const minPlanar = ANOTHERMAPO_CONFIG.COLLISION.MIN_PLANAR_SIZE;
-
         let minX = Infinity, minY = Infinity, minZ = Infinity;
         let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-        let vCount = 0;
-        let matName = '';
+        let blockVertexCount = 0;
+        let blockMatName = '';
 
         const flushBlock = () => {
-            if (vCount >= 3) {
+            if (blockVertexCount >= 3) {
                 const height = maxY - minY;
                 const width = maxX - minX;
                 const depth = maxZ - minZ;
@@ -448,7 +659,7 @@ export class AnothermapoLoader {
                 ) {
                     let isIgnored = false;
                     for (let i = 0; i < ignoredMaterials.length; i++) {
-                        if (matName.includes(ignoredMaterials[i])) {
+                        if (blockMatName.includes(ignoredMaterials[i])) {
                             isIgnored = true;
                             break;
                         }
@@ -464,117 +675,296 @@ export class AnothermapoLoader {
             }
             minX = Infinity; minY = Infinity; minZ = Infinity;
             maxX = -Infinity; maxY = -Infinity; maxZ = -Infinity;
-            vCount = 0;
-            matName = '';
+            blockVertexCount = 0;
+            blockMatName = '';
         };
 
         const lines = rawText.split('\n');
-        for (let i = 0, len = lines.length; i < len; i++) {
-            const line = lines[i];
+        for (let li = 0, len = lines.length; li < len; li++) {
+            const line = lines[li];
             const c0 = line.charCodeAt(0);
             const c1 = line.charCodeAt(1);
-            // 'o ' (111, 32) or 'g ' (103, 32)
-            if ((c0 === 111 || c0 === 103) && c1 === 32) {
-                flushBlock();
-            } else if (c0 === 118 && c1 === 32) {
-                // 'v ' (118, 32)
-                const parts = line.trim().split(/\s+/);
-                if (parts.length >= 4) {
-                    const vx = parseFloat(parts[1]);
-                    const vy = parseFloat(parts[2]);
-                    const vz = parseFloat(parts[3]);
-                    if (vx < minX) minX = vx;
-                    if (vx > maxX) maxX = vx;
-                    if (vy < minY) minY = vy;
-                    if (vy > maxY) maxY = vy;
-                    if (vz < minZ) minZ = vz;
-                    if (vz > maxZ) maxZ = vz;
-                    vCount++;
+
+            if (c0 === 118) {
+                // 'v ' / 'vt' / 'vn'
+                if (c1 === 32) {
+                    const p = line.trim().split(/\s+/);
+                    const vx = parseFloat(p[1]) + ox;
+                    const vy = parseFloat(p[2]) + oy;
+                    const vz = parseFloat(p[3]) + oz;
+                    positions.push(vx, vy, vz);
+                    if (isTerrainPart) {
+                        const tb = this.terrainBounds;
+                        if (vx < tb.minX) tb.minX = vx;
+                        if (vx > tb.maxX) tb.maxX = vx;
+                        if (vz < tb.minZ) tb.minZ = vz;
+                        if (vz > tb.maxZ) tb.maxZ = vz;
+                    }
+                    if (extractColliders) {
+                        if (vx < minX) minX = vx;
+                        if (vx > maxX) maxX = vx;
+                        if (vy < minY) minY = vy;
+                        if (vy > maxY) maxY = vy;
+                        if (vz < minZ) minZ = vz;
+                        if (vz > maxZ) maxZ = vz;
+                        blockVertexCount++;
+                    }
+                } else if (c1 === 116) {
+                    const p = line.trim().split(/\s+/);
+                    uvs.push(parseFloat(p[1]) || 0, parseFloat(p[2]) || 0);
+                } else if (c1 === 110) {
+                    const p = line.trim().split(/\s+/);
+                    normals.push(parseFloat(p[1]) || 0, parseFloat(p[2]) || 0, parseFloat(p[3]) || 0);
                 }
-            } else if (c0 === 117 && !matName && line.startsWith('usemtl ')) {
-                matName = line.slice(7).trim().toUpperCase();
+            } else if (c0 === 102 && c1 === 32) {
+                // 'f ' - triangulated as a fan (OSM2World only emits triangles)
+                const p = line.trim().split(/\s+/);
+                if (p.length < 4) continue;
+                if (currentSlot < 0) {
+                    currentSlot = slotNames.length;
+                    slotNames.push('');
+                    slotByName.set('', currentSlot);
+                }
+                const vCount = positions.length / 3;
+                const tCount = uvs.length / 2;
+                const nCount = normals.length / 3;
+                const resolved = [];
+                for (let k = 1; k < p.length; k++) {
+                    const idx = p[k].split('/');
+                    resolved.push(
+                        resolveObjIndex(idx[0], vCount),
+                        idx.length > 1 ? resolveObjIndex(idx[1], tCount) : -1,
+                        idx.length > 2 ? resolveObjIndex(idx[2], nCount) : -1
+                    );
+                }
+                const cornerCount = resolved.length / 3;
+                for (let k = 1; k < cornerCount - 1; k++) {
+                    corners.push(
+                        resolved[0], resolved[1], resolved[2],
+                        resolved[k * 3], resolved[k * 3 + 1], resolved[k * 3 + 2],
+                        resolved[(k + 1) * 3], resolved[(k + 1) * 3 + 1], resolved[(k + 1) * 3 + 2]
+                    );
+                    triangleSlots.push(currentSlot);
+                }
+            } else if (c0 === 117 && line.startsWith('usemtl ')) {
+                const name = line.slice(7).trim();
+                let slot = slotByName.get(name);
+                if (slot === undefined) {
+                    slot = slotNames.length;
+                    slotNames.push(name);
+                    slotByName.set(name, slot);
+                }
+                currentSlot = slot;
+                if (!blockMatName) blockMatName = name.toUpperCase();
+            } else if ((c0 === 111 || c0 === 103) && c1 === 32) {
+                // 'o ' / 'g ' starts a new object block
+                if (extractColliders) flushBlock();
             }
         }
-        flushBlock();
-    }
+        if (extractColliders) flushBlock();
 
-    _coalesceMeshMaterialsAndGroups(mesh) {
-        const geom = mesh.geometry;
-        if (!geom || !geom.groups || geom.groups.length <= 1 || geom.index) return;
-        const materials = mesh.material;
-        if (!Array.isArray(materials)) return;
+        // Bucket every triangle by the world tile its centroid falls in, de-duplicating shared corners per material
+        const slotInfo = slotNames.map((name) => this._getMaterialInfo(name, isTerrainPart));
+        const tileSize = this.tileSize;
+        const posCount = positions.length / 3;
+        const uvCount = uvs.length / 2;
+        const normalCount = normals.length / 3;
+        const tilePrefix = isTerrainPart ? 'T' : 'M';
+        const accumulators = new Map();
 
-        const groups = geom.groups;
-        const buckets = new Map();
-        for (let g = 0; g < groups.length; g++) {
-            const grp = groups[g];
-            if (grp.count <= 0) continue;
-            const mat = materials[grp.materialIndex] || materials[0];
-            const key = (mat && mat.name) ? mat.name : ('mat_' + grp.materialIndex);
-            let bucket = buckets.get(key);
-            if (!bucket) {
-                bucket = { mat, ranges: [] };
-                buckets.set(key, bucket);
+        for (let t = 0, triCount = triangleSlots.length; t < triCount; t++) {
+            const base = t * 9;
+            const v0 = corners[base];
+            const v1 = corners[base + 3];
+            const v2 = corners[base + 6];
+            if (v0 < 0 || v1 < 0 || v2 < 0 || v0 >= posCount || v1 >= posCount || v2 >= posCount) continue;
+
+            const cx = (positions[v0 * 3] + positions[v1 * 3] + positions[v2 * 3]) / 3;
+            const cz = (positions[v0 * 3 + 2] + positions[v1 * 3 + 2] + positions[v2 * 3 + 2]) / 3;
+            const ix = Math.floor(cx / tileSize);
+            const iz = Math.floor(cz / tileSize);
+            const tileKey = tilePrefix + ix + ',' + iz;
+            const slot = triangleSlots[t];
+            const accKey = tileKey + '|' + slot;
+
+            let acc = accumulators.get(accKey);
+            if (!acc) {
+                acc = { tileKey, ix, iz, info: slotInfo[slot], pos: [], nrm: [], uv: [], idx: [], lookup: new Map() };
+                accumulators.set(accKey, acc);
             }
-            bucket.ranges.push(grp);
-        }
 
-        if (buckets.size >= groups.length) return;
+            // Flat face normal, only used for corners without a 'vn'
+            let fnx = 0, fny = 1, fnz = 0;
+            let hasFaceNormal = false;
 
-        const attrNames = Object.keys(geom.attributes);
-        const newArrays = {};
-        for (let a = 0; a < attrNames.length; a++) {
-            const name = attrNames[a];
-            const attr = geom.attributes[name];
-            newArrays[name] = new attr.array.constructor(attr.array.length);
-        }
-
-        const newGroups = [];
-        const newMaterials = [];
-        let writeVert = 0;
-
-        for (const bucket of buckets.values()) {
-            const startVert = writeVert;
-            const ranges = bucket.ranges;
-            for (let r = 0; r < ranges.length; r++) {
-                const grp = ranges[r];
-                const srcStart = grp.start;
-                const count = grp.count;
-                for (let a = 0; a < attrNames.length; a++) {
-                    const name = attrNames[a];
-                    const attr = geom.attributes[name];
-                    const itemSize = attr.itemSize;
-                    const srcArr = attr.array;
-                    const dstArr = newArrays[name];
-                    const sIdx = srcStart * itemSize;
-                    const eIdx = Math.min(srcArr.length, (srcStart + count) * itemSize);
-                    const dIdx = writeVert * itemSize;
-                    if (eIdx > sIdx && dIdx + (eIdx - sIdx) <= dstArr.length) {
-                        dstArr.set(srcArr.subarray(sIdx, eIdx), dIdx);
+            for (let c = 0; c < 3; c++) {
+                const vi = corners[base + c * 3];
+                const ti = corners[base + c * 3 + 1];
+                const ni = corners[base + c * 3 + 2];
+                const hasNormal = ni >= 0 && ni < normalCount;
+                const key = hasNormal ? (vi + '/' + ti + '/' + ni) : (vi + '/' + ti + '/f' + t);
+                let index = acc.lookup.get(key);
+                if (index === undefined) {
+                    index = acc.pos.length / 3;
+                    acc.lookup.set(key, index);
+                    acc.pos.push(positions[vi * 3], positions[vi * 3 + 1] + acc.info.lift, positions[vi * 3 + 2]);
+                    if (ti >= 0 && ti < uvCount) {
+                        acc.uv.push(uvs[ti * 2], uvs[ti * 2 + 1]);
+                    } else {
+                        acc.uv.push(0, 0);
+                    }
+                    let nx, ny, nz;
+                    if (hasNormal) {
+                        nx = normals[ni * 3];
+                        ny = normals[ni * 3 + 1];
+                        nz = normals[ni * 3 + 2];
+                    } else {
+                        if (!hasFaceNormal) {
+                            const ax = positions[v1 * 3] - positions[v0 * 3];
+                            const ay = positions[v1 * 3 + 1] - positions[v0 * 3 + 1];
+                            const az = positions[v1 * 3 + 2] - positions[v0 * 3 + 2];
+                            const bx = positions[v2 * 3] - positions[v0 * 3];
+                            const by = positions[v2 * 3 + 1] - positions[v0 * 3 + 1];
+                            const bz = positions[v2 * 3 + 2] - positions[v0 * 3 + 2];
+                            fnx = ay * bz - az * by;
+                            fny = az * bx - ax * bz;
+                            fnz = ax * by - ay * bx;
+                            hasFaceNormal = true;
+                        }
+                        nx = fnx; ny = fny; nz = fnz;
+                    }
+                    const nLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+                    if (nLen > 1e-12) {
+                        acc.nrm.push(nx / nLen, ny / nLen, nz / nLen);
+                    } else {
+                        acc.nrm.push(0, 1, 0);
                     }
                 }
-                writeVert += count;
+                acc.idx.push(index);
             }
-            const totalCount = writeVert - startVert;
-            if (totalCount > 0) {
-                newGroups.push({
-                    start: startVert,
-                    count: totalCount,
-                    materialIndex: newMaterials.length
-                });
-                newMaterials.push(bucket.mat);
-            }
+            this.totalTriangles++;
         }
 
-        for (let a = 0; a < attrNames.length; a++) {
-            const name = attrNames[a];
-            const attr = geom.attributes[name];
-            attr.array = newArrays[name];
-            attr.needsUpdate = true;
+        for (const acc of accumulators.values()) {
+            let tile = this.tileBuckets.get(acc.tileKey);
+            if (!tile) {
+                tile = { key: acc.tileKey, ix: acc.ix, iz: acc.iz, isTerrain: isTerrainPart, batches: new Map() };
+                this.tileBuckets.set(acc.tileKey, tile);
+            }
+            let batch = tile.batches.get(acc.info.batchKey);
+            if (!batch) {
+                batch = { batchKey: acc.info.batchKey, chunks: [], vertexCount: 0, indexCount: 0 };
+                tile.batches.set(acc.info.batchKey, batch);
+            }
+            const vertexCount = acc.pos.length / 3;
+            const nrm = new Int16Array(acc.nrm.length);
+            for (let i = 0; i < acc.nrm.length; i++) {
+                nrm[i] = Math.round(acc.nrm[i] * 32767);
+            }
+            batch.chunks.push({
+                pos: new Float32Array(acc.pos),
+                nrm,
+                uv: new Float32Array(acc.uv),
+                idx: new Uint32Array(acc.idx),
+                r: acc.info.r,
+                g: acc.info.g,
+                b: acc.info.b,
+                vertexCount
+            });
+            batch.vertexCount += vertexCount;
+            batch.indexCount += acc.idx.length;
+        }
+    }
+
+    async _buildTileMeshes(onTileBuilt) {
+        const tiles = Array.from(this.tileBuckets.values());
+        tiles.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+        for (let i = 0; i < tiles.length; i++) {
+            const mesh = this._buildTileMesh(tiles[i]);
+            // Release the source chunks as soon as the tile geometry owns the data
+            this.tileBuckets.delete(tiles[i].key);
+            if (mesh) {
+                this.mapRoot.add(mesh);
+                this.tiles.push(mesh);
+            }
+            if (typeof onTileBuilt === 'function') {
+                onTileBuilt(i + 1, tiles.length);
+            }
+            if (i % 8 === 7) {
+                await new Promise((r) => setTimeout(r, 0));
+            }
+        }
+    }
+
+    _buildTileMesh(tile) {
+        const batches = Array.from(tile.batches.values());
+        batches.sort((a, b) => (a.batchKey < b.batchKey ? -1 : a.batchKey > b.batchKey ? 1 : 0));
+
+        let vertexTotal = 0;
+        let indexTotal = 0;
+        for (let i = 0; i < batches.length; i++) {
+            vertexTotal += batches[i].vertexCount;
+            indexTotal += batches[i].indexCount;
+        }
+        if (indexTotal === 0) return null;
+
+        const pos = new Float32Array(vertexTotal * 3);
+        const nrm = new Int16Array(vertexTotal * 3);
+        const uv = new Float32Array(vertexTotal * 2);
+        const col = new Uint16Array(vertexTotal * 3);
+        const idx = vertexTotal > 65535 ? new Uint32Array(indexTotal) : new Uint16Array(indexTotal);
+
+        const geometry = new THREE.BufferGeometry();
+        const materials = [];
+        let vBase = 0;
+        let iBase = 0;
+        for (let b = 0; b < batches.length; b++) {
+            const batch = batches[b];
+            const groupStart = iBase;
+            for (let c = 0; c < batch.chunks.length; c++) {
+                const chunk = batch.chunks[c];
+                pos.set(chunk.pos, vBase * 3);
+                nrm.set(chunk.nrm, vBase * 3);
+                uv.set(chunk.uv, vBase * 2);
+                for (let v = 0; v < chunk.vertexCount; v++) {
+                    const o = (vBase + v) * 3;
+                    col[o] = chunk.r;
+                    col[o + 1] = chunk.g;
+                    col[o + 2] = chunk.b;
+                }
+                const chunkIdx = chunk.idx;
+                for (let k = 0; k < chunkIdx.length; k++) {
+                    idx[iBase + k] = chunkIdx[k] + vBase;
+                }
+                vBase += chunk.vertexCount;
+                iBase += chunkIdx.length;
+            }
+            geometry.addGroup(groupStart, iBase - groupStart, materials.length);
+            materials.push(this.batchMaterials.get(batch.batchKey));
         }
 
-        geom.groups = newGroups;
-        mesh.material = newMaterials.length === 1 ? newMaterials[0] : newMaterials;
+        geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geometry.setAttribute('normal', new THREE.BufferAttribute(nrm, 3, true));
+        geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+        geometry.setAttribute('color', new THREE.BufferAttribute(col, 3, true));
+        geometry.setIndex(new THREE.BufferAttribute(idx, 1));
+        geometry.computeBoundingBox();
+        geometry.computeBoundingSphere();
+
+        const mesh = new THREE.Mesh(geometry, materials);
+        mesh.name = `${tile.isTerrain ? 'terrain' : 'map'}_tile_${tile.ix}_${tile.iz}`;
+        mesh.userData.isMapPart = true;
+        mesh.userData.isMapTile = true;
+        mesh.userData.isTerrainTile = tile.isTerrain;
+        mesh.frustumCulled = true;
+        mesh.receiveShadow = true;
+        // Ground strips only receive shadows; everything else (buildings, trees, poles) casts
+        mesh.castShadow = !tile.isTerrain;
+        if (this.freezeTransforms) {
+            mesh.matrixAutoUpdate = false;
+            mesh.updateMatrix();
+        }
+        return mesh;
     }
 
     _registerWorldBoundsCollider(minX, minY, minZ, maxX, maxY, maxZ, height, spatialGrid, partName, meshRef = null) {
@@ -584,9 +974,6 @@ export class AnothermapoLoader {
 
         const cx = (minX + maxX) * 0.5;
         const cz = (minZ + maxZ) * 0.5;
-
-        // Only register colliders inside the active [-295, 295] spatial grid world
-        if (cx < -295 || cx > 295 || cz < -295 || cz > 295) return;
 
         // Keep player & Civic spawn driveway and origin clear of overhanging roof/tree AABBs
         const spawnP = ANOTHERMAPO_CONFIG.SPAWN.PLAYER_START;
@@ -627,198 +1014,6 @@ export class AnothermapoLoader {
         if (typeof spatialGrid.insertStatic === 'function') {
             spatialGrid.insertStatic(obstacleId, worldBox, userData);
         }
-    }
-
-    _processPartMeshes(object, fallbackMaterial, spatialGrid, partName) {
-        const ignoredMaterials = ANOTHERMAPO_CONFIG.COLLISION.IGNORED_MATERIALS;
-        const isTerrainPart = partName === 'part0090.obj' || partName === 'part0091.obj';
-        const isMergedPart = !!(object.userData && object.userData.isMergedPart);
-
-        object.traverse((child) => {
-            if (!child.isMesh) return;
-
-            if (child.geometry && child.geometry.attributes && child.geometry.attributes.position) {
-                const count = child.geometry.attributes.position.count;
-                this.totalTriangles += child.geometry.index ? child.geometry.index.count / 3 : count / 3;
-            }
-
-            if (!child.material) {
-                child.material = fallbackMaterial;
-            }
-
-            const materials = Array.isArray(child.material) ? child.material : [child.material];
-            const primaryMatName = ((materials[0] && materials[0].name) || child.name || '').toUpperCase();
-
-            // Keep OSM2World terrain, grass, sidewalks (CONCRETE_0), and roads (ASPHALT_0) flush at y = 0.000
-            // so edge-matched sidewalk cutouts never separate vertically; only lift road markings slightly above asphalt
-            if (!isTerrainPart && child.geometry && child.geometry.groups && child.geometry.groups.length > 0 && child.geometry.attributes.position) {
-                const posArr = child.geometry.attributes.position.array;
-                const groups = child.geometry.groups;
-                for (let g = 0; g < groups.length; g++) {
-                    const grp = groups[g];
-                    const mat = materials[grp.materialIndex];
-                    if (!mat || !mat.name) continue;
-                    const gName = mat.name.toUpperCase();
-                    if (
-                        !gName.endsWith('_0') &&
-                        (gName.includes('ROAD_MARKING') || gName.endsWith('_1'))
-                    ) {
-                        const endVert = Math.min(posArr.length / 3, grp.start + grp.count);
-                        for (let v = grp.start; v < endVert; v++) {
-                            posArr[v * 3 + 1] += 0.012;
-                        }
-                    }
-                }
-            }
-
-            // Coalesce thousands of alternating usemtl geometry groups into 1 contiguous group per material
-            this._coalesceMeshMaterialsAndGroups(child);
-
-            const coalescedMats = Array.isArray(child.material) ? child.material : [child.material];
-            for (let i = 0; i < coalescedMats.length; i++) {
-                const m = coalescedMats[i];
-                if (!m) continue;
-                const mName = (m.name || primaryMatName).toUpperCase();
-                const cacheKey = isTerrainPart ? `${mName}__TERRAIN` : mName;
-
-                if (mName && this.sharedMaterialCache.has(cacheKey)) {
-                    coalescedMats[i] = this.sharedMaterialCache.get(cacheKey);
-                    continue;
-                }
-
-                // Convert expensive MeshPhongMaterial to fast MeshLambertMaterial while preserving texture/color/alpha
-                const lambert = (m.isMeshLambertMaterial || !m.isMaterial)
-                    ? m
-                    : new THREE.MeshLambertMaterial({
-                        name: m.name || '',
-                        color: m.color ? m.color.clone() : new THREE.Color(0xcccccc),
-                        map: m.map || null,
-                        alphaMap: m.alphaMap || null,
-                        transparent: !!m.transparent,
-                        opacity: m.opacity !== undefined ? m.opacity : 1.0
-                    });
-
-                if (lambert.map) {
-                    lambert.map.wrapS = THREE.RepeatWrapping;
-                    lambert.map.wrapT = THREE.RepeatWrapping;
-                }
-
-                if (isTerrainPart || mName.includes('TERRAIN')) {
-                    lambert.side = THREE.DoubleSide;
-                    lambert.polygonOffset = true;
-                    lambert.polygonOffsetFactor = 2;
-                    lambert.polygonOffsetUnits = 2;
-                } else if (
-                    mName.includes('GRASS') ||
-                    mName.includes('EARTH') ||
-                    mName.includes('GROUND') ||
-                    mName.includes('SCRUB') ||
-                    mName.includes('WATER')
-                ) {
-                    lambert.side = THREE.DoubleSide;
-                    lambert.polygonOffset = true;
-                    lambert.polygonOffsetFactor = 1;
-                    lambert.polygonOffsetUnits = 1;
-                } else if (
-                    mName.includes('CONCRETE') ||
-                    mName.includes('PAVING_STONE')
-                ) {
-                    lambert.side = THREE.DoubleSide;
-                    lambert.polygonOffset = true;
-                    lambert.polygonOffsetFactor = -1;
-                    lambert.polygonOffsetUnits = -1;
-                } else if (
-                    mName.includes('ASPHALT') ||
-                    mName.includes('GRAVEL') ||
-                    mName.endsWith('_0')
-                ) {
-                    lambert.side = THREE.DoubleSide;
-                } else if (
-                    !mName.endsWith('_0') &&
-                    (mName.includes('ROAD_MARKING') || mName.endsWith('_1'))
-                ) {
-                    lambert.side = THREE.DoubleSide;
-                    lambert.transparent = true;
-                    lambert.alphaTest = 0.1;
-                    lambert.depthWrite = false;
-                    lambert.polygonOffset = true;
-                    lambert.polygonOffsetFactor = -2;
-                    lambert.polygonOffsetUnits = -2;
-                } else if (
-                    mName.includes('TREE_BILLBOARD') ||
-                    mName.includes('FENCE') ||
-                    mName.includes('HEDGE')
-                ) {
-                    lambert.side = THREE.DoubleSide;
-                    lambert.alphaTest = 0.5;
-                    lambert.transparent = true;
-                } else {
-                    lambert.side = THREE.FrontSide;
-                }
-
-                coalescedMats[i] = lambert;
-                if (mName) {
-                    this.sharedMaterialCache.set(cacheKey, lambert);
-                }
-            }
-
-            child.material = coalescedMats.length === 1 ? coalescedMats[0] : coalescedMats;
-
-            if (child.geometry) {
-                child.geometry.computeBoundingSphere();
-            }
-
-            // Disable frustum culling on merged map meshes so large multi-hundred-meter ground/road slabs never pop out at view edges
-            child.frustumCulled = false;
-            child.receiveShadow = true;
-            // Enable shadow casting on building/structure chunks (part0015..part0088) while keeping ground/road parts receive-only
-            if (!isTerrainPart && !partName.startsWith('part000')) {
-                child.castShadow = true;
-            }
-
-            if (this.freezeTransforms) {
-                child.matrixAutoUpdate = false;
-                child.updateMatrix();
-            }
-
-            if (!isMergedPart && this.registerColliders && spatialGrid) {
-                this._extractAndRegisterCollider(child, spatialGrid, ignoredMaterials, partName);
-            }
-        });
-    }
-
-    _extractAndRegisterCollider(child, spatialGrid, ignoredMaterials, partName) {
-        if (!child.geometry) return;
-        if (!child.geometry.boundingBox) {
-            child.geometry.computeBoundingBox();
-        }
-
-        const bbox = child.geometry.boundingBox;
-        if (!bbox) return;
-
-        const height = bbox.max.y - bbox.min.y;
-        const width = bbox.max.x - bbox.min.x;
-        const depth = bbox.max.z - bbox.min.z;
-
-        if (height < ANOTHERMAPO_CONFIG.COLLISION.MIN_OBSTACLE_HEIGHT) return;
-        if (width < ANOTHERMAPO_CONFIG.COLLISION.MIN_PLANAR_SIZE && depth < ANOTHERMAPO_CONFIG.COLLISION.MIN_PLANAR_SIZE) return;
-        if (width > 60.0 || depth > 60.0) return;
-
-        let matName = '';
-        if (child.material) {
-            matName = (Array.isArray(child.material) ? child.material[0]?.name : child.material.name) || '';
-        }
-        for (const ign of ignoredMaterials) {
-            if (matName.toUpperCase().includes(ign)) return;
-        }
-
-        child.updateMatrixWorld(true);
-        const worldBox = bbox.clone().applyMatrix4(child.matrixWorld);
-        this._registerWorldBoundsCollider(
-            worldBox.min.x, worldBox.min.y, worldBox.min.z,
-            worldBox.max.x, worldBox.max.y, worldBox.max.z,
-            height, spatialGrid, partName, child
-        );
     }
 }
 

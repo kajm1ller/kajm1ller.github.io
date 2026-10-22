@@ -9,24 +9,25 @@
 export const CONFIG = Object.freeze({
     // World Dimensions & Boundaries
     WORLD: Object.freeze({
-        SIZE: 600,             // Total extent of ground plane (600m x 600m)
-        HALF_SIZE: 300,        // Extent in [-300, 300]
+        SIZE: 20000,           // Total extent covered by the world (20km x 20km)
+        HALF_SIZE: 10000,      // Extent in [-10000, 10000]
+        // Edge of the /mapfinal terrain in world space (x: -9974.7 .. 5925.3, z: -8968.0 .. 7472.0), inset by 5m
         SAFE_BOUNDS: Object.freeze({
-            MIN_X: -280,
-            MAX_X: 280,
-            MIN_Z: -280,
-            MAX_Z: 280
+            MIN_X: -9969,
+            MAX_X: 5920,
+            MIN_Z: -8963,
+            MAX_Z: 7467
         }),
         PLAY_RADIUS: 120       // Active procedural generation radius
     }),
 
     // Spatial Hash Grid Broadphase
     GRID: Object.freeze({
-        CELL_SIZE: 15,         // Cell width/depth in meters
-        WORLD_HALF_SIZE: 300,  // Grid covers [-300, 300]
-        COLS: 40,              // Math.ceil(600 / 15)
-        ROWS: 40,
-        TOTAL_CELLS: 1600
+        CELL_SIZE: 15,           // Cell width/depth in meters
+        WORLD_HALF_SIZE: 10000,  // Grid covers [-10000, 10000], the whole /mapfinal map
+        COLS: 1334,              // Math.ceil(20000 / 15)
+        ROWS: 1334,
+        TOTAL_CELLS: 1779556
     }),
 
     // Fixed Timestep Game Loop

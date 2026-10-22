@@ -3,7 +3,7 @@
  * 
  * Tests Acceptance Criteria:
  * 1. Clean startup: game.html loads with zero uncaught console errors or page exceptions.
- * 2. /anothermapo map loading & spatial collision registration:
+ * 2. /mapfinal map loading & spatial collision registration:
  *    - Verify window.__GAME__.map.isLoaded === true and model parts mounted into scene
  *    - Verify building collision bounding boxes registered in spatialGrid
  * 3. Kaj Simulator Honda Civic car basis & HUD:
@@ -171,7 +171,7 @@ async function runFunctionalTests(options = {}) {
       ctx.skip('AI Traffic: Multi-vehicle fleet spawns and progresses along road network', reason);
       ctx.skip('AI Traffic: Vehicles maintain collision spacing with zero overlaps or permanent deadlocks', reason);
       ctx.skip('Adversarial: Contradictory driving inputs handled gracefully without desync', reason);
-      ctx.skip('Adversarial: World boundary constraints clamp vehicle coordinates within [-280, 280]', reason);
+      ctx.skip('Adversarial: No invisible walls inside the map; vehicles stay within the map edge', reason);
 
       await harness.close();
       return ctx.summary();
@@ -180,17 +180,17 @@ async function runFunctionalTests(options = {}) {
     const isStrict = options.strict || process.argv.includes('--strict');
 
     // ========================================================================
-    // TIER: /anothermapo Map Loading & Spatial Collision Registration
+    // TIER: /mapfinal Map Loading & Spatial Collision Registration
     // ========================================================================
     const hasMapSystem = await harness.evaluate(() => {
       return typeof window.__GAME__ === 'object' && window.__GAME__ !== null && !!window.__GAME__.map;
     }).catch(() => false);
 
     if (hasMapSystem || isStrict) {
-      await ctx.test('Map: /anothermapo loads cleanly and mounts model parts into scene', async () => {
+      await ctx.test('Map: /mapfinal loads every part and texture and mounts the map tiles into scene', async () => {
         await harness.waitForFunction(
           () => typeof window.__GAME__ === 'object' && window.__GAME__.map && window.__GAME__.map.isLoaded === true,
-          { timeout: 15000 }
+          { timeout: 600000, pollInterval: 1000 }
         );
 
         const mapStatus = await harness.evaluate(() => {
@@ -214,7 +214,7 @@ async function runFunctionalTests(options = {}) {
               const name = (obj.name || '').toLowerCase();
               if (name === 'ground') hasOldProceduralGround = true;
               if (name === 'road_asphalt_mesh' || name === 'road_markings_mesh') hasOldProceduralRoads = true;
-              if (name === 'part0090.obj' || name === 'part0091.obj') hasTerrainParts = true;
+              if (obj.userData && obj.userData.isTerrainTile) hasTerrainParts = true;
               if (
                 name.includes('part') || name.includes('map') || name.includes('anothermapo') ||
                 (obj.userData && (obj.userData.isMapPart || obj.userData.partName || obj.userData.isMap))
@@ -228,6 +228,11 @@ async function runFunctionalTests(options = {}) {
             hasMap: true,
             isLoaded: map.isLoaded,
             partsCount,
+            totalParts: map.totalParts,
+            failedParts: map.failedParts || [],
+            textureFailures: map.textureFailures || [],
+            hasAllTerrainParts: Array.isArray(map.parts) &&
+              Array.from({ length: 27 }, (_, i) => `part${String(594 + i).padStart(4, '0')}.obj`).every(n => map.parts.includes(n)),
             mountedSceneCount,
             hasOldProceduralGround,
             hasOldProceduralRoads,
@@ -240,14 +245,19 @@ async function runFunctionalTests(options = {}) {
         assertEqual(mapStatus.isLoaded, true, 'window.__GAME__.map.isLoaded must be true');
         assert(!mapStatus.hasOldProceduralGround, 'Old procedural ground plane must be removed');
         assert(!mapStatus.hasOldProceduralRoads, 'Old procedural road meshes must be removed');
-        assert(mapStatus.hasTerrainParts, '/anothermapo terrain parts (part0090.obj, part0091.obj) must be mounted');
+        assert(mapStatus.hasTerrainParts, '/mapfinal terrain tiles must be mounted');
+        assert(mapStatus.hasAllTerrainParts, '/mapfinal terrain parts (part0594.obj .. part0620.obj) must all be loaded');
+        assertEqual(mapStatus.totalParts, 621, '/mapfinal must request every part (part0000.obj .. part0620.obj)');
+        assertEqual(mapStatus.partsCount, mapStatus.totalParts, 'Every /mapfinal part must load');
+        assertEqual(mapStatus.failedParts.length, 0, `No /mapfinal parts may fail to load (failed: ${mapStatus.failedParts.join(', ')})`);
+        assertEqual(mapStatus.textureFailures.length, 0, `No /mapfinal textures may fail to load (failed: ${mapStatus.textureFailures.join(', ')})`);
         assert(
           mapStatus.partsCount > 0 || mapStatus.mountedSceneCount > 0,
           `Map model parts must be loaded and mounted into scene (partsCount: ${mapStatus.partsCount}, mountedSceneCount: ${mapStatus.mountedSceneCount})`
         );
       });
 
-      await ctx.test('Map: /anothermapo building collision bounding boxes are registered in spatialGrid', async () => {
+      await ctx.test('Map: /mapfinal building collision bounding boxes are registered in spatialGrid', async () => {
         const gridReport = await harness.evaluate(() => {
           const grid = window.__GAME__.spatialGrid;
           if (!grid || !grid.cells) {
@@ -317,9 +327,9 @@ async function runFunctionalTests(options = {}) {
         assert(gridReport.testQueryCount > 0, 'spatialGrid.queryRadius() must retrieve registered building collision obstacles');
       });
     } else {
-      const mapReason = '/anothermapo map loader pending implementation in game.html';
-      ctx.skip('Map: /anothermapo loads cleanly and mounts model parts into scene', mapReason);
-      ctx.skip('Map: /anothermapo building collision bounding boxes are registered in spatialGrid', mapReason);
+      const mapReason = '/mapfinal map loader pending implementation in game.html';
+      ctx.skip('Map: /mapfinal loads every part and texture and mounts the map tiles into scene', mapReason);
+      ctx.skip('Map: /mapfinal building collision bounding boxes are registered in spatialGrid', mapReason);
     }
 
     // ========================================================================
@@ -842,13 +852,25 @@ async function runFunctionalTests(options = {}) {
     // ------------------------------------------------------------------------
     // Test 9: Adversarial - World Boundary Constraints
     // ------------------------------------------------------------------------
-    await ctx.test('Adversarial: World boundary constraints clamp vehicle coordinates within [-280, 280]', async () => {
+    await ctx.test('Adversarial: No invisible walls inside the map; vehicles stay within the map edge', async () => {
+      const hasPerimeterWalls = await harness.evaluate(() => {
+        const grid = window.__GAME__.spatialGrid;
+        for (const cell of grid.cells) {
+          for (const item of cell.staticItems) {
+            if (typeof item.id === 'string' && item.id.startsWith('wall_')) return true;
+          }
+        }
+        return false;
+      });
+      assert(!hasPerimeterWalls, 'The old +-280m perimeter walls must not be registered in spatialGrid');
+
       const boundaryStatus = await harness.evaluate(() => {
+        const bounds = window.__GAME__.raw.config.WORLD.SAFE_BOUNDS;
         const vehicles = window.__GAME__.vehicles.getTrafficVehicles();
         let allInBounds = true;
         for (const v of vehicles) {
           const p = v.getPosition();
-          if (Math.abs(p.x) > 280 || Math.abs(p.z) > 280) {
+          if (p.x < bounds.MIN_X || p.x > bounds.MAX_X || p.z < bounds.MIN_Z || p.z > bounds.MAX_Z) {
             allInBounds = false;
             break;
           }
@@ -856,13 +878,13 @@ async function runFunctionalTests(options = {}) {
         return allInBounds;
       });
 
-      assert(boundaryStatus, 'All traffic and player vehicles must stay within [-280, 280]');
+      assert(boundaryStatus, 'All traffic and player vehicles must stay within the map edge (CONFIG.WORLD.SAFE_BOUNDS)');
     });
 
     // ------------------------------------------------------------------------
     // Test 10: WebGL Draw-Call Optimization & Reduced Traffic Density
     // ------------------------------------------------------------------------
-    await ctx.test('Performance: Coalesced /anothermapo draw calls (< 500) and reduced road traffic (10-20 cars)', async () => {
+    await ctx.test('Performance: Coalesced /mapfinal draw calls (< 500) and reduced road traffic (10-20 cars)', async () => {
       const perfStatus = await harness.evaluate(() => {
         const renderer = window.__GAME__.raw && window.__GAME__.raw.renderer;
         const scene = window.__GAME__.raw && window.__GAME__.raw.scene;
@@ -962,7 +984,7 @@ async function runFunctionalTests(options = {}) {
     // ------------------------------------------------------------------------
     // Test 12: Sidewalk Clipping & Sub-Terrain Void Fix
     // ------------------------------------------------------------------------
-    await ctx.test('Map: Sidewalk meshes sit flush with terrain at y=0 and sub-terrain catcher eliminates void', async () => {
+    await ctx.test('Map: Sidewalk meshes sit flush with terrain at y=0 and map holes are filled without a stretched ground texture', async () => {
       const sidewalkReport = await harness.evaluate(() => {
         const scene = window.__GAME__.raw && window.__GAME__.raw.scene;
         const mapRoot = scene && (scene.getObjectByName('anothermapo_world_root') || scene.getObjectByName('anothermapo_root'));
@@ -970,11 +992,22 @@ async function runFunctionalTests(options = {}) {
 
         let hasSubTerrainBase = false;
         let subTerrainY = null;
+        let filler = null;
         let concreteCount = 0;
         let concreteAllFlush = true;
 
         mapRoot.traverse(obj => {
           if (!obj.isMesh) return;
+          if (obj.userData && obj.userData.isTerrainFiller) {
+            const pos = obj.geometry.attributes.position;
+            const uv = obj.geometry.attributes.uv;
+            filler = {
+              y: pos.getY(0),
+              // Texture must tile once per metre like the terrain itself, not stretch across the map
+              uvPerMetreX: Math.abs((uv.getX(2) - uv.getX(0)) / (pos.getX(2) - pos.getX(0))),
+              uvPerMetreZ: Math.abs((uv.getY(2) - uv.getY(0)) / (pos.getZ(2) - pos.getZ(0)))
+            };
+          }
           if (obj.name === 'anothermapo_subterrain_base' || (obj.userData && (obj.userData.isSubTerrainBase || obj.userData.isSubTerrain))) {
             hasSubTerrainBase = true;
             subTerrainY = obj.position.y;
@@ -993,14 +1026,18 @@ async function runFunctionalTests(options = {}) {
           hasMapRoot: true,
           hasSubTerrainBase,
           subTerrainY,
+          filler,
           concreteCount,
           concreteAllFlush
         };
       });
 
       assert(sidewalkReport.hasMapRoot, 'anothermapo_root must exist in scene');
-      assert(sidewalkReport.hasSubTerrainBase, 'anothermapo_subterrain_base catcher plane must exist beneath terrain to prevent void visibility');
-      assert(sidewalkReport.subTerrainY < 0, `Sub-terrain catcher plane must be positioned below y=0, got ${sidewalkReport.subTerrainY}`);
+      assert(!sidewalkReport.hasSubTerrainBase, 'The stretched sub-terrain plane must not be mounted (it z-fought through the terrain in dev fly mode)');
+      assert(sidewalkReport.filler, 'Terrain hole filler must be mounted beneath the terrain');
+      assert(sidewalkReport.filler.y < 0, `Terrain hole filler must sit below y=0, got ${sidewalkReport.filler.y}`);
+      assert(Math.abs(sidewalkReport.filler.uvPerMetreX - 1) < 1e-3 && Math.abs(sidewalkReport.filler.uvPerMetreZ - 1) < 1e-3,
+        `Terrain hole filler texture must tile at terrain scale, got ${sidewalkReport.filler.uvPerMetreX}/${sidewalkReport.filler.uvPerMetreZ} uv per metre`);
       assert(sidewalkReport.concreteCount > 0, 'Sidewalk CONCRETE_0 meshes must be present');
       assert(sidewalkReport.concreteAllFlush, 'Sidewalk CONCRETE_0 meshes must sit flush at y=0 without vertical gaps');
     });
