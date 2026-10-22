@@ -34,6 +34,8 @@ export class PlayerController {
         this.spatialGrid = options.spatialGrid || null;
         this.domElement = options.domElement || (typeof document !== 'undefined' ? document.body : null);
         this.onExit = typeof options.onExit === 'function' ? options.onExit : null;
+        // When set, cars ignore the throttle until vehicle.engineOn is true (planes are exempt)
+        this.requireEngine = !!options.requireEngine;
         this.externalPosition = (options.initialPosition && typeof options.initialPosition.copy === 'function')
             ? options.initialPosition
             : (options.playerPosition && typeof options.playerPosition.copy === 'function')
@@ -561,7 +563,9 @@ export class PlayerController {
             }
 
             // Forward inputs to vehicle with adversarial sanitization
-            const throttle = !!this.keys.w;
+            // With the engine off the car can only roll: no throttle (brake and handbrake still work)
+            const engineBlocked = this.requireEngine && !this.activeVehicle.isPlane && !this.activeVehicle.engineOn;
+            const throttle = !engineBlocked && !!this.keys.w;
             const brake = !!this.keys.s;
             // Contradictory left+right steer cancels out to 0
             const steer = {

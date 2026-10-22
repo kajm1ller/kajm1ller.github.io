@@ -1064,6 +1064,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         // ============ PLAYER CONTROLLER & VEHICLES ============
         myPosition.copy(playerStartPos);
         const playerController = new PlayerController({
+            requireEngine: true, // cars only move once started with Q
             camera,
             cameraController,
             spatialGrid,
@@ -1112,6 +1113,10 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         const healthValEl = document.getElementById('player-health-val');
         const healthLabelEl = document.getElementById('player-health-label');
         let damageFlashTimer = 0;
+        // Death sequence: collapse to the ground, blood pools, fade to black, respawn at the house
+        const DEATH_FADE_DELAY_MS = 1400;    // time lying on the ground before the screen fades to black
+        const DEATH_RESPAWN_DELAY_MS = 4000;
+        let deathFallTime = 0;               // seconds since the player died (drives the collapse camera)
 
         function updatePlayerHealthHUD() {
             if (healthFillEl) {
@@ -1133,7 +1138,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         }
 
         function damagePlayer(amount = 15) {
-            const wasAlive = playerHealth > 0;
+            if (playerHealth <= 0) return; // already dying; extra bullets must not restart the respawn
             playerHealth = Math.max(0, playerHealth - amount);
             updatePlayerHealthHUD();
 
@@ -1143,17 +1148,29 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
 
             if (playerHealth <= 0) {
-                if (wasAlive) {
-                    mpSend({ type: 'died', killer: lastHitBy });
-                    lastHitBy = null;
-                }
+                mpSend({ type: 'died', killer: lastHitBy });
+                lastHitBy = null;
                 const bustedEl = document.getElementById('busted-overlay');
                 if (bustedEl) {
                     bustedEl.textContent = 'WASTED';
                     bustedEl.style.display = 'block';
                 }
+                // Fall to the ground and bleed out where we stood
+                deathFallTime = 0;
+                createBloodPool(myPosition);
+                // Black out after a moment on the ground (a crash death has already started its own fade)
+                setTimeout(() => {
+                    if (deathFadeEl && playerHealth <= 0 && !isCrashDying) {
+                        deathFadeEl.style.display = 'block';
+                        void deathFadeEl.offsetWidth; // let the transition start from opacity 0
+                        deathFadeEl.style.opacity = '1';
+                    }
+                }, DEATH_FADE_DELAY_MS);
                 setTimeout(() => {
                     if (bustedEl) bustedEl.style.display = 'none';
+                    deathFallTime = 0;
+                    resetPlayerAction();
+                    playerHitCooldown = 0;
                     playerHealth = 100;
                     updatePlayerHealthHUD();
                     if (playerController.getState() === 'IN_VEHICLE') {
@@ -1165,7 +1182,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     camera.position.set(playerStartPos.x, playerStartPos.y + 1.7, playerStartPos.z);
                     if (policeSystem) policeSystem.clearWantedLevel();
                     afterRespawn();
-                }, 2500);
+                }, DEATH_RESPAWN_DELAY_MS);
             }
         }
 
@@ -1497,11 +1514,98 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             isPlaying: false,
             isUserPaused: false,
             volume: 0.5,
-            isInCar: false
+            isInCar: false,
+            sourceVehicle: null // the car whose radio is playing; keeps playing (muffled) after the player gets out
         };
 
+        // Cars have to be started with Q. Planes have no ignition and count as always running.
+        function isEngineRunning(v) {
+            return !!v && (!!v.isPlane || !!v.engineOn);
+        }
+
         function isRadioPlaying() {
-            return radioState.isInCar && radioState.isPlaying && !radioState.isUserPaused;
+            return !!radioState.sourceVehicle && radioState.isPlaying && !radioState.isUserPaused;
+        }
+
+        // Muffled / distance-attenuated radio when heard from outside the car.
+        // radioAudio -> lowpass -> gain -> speakers; created on a user gesture so the context can run.
+        let _radioFilter = null;
+        let _radioGain = null;
+        function ensureRadioGraph() {
+            if (_radioFilter) return true;
+            const ctx = ensureCarAudioEngine();
+            if (!ctx) return false;
+            try {
+                const src = ctx.createMediaElementSource(radioAudio);
+                _radioFilter = ctx.createBiquadFilter();
+                _radioFilter.type = 'lowpass';
+                _radioFilter.frequency.value = 22000;
+                _radioGain = ctx.createGain();
+                _radioGain.gain.value = 1;
+                src.connect(_radioFilter);
+                _radioFilter.connect(_radioGain);
+                _radioGain.connect(ctx.destination);
+                if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+                return true;
+            } catch (e) {
+                _radioFilter = _radioGain = null;
+                return false;
+            }
+        }
+
+        const RADIO_HEARING_RANGE = 60; // metres from the parked car at which its radio fades out
+        function updateRadioSpatial() {
+            const v = radioState.sourceVehicle;
+            if (!v) return;
+            // A wrecked car's radio dies with it
+            if (v.wrecked) {
+                v.engineOn = false;
+                stopRadioFromEngineOff();
+                return;
+            }
+            let cutoff = 22000;
+            let level = 1;
+            if (!radioState.isInCar) {
+                const d = Math.hypot(myPosition.x - v.position.x, myPosition.z - v.position.z);
+                const falloff = Math.max(0, 1 - d / RADIO_HEARING_RANGE);
+                cutoff = 650;                          // heard through the bodywork
+                level = 0.75 * falloff * falloff;
+            }
+            if (_radioFilter && _radioGain && _carAudioCtx) {
+                const now = _carAudioCtx.currentTime;
+                _radioFilter.frequency.setTargetAtTime(cutoff, now, 0.08);
+                _radioGain.gain.setTargetAtTime(level, now, 0.08);
+            } else {
+                // No Web Audio: fall back to plain volume
+                radioAudio.volume = radioState.volume * level;
+            }
+        }
+
+        function stopRadioFromEngineOff() {
+            radioAudio.pause();
+            radioState.isPlaying = false;
+            radioState.sourceVehicle = null;
+            updateRadioUI();
+            ensureBackgroundMusicPlaying();
+        }
+
+        function toggleEngine(vehicle) {
+            if (!vehicle || vehicle.isPlane) return;
+            if (vehicle.engineOn) {
+                vehicle.engineOn = false;
+                if (radioState.sourceVehicle === vehicle) stopRadioFromEngineOff();
+                showToast('Engine off');
+            } else {
+                vehicle.engineOn = true;
+                ensureRadioGraph();
+                radioState.sourceVehicle = vehicle;
+                if (!radioState.isUserPaused) {
+                    startRadioPlayback();
+                } else {
+                    updateRadioUI();
+                }
+                showToast('Engine on');
+            }
         }
 
         function ensureBackgroundMusicPlaying() {
@@ -1534,7 +1638,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             const volVal = document.getElementById('radio-volume-val');
 
             if (radioUI) {
-                radioUI.style.display = radioState.isInCar ? 'block' : 'none';
+                radioUI.style.display = (radioState.isInCar && isEngineRunning(radioState.sourceVehicle)) ? 'block' : 'none';
             }
             if (titleEl) {
                 const track = RADIO_TRACKS[radioState.currentTrackIndex];
@@ -1544,10 +1648,10 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 pauseBtn.innerHTML = radioState.isUserPaused ? '▶ Play' : '⏸ Pause';
             }
             if (volSlider) {
-                volSlider.value = radioAudio.volume;
+                volSlider.value = radioState.volume;
             }
             if (volVal) {
-                volVal.textContent = `${Math.round(radioAudio.volume * 100)}%`;
+                volVal.textContent = `${Math.round(radioState.volume * 100)}%`;
             }
         }
 
@@ -1630,27 +1734,42 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             skipRadioTrack();
         });
 
-        function handleEnterVehicleRadio() {
+        function handleEnterVehicleRadio(vehicle) {
             radioState.isInCar = true;
-            if (!radioState.isUserPaused) {
-                startRadioPlayback();
+            if (isEngineRunning(vehicle)) {
+                // Planes, or a car that was left running: pick the radio up (un-muffled now we're inside)
+                radioState.sourceVehicle = vehicle;
+                if (radioAudio.paused && !radioState.isUserPaused) {
+                    startRadioPlayback();
+                } else {
+                    updateRadioUI();
+                }
             } else {
                 updateRadioUI();
+                if (vehicle) showToast('Press Q to start the engine', 3200);
             }
         }
 
         function handleExitVehicleRadio() {
             radioState.isInCar = false;
+            const v = radioState.sourceVehicle;
+            if (v && !v.isPlane && v.engineOn) {
+                // Left running: the radio carries on from the car, muffled
+                ensureRadioGraph();
+                updateRadioUI();
+                return;
+            }
             radioAudio.pause();
             radioState.isPlaying = false;
+            radioState.sourceVehicle = null;
             updateRadioUI();
             // Background music resumes when exiting vehicle
             ensureBackgroundMusicPlaying();
         }
 
         function resumeNormalMusic() {
-            // Resume the radio (if in a car and not user-paused), else background music
-            if (radioState.isInCar && !radioState.isUserPaused) {
+            // Resume the radio (if a running car has it and not user-paused), else background music
+            if (radioState.sourceVehicle && !radioState.isUserPaused) {
                 playRadioCurrentTrack();
             } else {
                 ensureBackgroundMusicPlaying();
@@ -2054,6 +2173,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         let viewmodelCamera = null;
         let viewmodelSprayCan = null;
         const viewmodelMeshes = [];
+        let viewmodelStroke = null;
         let viewmodelBobTime = 0;
         let viewmodelRecoil = 0;
         let sprayParticleTime = 0;
@@ -2289,6 +2409,21 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             return group;
         }
 
+        // Skin-colored rectangle shown at the bottom of the screen while pressing M (see "PUBLIC INDECENCY")
+        function createStrokeViewmodel() {
+            const group = new THREE.Group();
+            group.name = 'viewmodel_stroke';
+            const rect = new THREE.Mesh(
+                new THREE.BoxGeometry(0.05, 0.05, 0.22),
+                new THREE.MeshLambertMaterial({ color: 0xffcc99 })
+            );
+            group.add(rect);
+            group.position.set(0, -0.22, -0.3);
+            group.rotation.x = -0.35;
+            group.visible = false;
+            return group;
+        }
+
         function initViewmodelScene() {
             viewmodelScene = new THREE.Scene();
             viewmodelCamera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 10);
@@ -2312,6 +2447,9 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 viewmodelMeshes[i].visible = (i === currentWeaponIndex);
                 viewmodelScene.add(viewmodelMeshes[i]);
             }
+
+            viewmodelStroke = createStrokeViewmodel();
+            viewmodelScene.add(viewmodelStroke);
         }
 
         function updateWeaponHUD() {
@@ -3700,8 +3838,17 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     vmSprayParticles.splice(i, 1);
                 }
             }
+
+            // Weapons are lowered while pressing M; the rectangle slides back and forth instead
+            for (let i = 0; i < viewmodelMeshes.length; i++) {
+                if (viewmodelMeshes[i]) viewmodelMeshes[i].visible = !isStroking && (i === currentWeaponIndex);
+            }
+            if (viewmodelStroke) {
+                viewmodelStroke.visible = isStroking;
+                if (isStroking) viewmodelStroke.position.z = -0.3 + Math.sin(performance.now() * 0.015) * 0.07;
+            }
         }
-        
+
         // ============ COLOR PICKER UI ============
         const colorPickerEl = document.getElementById('color-picker');
         let colorPickerVisible = false;
@@ -4000,7 +4147,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             const board = (kind === 'plane' && options.airborne) ||
                 (options.board !== undefined ? !!options.board : !!document.getElementById('dev-board-on-spawn')?.checked);
             if (board && playerController.getState() === 'ON_FOOT' && !carjackState.active) {
-                if (playerController.enterVehicle(vehicle)) handleEnterVehicleRadio();
+                if (playerController.enterVehicle(vehicle)) handleEnterVehicleRadio(vehicle);
             }
             return vehicle;
         }
@@ -4317,6 +4464,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         function updatePlayer(dt = 1 / 60) {
             if (!gameStarted) return;
             if (playerController && playerController.getState() === 'IN_VEHICLE') return;
+            if (playerHealth <= 0) return; // dead: no walking, no shooting
+            if (playerAction.type) return; // diving / ragdolled: updatePlayerAction drives the body
             
             _pForward.set(-Math.sin(fpCameraYaw), 0, -Math.cos(fpCameraYaw));
             _pRight.set(Math.cos(fpCameraYaw), 0, -Math.sin(fpCameraYaw));
@@ -4394,6 +4543,317 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
         }
         
+        // Collapse: the eye drops to the ground, rolls onto its side and tips toward the blood pool
+        function applyDeathCamera(dt) {
+            deathFallTime += dt;
+            const t = Math.min(1, deathFallTime / 0.7);
+            const k = 1 - Math.pow(1 - t, 3); // ease-out, like hitting the floor
+            camera.position.y = myPosition.y + 1.7 - 1.45 * k;
+            camera.rotateZ(1.2 * k);
+            camera.rotateX(-0.5 * k);
+        }
+
+        // ============ PLAYER DIVE & VEHICLE RAGDOLL ============
+        // Space on foot: dive along the movement direction (forward if standing still), lie on the ground
+        // for DIVE_GROUND_TIME, then get up. A moving car or police cruiser that touches the player
+        // ragdolls them (the first-person camera tumbles) and deals damage that scales with its speed.
+        const CAMERA_EYE_HEIGHT = 1.7;
+        const CAMERA_LYING_HEIGHT = 0.3;
+        const DIVE_SPEED = 16;               // m/s at take-off (about 6.4 m in the air + 2 m slide)
+        const DIVE_AIR_TIME = 0.4;
+        const DIVE_GROUND_TIME = 0.5;        // lying on the ground before getting up
+        const DIVE_RISE_TIME = 0.25;
+        const RAGDOLL_GROUND_TIME = 1.5;
+        const RAGDOLL_RISE_TIME = 0.5;
+        const PLAYER_HIT_MIN_SPEED = 2.0;    // m/s; slower cars just nudge past
+        const PLAYER_HIT_IMMUNITY = 1.0;     // seconds after getting back up
+        const playerAction = {
+            type: null,   // null | 'dive' | 'ragdoll'
+            phase: '',    // 'air' | 'ground' | 'rise'
+            t: 0,
+            vx: 0, vz: 0, vy: 0,
+            h: CAMERA_EYE_HEIGHT, // camera height above the feet
+            rotX: 0, rotZ: 0,     // camera pitch / roll offsets
+            rotX0: 0, rotZ0: 0,   // offsets when the get-up began
+            h0: CAMERA_LYING_HEIGHT,
+            spin: 0, spinRate: 0
+        };
+        let playerHitCooldown = 0;
+
+        function resetPlayerAction() {
+            playerAction.type = null;
+            playerAction.phase = '';
+            playerAction.h = CAMERA_EYE_HEIGHT;
+            playerAction.rotX = playerAction.rotZ = 0;
+        }
+
+        // Move with the same wall sliding as walking
+        function movePlayerBy(dx, dz) {
+            _pNewPos.copy(myPosition);
+            _pNewPos.x += dx;
+            _pNewPos.z += dz;
+            if (!checkCollision(_pNewPos)) {
+                myPosition.copy(_pNewPos);
+                return;
+            }
+            _pNewPosX.copy(myPosition);
+            _pNewPosX.x += dx;
+            if (!checkCollision(_pNewPosX)) myPosition.x = _pNewPosX.x;
+            _pNewPosZ.copy(myPosition);
+            _pNewPosZ.z += dz;
+            if (!checkCollision(_pNewPosZ)) myPosition.z = _pNewPosZ.z;
+        }
+
+        function startDive() {
+            if (playerAction.type || isStroking || !gameStarted || devMode || carjackState.active || playerHealth <= 0) return;
+            if (playerController.getState() !== 'ON_FOOT') return;
+            let fx = -Math.sin(fpCameraYaw), fz = -Math.cos(fpCameraYaw);
+            const rx = Math.cos(fpCameraYaw), rz = -Math.sin(fpCameraYaw);
+            const fwd = (fpKeys.w ? 1 : 0) - (fpKeys.s ? 1 : 0);
+            const side = (fpKeys.d ? 1 : 0) - (fpKeys.a ? 1 : 0);
+            let dx = fx * fwd + rx * side;
+            let dz = fz * fwd + rz * side;
+            const len = Math.hypot(dx, dz);
+            if (len < 0.001) { dx = fx; dz = fz; } else { dx /= len; dz /= len; }
+            isSpraying = false;
+            isFiringGun = false;
+            playerAction.type = 'dive';
+            playerAction.phase = 'air';
+            playerAction.t = 0;
+            playerAction.vx = dx * DIVE_SPEED;
+            playerAction.vz = dz * DIVE_SPEED;
+            playerAction.vy = 0;
+            playerAction.h = CAMERA_EYE_HEIGHT;
+            playerAction.rotX = playerAction.rotZ = 0;
+        }
+
+        function startPlayerRagdoll(vx, vz, vy, speed) {
+            playerAction.type = 'ragdoll';
+            playerAction.phase = 'air';
+            playerAction.t = 0;
+            playerAction.vx = vx;
+            playerAction.vz = vz;
+            playerAction.vy = vy;
+            playerAction.spin = 0;
+            playerAction.spinRate = Math.min(12, 6 + speed * 0.3);
+            // Keep the current camera height if we were already low (e.g. mid-dive)
+            playerAction.h = Math.max(playerAction.h, CAMERA_LYING_HEIGHT);
+            playerAction.rotX = playerAction.rotZ = 0;
+        }
+
+        // Car/cruiser hits the player: damage and launch scale with speed
+        function hitPlayerWithVehicle(car, spd, sign) {
+            const vYaw = typeof car.getYaw === 'function' ? car.getYaw() : (car.yaw || 0);
+            const fwdX = -Math.sin(vYaw) * sign;
+            const fwdZ = -Math.cos(vYaw) * sign;
+            const launch = Math.min(22, Math.max(4, spd * 1.1));
+            const up = Math.min(9, 3 + spd * 0.3);
+            stopStroking();
+            isSpraying = false;
+            isFiringGun = false;
+            startPlayerRagdoll(fwdX * launch, fwdZ * launch, up, spd);
+            // ~13 at 5 m/s (11 mph), ~58 at 15 m/s, lethal from about 24 m/s (54 mph)
+            const damage = Math.min(playerMaxHealth, Math.max(5, Math.round((spd - 2) * 4.5)));
+            damagePlayer(damage);
+        }
+
+        function playerOverlapsCar(car) {
+            const spd = Math.abs(typeof car.getSpeed === 'function' ? car.getSpeed() : (car.speed || 0));
+            if (spd < PLAYER_HIT_MIN_SPEED) return false;
+            if (car.isPlane && car.position.y > 1.5) return false;
+            const vYaw = typeof car.getYaw === 'function' ? car.getYaw() : (car.yaw || 0);
+            const dx = myPosition.x - car.position.x;
+            const dz = myPosition.z - car.position.z;
+            // Car-local longitudinal / lateral offsets (forward = -sin, -cos)
+            const lon = dx * -Math.sin(vYaw) + dz * -Math.cos(vYaw);
+            const lat = dx * Math.cos(vYaw) + dz * -Math.sin(vYaw);
+            return Math.abs(lon) <= (car.length || 4.5) / 2 + playerRadius &&
+                   Math.abs(lat) <= (car.width || 2.2) / 2 + playerRadius;
+        }
+
+        function checkPlayerVehicleImpacts() {
+            if (!gameStarted || devMode || carjackState.active || playerHealth <= 0) return;
+            if (playerHitCooldown > 0 || playerAction.type === 'ragdoll') return;
+            if (playerController.getState() !== 'ON_FOOT') return;
+            const lists = [trafficVehicles, spawnedVehicles, policeSystem ? policeSystem.policeCars : null];
+            const check = (car) => {
+                if (!car || car === playerVehicle && playerController.getVehicle() === car) return false;
+                if (!playerOverlapsCar(car)) return false;
+                const raw = typeof car.getSpeed === 'function' ? car.getSpeed() : (car.speed || 0);
+                hitPlayerWithVehicle(car, Math.abs(raw), raw >= 0 ? 1 : -1);
+                return true;
+            };
+            if (check(playerVehicle)) return;
+            for (const list of lists) {
+                if (!list) continue;
+                for (let i = 0; i < list.length; i++) {
+                    if (check(list[i])) return;
+                }
+            }
+        }
+
+        function easeOut(t) { return 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3); }
+
+        function updatePlayerAction(dt) {
+            if (playerHitCooldown > 0) playerHitCooldown -= dt;
+            const a = playerAction;
+            if (!a.type) return;
+            if (devMode || carjackState.active || playerController.getState() !== 'ON_FOOT') {
+                resetPlayerAction();
+                return;
+            }
+            // Shot dead mid-dive: stay down where we fell
+            if (playerHealth <= 0 && a.type === 'dive') {
+                a.type = 'ragdoll';
+                a.phase = 'ground';
+                a.t = 0;
+                a.h = CAMERA_LYING_HEIGHT;
+            }
+
+            a.t += dt;
+            movePlayerBy(a.vx * dt, a.vz * dt);
+
+            if (a.type === 'dive') {
+                if (a.phase === 'air') {
+                    const k = easeOut(a.t / DIVE_AIR_TIME);
+                    a.h = CAMERA_EYE_HEIGHT + (0.35 - CAMERA_EYE_HEIGHT) * k;
+                    a.rotX = -0.9 * k;
+                    if (a.t >= DIVE_AIR_TIME) { a.phase = 'ground'; a.t = 0; }
+                } else if (a.phase === 'ground') {
+                    const decay = Math.exp(-8 * dt);
+                    a.vx *= decay; a.vz *= decay;
+                    a.h = 0.35;
+                    a.rotX += (-0.3 - a.rotX) * (1 - Math.exp(-10 * dt));
+                    if (a.t >= DIVE_GROUND_TIME) {
+                        a.phase = 'rise'; a.t = 0; a.rotX0 = a.rotX; a.h0 = a.h;
+                        a.vx = a.vz = 0;
+                    }
+                } else {
+                    const k = easeOut(a.t / DIVE_RISE_TIME);
+                    a.h = a.h0 + (CAMERA_EYE_HEIGHT - a.h0) * k;
+                    a.rotX = a.rotX0 * (1 - k);
+                    if (a.t >= DIVE_RISE_TIME) resetPlayerAction();
+                }
+                return;
+            }
+
+            // Ragdoll
+            if (a.phase === 'air') {
+                a.h += a.vy * dt;
+                a.vy -= 24 * dt;
+                a.spin += a.spinRate * dt;
+                a.rotX = -Math.min(a.spin, Math.PI * 2);
+                a.rotZ = Math.sin(a.spin * 0.5) * 0.5;
+                if (a.h <= CAMERA_LYING_HEIGHT && a.vy <= 0) {
+                    a.h = CAMERA_LYING_HEIGHT;
+                    a.phase = 'ground';
+                    a.t = 0;
+                    // Take the shortest way round to the resting pose
+                    if (a.rotX < -Math.PI) a.rotX += Math.PI * 2;
+                }
+            } else if (a.phase === 'ground') {
+                const decay = Math.exp(-3.5 * dt); // skid to a stop
+                a.vx *= decay; a.vz *= decay;
+                const k = 1 - Math.exp(-10 * dt);
+                a.rotX += (-0.5 - a.rotX) * k;
+                a.rotZ += (1.3 - a.rotZ) * k;
+                a.h = CAMERA_LYING_HEIGHT;
+                if (playerHealth > 0 && a.t >= RAGDOLL_GROUND_TIME) {
+                    a.phase = 'rise'; a.t = 0; a.rotX0 = a.rotX; a.rotZ0 = a.rotZ; a.h0 = a.h;
+                    a.vx = a.vz = 0;
+                }
+            } else {
+                const k = easeOut(a.t / RAGDOLL_RISE_TIME);
+                a.h = a.h0 + (CAMERA_EYE_HEIGHT - a.h0) * k;
+                a.rotX = a.rotX0 * (1 - k);
+                a.rotZ = a.rotZ0 * (1 - k);
+                if (a.t >= RAGDOLL_RISE_TIME) {
+                    resetPlayerAction();
+                    playerHitCooldown = PLAYER_HIT_IMMUNITY;
+                }
+            }
+        }
+
+        function applyPlayerActionCamera() {
+            camera.position.y = myPosition.y + playerAction.h;
+            camera.rotateZ(playerAction.rotZ);
+            camera.rotateX(playerAction.rotX);
+        }
+
+        // ============ PUBLIC INDECENCY (M) ============
+        // Press M to look down and start pulling the rectangle back and forth; press M again (or move,
+        // shoot, switch weapon, get hurt) to stop. If a living pedestrian is within range, or police
+        // already have eyes on the player, for STROKE_SEEN_DELAY seconds, the cops are called
+        // (crime 'public_masturbation' -> /media/PublicMasturbation.mp3 via the dispatch queue).
+        const STROKE_PITCH = -1.15;          // radians; looking down at your own torso
+        const STROKE_WITNESS_RANGE = 25;     // metres within which a pedestrian counts as seeing you
+        const STROKE_SEEN_DELAY = 1.0;       // seconds of being seen before the call goes out
+        let isStroking = false;
+        let strokeReported = false;
+        let strokeSeenTimer = 0;
+        let strokeSavedPitch = 0;
+        let strokeStartHealth = 100;
+
+        function setLookPitch(pitch) {
+            fpCameraPitch = pitch;
+            if (cameraController) cameraController.fpPitch = pitch;
+        }
+
+        function startStroking() {
+            if (isStroking || !gameStarted || devMode || carjackState.active || playerHealth <= 0) return;
+            if (playerController.getState() !== 'ON_FOOT') return;
+            isStroking = true;
+            strokeReported = false;
+            strokeSeenTimer = 0;
+            strokeSavedPitch = fpCameraPitch;
+            strokeStartHealth = playerHealth;
+            isSpraying = false;
+            isFiringGun = false;
+            // Stand still even if movement keys were already held
+            fpKeys.w = fpKeys.a = fpKeys.s = fpKeys.d = false;
+            playerController.keys.w = playerController.keys.a = playerController.keys.s = playerController.keys.d = false;
+        }
+
+        function stopStroking() {
+            if (!isStroking) return;
+            isStroking = false;
+            setLookPitch(strokeSavedPitch);
+        }
+
+        function isPlayerWitnessed() {
+            for (let i = 0; i < pedestrians.length; i++) {
+                const ped = pedestrians[i];
+                if (ped.isDead || ped.state === 'ragdoll') continue;
+                const p = ped.mesh.position;
+                if (Math.hypot(p.x - myPosition.x, p.z - myPosition.z) <= STROKE_WITNESS_RANGE) return true;
+            }
+            return !!(policeSystem && policeSystem.wantedLevel > 0 && policeSystem.canSeePlayer);
+        }
+
+        function updateStroking(dt) {
+            if (!isStroking) return;
+            if (devMode || carjackState.active || playerHealth <= 0 || playerHealth < strokeStartHealth ||
+                playerController.getState() !== 'ON_FOOT') {
+                stopStroking();
+                return;
+            }
+
+            // Ease the view down onto the torso
+            setLookPitch(fpCameraPitch + (STROKE_PITCH - fpCameraPitch) * Math.min(1, dt * 8));
+
+            if (strokeReported) return;
+            if (isPlayerWitnessed()) {
+                strokeSeenTimer += dt;
+            } else {
+                strokeSeenTimer = Math.max(0, strokeSeenTimer - dt);
+            }
+            if (strokeSeenTimer >= STROKE_SEEN_DELAY) {
+                strokeReported = true;
+                if (policeSystem) policeSystem.triggerCrime('public_masturbation', myPosition);
+                showToast('Someone saw that. The police have been called.');
+            }
+        }
+
         // ============ INPUT ============
         // Join game
         const nameInput = document.getElementById('name-input');
@@ -4438,6 +4898,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         
         // Turn the view by a mouse-style delta (pixels); shared by mouse look and arrow-key look
         function applyLookDelta(movementX, movementY) {
+            if (isStroking || playerHealth <= 0 || playerAction.type === 'ragdoll') return; // eyes are on the torso / on the ground
             if (cameraController) {
                 cameraController.handleMouseMove(movementX, movementY);
                 fpCameraYaw = cameraController.fpYaw;
@@ -4481,7 +4942,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
         // Mouse buttons - shoot gun, aim in vehicle, spray, or image paste
         renderer.domElement.addEventListener('mousedown', (e) => {
-            if (!gameStarted || devMode || devMenuOpen || chatOpen) return;
+            if (!gameStarted || devMode || devMenuOpen || chatOpen || playerHealth <= 0 || playerAction.type) return;
+            stopStroking();
             const inVehicle = (playerController && playerController.getState() === 'IN_VEHICLE');
             // Drive-by aiming and shooting use the car cockpit, so they don't apply while piloting a plane
             if (inVehicle && getActivePlane()) return;
@@ -4619,8 +5081,17 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
             
             if (!gameStarted) return;
-            
+            if (playerHealth <= 0) return; // dead
+
             const keyLower = event.key.toLowerCase();
+            if (keyLower === 'm') {
+                if (!event.repeat) {
+                    if (isStroking) stopStroking(); else startStroking();
+                }
+                return;
+            }
+            // Moving, boarding a vehicle or switching weapons interrupts it
+            if (isStroking && ' wasdeq12345'.includes(keyLower) && keyLower.length === 1) stopStroking();
             if (event.key === 'Shift' || keyLower === 'shift') {
                 fpKeys.shift = true;
                 playerController.keys.shift = true;
@@ -4654,6 +5125,14 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 return;
             }
             if (keyLower === 'q') {
+                // In a car Q is the ignition; on foot (and in planes) it still cycles weapons
+                if (playerController.getState() === 'IN_VEHICLE') {
+                    const v = playerController.getVehicle() || playerVehicle;
+                    if (v && !v.isPlane) {
+                        if (!event.repeat) toggleEngine(v);
+                        return;
+                    }
+                }
                 selectWeapon((currentWeaponIndex + 1) % weapons.length);
                 return;
             }
@@ -4679,17 +5158,20 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     if (playerController.getState() === 'IN_VEHICLE') {
                         event.preventDefault();
                         playerController.keys.space = true;
+                    } else {
+                        event.preventDefault();
+                        if (!event.repeat) startDive();
                     }
                     break;
                 case 'c': toggleColorPicker(); break;
                 case 'v': toggleMode(); break;
                 case 'r':
-                    if (playerController.getState() === 'IN_VEHICLE') {
+                    if (playerController.getState() === 'IN_VEHICLE' && isEngineRunning(radioState.sourceVehicle)) {
                         toggleRadioPause();
                     }
                     break;
                 case 'n':
-                    if (playerController.getState() === 'IN_VEHICLE') {
+                    if (playerController.getState() === 'IN_VEHICLE' && isEngineRunning(radioState.sourceVehicle)) {
                         skipRadioTrack();
                     }
                     break;
@@ -5074,6 +5556,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         function stepSimulation(dt = FIXED_DELTA) {
             updateMobileJoystick();
             updateArrowKeyLook(dt);
+            updateStroking(dt);
+            updateRadioSpatial();
 
             if (devMode) {
                 updateDevFlyCamera();
@@ -5085,10 +5569,10 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             } else {
                 const currentState = playerController.getState();
                 if (currentState === 'IN_VEHICLE') {
-                    if (!radioState.isInCar) {
-                        handleEnterVehicleRadio();
-                    }
                     const activeV = playerController.getVehicle() || playerVehicle;
+                    if (!radioState.isInCar) {
+                        handleEnterVehicleRadio(activeV);
+                    }
                     playerController.update(dt, spatialGrid, roadNetwork);
                     if (activeV.isPlane) {
                         // Arrow Down pulls the nose up, Arrow Up pushes it down
@@ -5099,7 +5583,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     myPosition.set(activeV.position.x, activeV.position.y, activeV.position.z);
                     cameraController.update(dt, myPosition);
                     updateCivicHUD(activeV, false, true);
-                    updateCarAudio(activeV, !activeV.wrecked);
+                    // No engine note until the car has been started with Q
+                    updateCarAudio(activeV, !activeV.wrecked && isEngineRunning(activeV));
                 } else {
                     if (radioState.isInCar) {
                         handleExitVehicleRadio();
@@ -5109,10 +5594,13 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                         myPosition.copy(playerController.position);
                         camera.position.set(myPosition.x, myPosition.y + 1.7, myPosition.z);
                     }
+                    updatePlayerAction(dt);
                     updatePlayer(dt);
                     playerController.position.copy(myPosition);
                     playerController.update(dt, spatialGrid, roadNetwork);
                     cameraController.update(dt, myPosition);
+                    if (playerAction.type) applyPlayerActionCamera();
+                    else if (playerHealth <= 0) applyDeathCamera(dt);
                     updateCarAudio(null, false);
                 }
                 previousPlayerState = currentState;
@@ -5151,6 +5639,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
             // Check vehicle-pedestrian impacts (ragdoll launch scaled by car speed) & update pedestrians/projectiles
             checkVehiclePedestrianImpacts();
+            checkPlayerVehicleImpacts();
             updatePedestrians(dt);
             updateProjectiles(dt);
 
