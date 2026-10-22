@@ -10,18 +10,33 @@
             overflow: hidden;
         }
         #loading {
-            position: absolute;
-            top: 25%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: rgb(255, 255, 255);
-            background: rgba(0,0,0,0.8);
-            padding: 20px 40px;
-            border-radius: 10px;
+            position: fixed;
+            inset: 0;
+            background: #000;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 18px;
             font-family: Arial, sans-serif;
-            font-size: 24px;
-            z-index: 200;
+            z-index: 1000;
         }
+        #loading-title { font-size: 36px; letter-spacing: 4px; }
+        #loading-bar { width: 320px; max-width: 70vw; height: 10px; background: #222; border-radius: 5px; overflow: hidden; }
+        #loading-fill { width: 0%; height: 100%; background: #fff; transition: width 0.2s; }
+        #loading-text { font-size: 16px; color: #aaa; min-height: 20px; }
+        #start-btn {
+            padding: 12px 40px;
+            font-size: 20px;
+            border: 2px solid #fff;
+            border-radius: 5px;
+            background: #000;
+            color: #fff;
+            cursor: pointer;
+            display: none;
+        }
+        #start-btn:hover { background: #fff; color: #000; }
         canvas {
             display: block;
         }
@@ -50,6 +65,7 @@
             font-size: 20px;
             z-index: 200;
             text-align: center;
+            display: none;
         }
         #name-input input {
             padding: 10px;
@@ -770,7 +786,12 @@
         <br><br>
         <button id="join-btn">Join Game</button>
     </div>
-    <div id="loading">Loading map...</div>
+    <div id="loading">
+        <div id="loading-title">KAJ SIMULATOR</div>
+        <div id="loading-bar"><div id="loading-fill"></div></div>
+        <div id="loading-text">Loading map... 0%</div>
+        <button id="start-btn">Start</button>
+    </div>
     <div id="car-indicator"><span class="key-hint">(E) </span>Enter Car</div>
     <div id="ped-talk-indicator"><span class="key-hint">(E) </span>Talk</div>
     <div id="ped-dialog"><div id="ped-dialog-speaker">Pedestrian</div><div id="ped-dialog-text"></div></div>
@@ -1504,7 +1525,18 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             return radioState.isInCar && radioState.isPlaying && !radioState.isUserPaused;
         }
 
+        // A random song plays on the loading screen; music2.mp3 starts once Start is pressed
+        const loadingSongs = ['Lemonade.mp3', 'loveme.mp3', 'bootywerk.mp3', 'BottomsUp.mp3'];
+        const loadingMusic = new Audio('/media/' + loadingSongs[Math.floor(Math.random() * loadingSongs.length)]);
+        loadingMusic.loop = true;
+        loadingMusic.volume = 0.4;
+        let gameMusicAllowed = false;
+
         function ensureBackgroundMusicPlaying() {
+            if (!gameMusicAllowed) {
+                if (loadingMusic.paused) loadingMusic.play().catch(() => {});
+                return;
+            }
             if (!isBackgroundIntroPlaying && !backgroundMusic.loop) backgroundMusic.loop = true;
             // Police chase music takes over: no background music while it plays
             if (isPoliceChaseMusicActive) {
@@ -4757,6 +4789,21 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
         }
 
+        function showStartButton() {
+            document.getElementById('loading-fill').style.width = '100%';
+            document.getElementById('loading-text').textContent = 'He is ready for you.';
+            const startBtn = document.getElementById('start-btn');
+            startBtn.style.display = 'block';
+            startBtn.onclick = () => {
+                loadingMusic.pause();
+                gameMusicAllowed = true;
+                ensureBackgroundMusicPlaying();
+                loadingDiv.style.display = 'none';
+                document.getElementById('name-input').style.display = 'block';
+                document.getElementById('player-name').focus();
+            };
+        }
+
         const mapState = {
             isLoaded: false,
             parts: [],
@@ -4776,9 +4823,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         });
         mapState.totalParts = anothermapoLoader.totalParts;
         anothermapoLoader.load(scene, spatialGrid, (progress) => {
-            if (loadingDiv) {
-                loadingDiv.textContent = 'Loading map... ' + progress.percent + '%';
-            }
+            document.getElementById('loading-fill').style.width = progress.percent + '%';
+            document.getElementById('loading-text').textContent = 'Loading map... ' + progress.percent + '%';
         }).then((result) => {
             mapState.isLoaded = true;
             mapState.parts = result.parts;
@@ -4787,16 +4833,12 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             mapState.loadedPartsCount = result.loadedPartsCount;
             mapState.obstacleCount = result.obstacleCount;
             mapState.totalTriangles = result.totalTriangles;
-            if (loadingDiv) {
-                loadingDiv.style.display = 'none';
-            }
+            showStartButton();
             buildSprayTargets();
         }).catch((err) => {
             console.error('[Map] /mapfinal failed to load:', err);
             mapState.isLoaded = true;
-            if (loadingDiv) {
-                loadingDiv.style.display = 'none';
-            }
+            showStartButton();
         });
         
         // ============ VIEWMODEL INIT ============
