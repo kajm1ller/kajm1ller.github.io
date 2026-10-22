@@ -31,6 +31,13 @@ const policeBulletMat = new THREE.MeshBasicMaterial({ color: 0xffcc00 });
 // Distance (m) within which police can see the player; beyond it the player is evading
 export const POLICE_SIGHT_RANGE = 50.0;
 
+// The first cruiser of every chase rolls out from this spot (snapped to the nearest road).
+// It is only used when the player is between STATION_MIN_PLAYER_DIST and STATION_MAX_PLAYER_DIST away;
+// otherwise the first cruiser comes from a distant point around the player like any reinforcement.
+export const POLICE_STATION = { x: 0, z: 0 };
+const STATION_MIN_PLAYER_DIST = 120.0;
+const STATION_MAX_PLAYER_DIST = 700.0;
+
 export class PoliceSirenAudio {
     constructor(audioContext = null) {
         this.ctx = audioContext;
@@ -298,6 +305,7 @@ export class PoliceVehicle extends Vehicle {
         this.reverseTimer = 0;
 
         this.hasDeployedOfficers = false;
+        this.spawnAge = 0; // seconds since this cruiser appeared
 
         this._buildPoliceAesthetics();
         this._buildLightbar();
@@ -471,6 +479,9 @@ export class PoliceSystem {
 
         this.wantedCooldown = 0;
         this.spawnTimer = 0; // seconds since the last reinforcement cruiser spawned
+        this.chaseTime = 0; // seconds the current wanted session has lasted; reinforcements spawn closer over time
+        this.stationDispatched = false; // the first cruiser of this session has already left the station
+        this.policeHaveArrived = false; // police have come within sight range at least once this session
         this.isEvading = false;
         this.canSeePlayer = false; // a cruiser or officer is within POLICE_SIGHT_RANGE of the player
         this.isBusted = false;
@@ -553,6 +564,9 @@ export class PoliceSystem {
         this.wantedLevel = 0;
         this.wantedCooldown = 0;
         this.spawnTimer = 0;
+        this.chaseTime = 0;
+        this.stationDispatched = false;
+        this.policeHaveArrived = false;
         this.isEvading = false;
         this.canSeePlayer = false;
         this.bustedTimer = 0;
@@ -690,14 +704,35 @@ export class PoliceSystem {
      * Picks a dynamic spawn point on the road network: a random road position in a ring
      * around the player (any direction), away from the player and from other cruisers.
      */
+    // Spawn ring around the player: starts far away and closes in as stars are gained and the chase drags on
+    _getSpawnRing() {
+        const stars = Math.max(1, Math.min(5, this.wantedLevel));
+        const t = Math.min(1, this.chaseTime / 120.0);
+        const min = Math.max(40.0, (160.0 - (stars - 1) * 28.0) * (1.0 - 0.4 * t)); // 160 m at 1 star -> 48 m at 5
+        const max = Math.max(min + 40.0, (320.0 - (stars - 1) * 48.0) * (1.0 - 0.35 * t)); // 320 m -> 128 m
+        return { min, max };
+    }
+
+    _getStationPoint() {
+        let x = POLICE_STATION.x;
+        let z = POLICE_STATION.z;
+        if (this.roadNetwork && typeof this.roadNetwork.getNearestWaypoint === 'function') {
+            const wp = this.roadNetwork.getNearestWaypoint(x, z);
+            if (wp) {
+                x = wp.x;
+                z = wp.z;
+            }
+        }
+        return { x, z };
+    }
+
     _pickSpawnPoint(refPos) {
-        const MIN_DIST = 40.0;
-        const MAX_DIST = 115.0;
+        const { min: MIN_DIST, max: MAX_DIST } = this._getSpawnRing();
         const MIN_FROM_OTHER_CARS = 15.0;
 
         const wps = this.roadNetwork && this.roadNetwork.waypoints;
         if (wps && wps.length > 0) {
-            for (let attempt = 0; attempt < 40; attempt++) {
+            for (let attempt = 0; attempt < 120; attempt++) {
                 const wp = wps[(Math.random() * wps.length) | 0];
                 const d = Math.hypot(wp.x - refPos.x, wp.z - refPos.z);
                 if (d < MIN_DIST || d > MAX_DIST) continue;
@@ -717,7 +752,7 @@ export class PoliceSystem {
 
         // Fallback: random direction and distance, snapped to the nearest road
         const angle = Math.random() * Math.PI * 2;
-        const dist = MIN_DIST + Math.random() * (MAX_DIST - MIN_DIST) * 0.6;
+        const dist = MIN_DIST + Math.random() * (MAX_DIST - MIN_DIST);
         let x = refPos.x + Math.cos(angle) * dist;
         let z = refPos.z + Math.sin(angle) * dist;
         if (this.roadNetwork && typeof this.roadNetwork.getNearestWaypoint === 'function') {
@@ -732,13 +767,18 @@ export class PoliceSystem {
 
     spawnPoliceCar(targetPos = null) {
         const refPos = targetPos || { x: 0, z: 0 };
-        const pt = this._pickSpawnPoint(refPos);
-        let spawnX = pt.x;
-        let spawnZ = pt.z;
-        let spawnYaw = Math.atan2(refPos.x - spawnX, refPos.z - spawnZ);
-
-        spawnX = Math.max(-270, Math.min(270, spawnX));
-        spawnZ = Math.max(-270, Math.min(270, spawnZ));
+        // First cruiser of the chase leaves the station; later ones appear around the player
+        let pt = null;
+        if (!this.stationDispatched) {
+            this.stationDispatched = true;
+            const station = this._getStationPoint();
+            const d = Math.hypot(station.x - refPos.x, station.z - refPos.z);
+            if (d >= STATION_MIN_PLAYER_DIST && d <= STATION_MAX_PLAYER_DIST) pt = station;
+        }
+        if (!pt) pt = this._pickSpawnPoint(refPos);
+        const spawnX = pt.x;
+        const spawnZ = pt.z;
+        const spawnYaw = Math.atan2(refPos.x - spawnX, refPos.z - spawnZ);
 
         const carId = `police_civic_${this.carIdCounter++}`;
         const policeCar = new PoliceVehicle(carId, spawnX, spawnZ, spawnYaw, this.scene);
@@ -811,6 +851,7 @@ export class PoliceSystem {
             return;
         }
 
+        this.chaseTime += dt;
         this._pruneWrecks(playerPos);
         this._syncPoliceFleet(playerPos, dt);
 
@@ -831,7 +872,10 @@ export class PoliceSystem {
             }
 
             // Deploy armed officers from cruiser when within 32m of player or when cruiser brakes/rams
-            if (!pc.hasDeployedOfficers && (distP < 32.0 || Math.abs(pc.speed) < 2.5)) {
+            // (a cruiser that has only just spawned is still at rest, so only count braking once it has been driving a while)
+            pc.spawnAge += dt;
+            const stoppedNearby = Math.abs(pc.speed) < 2.5 && pc.spawnAge > 4.0 && distP < 70.0;
+            if (!pc.hasDeployedOfficers && (distP < 32.0 || stoppedNearby)) {
                 pc.hasDeployedOfficers = true;
 
                 const vYaw = pc.yaw || 0;
@@ -917,8 +961,14 @@ export class PoliceSystem {
             this.bustedTimer = Math.max(0, this.bustedTimer - dt * 2.0);
         }
 
-        // 5. Evasion logic: if player stays beyond 50m from all police
-        if (minDistanceToPlayer > POLICE_SIGHT_RANGE) {
+        // 5. Evasion logic: if player stays beyond 50m from all police.
+        // Cruisers now start far away, so the clock only runs once police have first reached the player
+        // (or, failing that, after 60s so a stuck response can't keep the stars on forever).
+        if (minDistanceToPlayer <= POLICE_SIGHT_RANGE) this.policeHaveArrived = true;
+        if (!this.policeHaveArrived && this.chaseTime < 60.0) {
+            this.isEvading = false;
+            this.wantedCooldown = Math.max(this.wantedCooldown, 14.0);
+        } else if (minDistanceToPlayer > POLICE_SIGHT_RANGE) {
             this.isEvading = true;
             this.wantedCooldown -= dt;
             if (this.wantedCooldown <= 0) {
