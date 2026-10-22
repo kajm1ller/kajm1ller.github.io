@@ -22,9 +22,10 @@
             font-family: Arial, sans-serif;
             z-index: 1000;
         }
-        #loading-title { font-size: 36px; letter-spacing: 4px; }
-        #loading-bar { width: 320px; max-width: 70vw; height: 10px; background: #222; border-radius: 5px; overflow: hidden; }
-        #loading-fill { width: 0%; height: 100%; background: #fff; transition: width 0.2s; }
+        #loading-ring { position: relative; width: 300px; height: 300px; max-width: 80vw; max-height: 80vw; display: flex; align-items: center; justify-content: center; }
+        #loading-ring svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+        #loading-title { position: relative; font-size: 32px; letter-spacing: 4px; text-align: center; line-height: 1.2; }
+        #loading-fill { transition: stroke-dasharray 0.2s; }
         #loading-text { font-size: 16px; color: #aaa; min-height: 20px; }
         #start-btn {
             padding: 12px 40px;
@@ -787,8 +788,28 @@
         <button id="join-btn">Join Game</button>
     </div>
     <div id="loading">
-        <div id="loading-title">KAJ SIMULATOR</div>
-        <div id="loading-bar"><div id="loading-fill"></div></div>
+        <div id="loading-ring">
+            <svg viewBox="0 0 300 300" aria-hidden="true">
+                <defs>
+                    <linearGradient id="loading-grad" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="300" y2="300">
+                        <stop offset="0%" stop-color="#fcf3c4">
+                            <animate attributeName="stop-color" values="#fcf3c4;#f962a0;#aa96f9;#fcf3c4" dur="6s" repeatCount="indefinite"/>
+                        </stop>
+                        <stop offset="50%" stop-color="#f962a0">
+                            <animate attributeName="stop-color" values="#f962a0;#aa96f9;#fcf3c4;#f962a0" dur="6s" repeatCount="indefinite"/>
+                        </stop>
+                        <stop offset="100%" stop-color="#aa96f9">
+                            <animate attributeName="stop-color" values="#aa96f9;#fcf3c4;#f962a0;#aa96f9" dur="6s" repeatCount="indefinite"/>
+                        </stop>
+                        <animateTransform attributeName="gradientTransform" type="rotate" from="0 150 150" to="360 150 150" dur="8s" repeatCount="indefinite"/>
+                    </linearGradient>
+                </defs>
+                <circle cx="150" cy="150" r="140" fill="none" stroke="#222" stroke-width="10"/>
+                <circle id="loading-fill" cx="150" cy="150" r="140" fill="none" stroke="url(#loading-grad)" stroke-width="10"
+                        stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 150 150)"/>
+            </svg>
+            <div id="loading-title">KAJ<br>SIMULATOR</div>
+        </div>
         <div id="loading-text">Loading map... 0%</div>
         <button id="start-btn">Start</button>
     </div>
@@ -886,7 +907,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
         }
     </script>
-    
+
     <script type="module">
         import * as THREE from 'three';
         import {
@@ -1983,6 +2004,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         let _engineOsc1 = null;
         let _engineOsc2 = null;
         let _engineGainNode = null;
+        let _engineFilterNode = null;
         let _brakeNoiseNode = null;
         let _brakeFilterNode = null;
         let _brakeGainNode = null;
@@ -2005,6 +2027,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 const engineFilter = _carAudioCtx.createBiquadFilter();
                 engineFilter.type = 'lowpass';
                 engineFilter.frequency.value = 340;
+                _engineFilterNode = engineFilter;
 
                 _engineGainNode = _carAudioCtx.createGain();
                 _engineGainNode.gain.value = 0;
@@ -2097,8 +2120,19 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 brakeGain = (vehicle.onGround && vehicle.inputHandbrake && spd > 3) ? Math.min(0.14, 0.04 + speedRatio * 0.2) : 0;
             }
 
+            // Drift boost: engine screams at a much higher pitch, brighter and louder
+            const isBoosting = !!(vehicle.boostTimer > 0);
+            if (isBoosting) {
+                rpmNorm = 1.0;
+                baseFreq *= 1.75;
+                engineGain = 0.26;
+                brakeGain = 0;
+            }
+
             let mode = 'idle';
-            if (isBrakingWhileMoving) {
+            if (isBoosting) {
+                mode = 'boosting';
+            } else if (isBrakingWhileMoving) {
                 mode = 'braking';
             } else if (isThrottling) {
                 mode = 'accelerating';
@@ -2131,6 +2165,9 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 _engineOsc1.frequency.setTargetAtTime(baseFreq, now, 0.04);
                 _engineOsc2.frequency.setTargetAtTime(baseFreq * 2.0, now, 0.04);
                 _engineGainNode.gain.setTargetAtTime(engineGain, now, 0.04);
+                if (_engineFilterNode) {
+                    _engineFilterNode.frequency.setTargetAtTime(isBoosting ? 1100 : 340, now, 0.05);
+                }
                 _brakeGainNode.gain.setTargetAtTime(brakeGain, now, 0.03);
             }
         }
@@ -5272,7 +5309,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         }
 
         function showStartButton() {
-            document.getElementById('loading-fill').style.width = '100%';
+            document.getElementById('loading-fill').setAttribute('stroke-dasharray', '100 100');
             document.getElementById('loading-text').textContent = 'He is ready for you.';
             const startBtn = document.getElementById('start-btn');
             startBtn.style.display = 'block';
@@ -5305,7 +5342,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         });
         mapState.totalParts = anothermapoLoader.totalParts;
         anothermapoLoader.load(scene, spatialGrid, (progress) => {
-            document.getElementById('loading-fill').style.width = progress.percent + '%';
+            document.getElementById('loading-fill').setAttribute('stroke-dasharray', progress.percent + ' 100');
             document.getElementById('loading-text').textContent = 'Loading map... ' + progress.percent + '%';
         }).then((result) => {
             mapState.isLoaded = true;

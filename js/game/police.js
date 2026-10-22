@@ -390,8 +390,17 @@ export class PoliceVehicle extends Vehicle {
         this.updateStrobes(dt);
 
         if (this.driverDead) {
-            this.setInputs(0, 0, 0.9, false);
-            this.update(dt, spatialGrid);
+            // Dead driver: hold the handbrake (brake would reverse the car at low speed) and
+            // pin the car in place once it has stopped so it never moves again.
+            this.reverseTimer = 0;
+            this.stuckTimer = 0;
+            this.setInputs(0, 0, 0, true);
+            if (Math.abs(this.speed) < 0.5) {
+                this.speed = 0;
+                this.velocity.x = 0;
+                this.velocity.y = 0;
+            }
+            this.update(dt, spatialGrid, roadNetwork);
             return;
         }
 

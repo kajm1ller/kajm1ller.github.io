@@ -365,6 +365,16 @@ export class Vehicle {
         this.inputBrake = 0;
         this.inputHandbrake = false;
 
+        // Drift boost state (player only): drifting under handbrake charges a boost released with the handbrake
+        this.driftCharge = 0;                   // Accumulated drift charge (0..driftChargeMax)
+        this.driftChargeMax = 3.0;
+        this.handbrakeHeldTime = 0;             // Seconds the handbrake has been held continuously
+        this.driftCancelled = false;            // Set when held >3s or stopped; boost is lost until release
+        this.boostTimer = 0;                    // Seconds of boost remaining
+        this.boostAccel = 34.0;                 // Extra forward acceleration while boosting (m/s^2)
+        this.boostSpeedMultiplier = 1.7;        // Top speed multiplier while boosting
+        this._prevHandbrake = false;
+
         // Collision scratch buffers (reusable across ticks)
         this.collisionCircles = [
             { x: 0, z: 0, radius: this.circleRadius },
@@ -535,9 +545,35 @@ export class Vehicle {
             }
         }
 
+        // Drift boost: release (handbrake -> off) with enough charge fires the boost
+        if (this.isPlayer) {
+            if (this._prevHandbrake && !this.inputHandbrake) {
+                if (!this.driftCancelled && this.driftCharge >= 0.3 && this.speed > 1.0) {
+                    this.boostTimer = 0.5 + this.driftCharge * 0.6;
+                    this.speed += 6.0 + this.driftCharge * 2.0;
+                }
+                this.driftCharge = 0;
+                this.handbrakeHeldTime = 0;
+                this.driftCancelled = false;
+            }
+            this._prevHandbrake = this.inputHandbrake;
+        }
+
+        const boosting = this.boostTimer > 0;
+        if (boosting) {
+            this.boostTimer = Math.max(0, this.boostTimer - dt);
+            if (!this.inputHandbrake && this.speed >= 0) accel += this.boostAccel;
+        }
+        const speedCap = boosting ? this.maxForwardSpeed * this.boostSpeedMultiplier : this.maxForwardSpeed;
+
         // Integrate longitudinal speed
         const prevSpeed = this.speed;
         this.speed += accel * dt;
+
+        // Bleed off boost overspeed once the boost ends
+        if (!boosting && this.speed > this.maxForwardSpeed) {
+            this.speed = Math.max(this.maxForwardSpeed, this.speed - 14.0 * dt);
+        }
 
         // Zero-crossing snap when braking to prevent reverse oscillation
         if ((prevSpeed > 0 && this.speed < 0 && this.inputThrottle === 0 && this.inputBrake > 0 && prevSpeed < 2.0) ||
@@ -546,7 +582,7 @@ export class Vehicle {
         }
 
         // Clamp to physical speed limits
-        this.speed = Math.max(this.maxReverseSpeed, Math.min(this.maxForwardSpeed, this.speed));
+        this.speed = Math.max(this.maxReverseSpeed, Math.min(speedCap, this.speed));
 
         // 3. Extended Kinematic Bicycle model equations
         const tanDelta = Math.tan(this.steerAngle);
@@ -569,6 +605,19 @@ export class Vehicle {
         // Decompose velocity into longitudinal and lateral components
         let vLong = this.speed;
         let vLat = this.velocity.x * _scratchRight.x + this.velocity.y * _scratchRight.z;
+
+        // Drift charge: sideways slip while the handbrake is held builds the boost
+        if (this.isPlayer && this.inputHandbrake) {
+            this.handbrakeHeldTime += dt;
+            if (this.handbrakeHeldTime > 3.0 || Math.abs(this.speed) < 0.3) {
+                this.driftCancelled = true;
+            }
+            if (this.driftCancelled) {
+                this.driftCharge = 0;
+            } else {
+                this.driftCharge = Math.min(this.driftChargeMax, this.driftCharge + Math.min(Math.abs(vLat), 12.0) * dt * 0.25);
+            }
+        }
 
         // Lateral grip damping
         const gripFactor = this.inputHandbrake ? this.handbrakeGrip : this.normalGrip;
