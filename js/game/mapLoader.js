@@ -306,6 +306,8 @@ export class AnothermapoLoader {
         this.registerColliders = options.registerColliders !== false;
         this.roadNetwork = options.roadNetwork || null;
         this.collisionMeshes = options.collisionMeshes || null;
+        // Cap on texture width/height in px (0 = full size). Mobile GPUs/tabs cannot hold the ~680MB of decoded 2048px textures.
+        this.maxTextureSize = options.maxTextureSize || 0;
 
         this.materials = null;
         this.materialInfoCache = new Map();
@@ -374,6 +376,7 @@ export class AnothermapoLoader {
                             const texture = texLoader.load(
                                 url,
                                 (tex) => {
+                                    this._downscaleTexture(tex);
                                     settle();
                                     if (onLoad) onLoad(tex);
                                 },
@@ -622,6 +625,19 @@ export class AnothermapoLoader {
      * Parse one OSM2World OBJ part, register its obstacle colliders, and append its triangles
      * (offset into game world space) to the per-tile, per-batch-material vertex buckets.
      */
+    _downscaleTexture(tex) {
+        const max = this.maxTextureSize;
+        const img = tex.image;
+        if (!max || !img || !img.width || (img.width <= max && img.height <= max)) return;
+        const scale = max / Math.max(img.width, img.height);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        tex.image = canvas;
+        tex.needsUpdate = true;
+    }
+
     _ingestObjText(rawText, partName, isTerrainPart, spatialGrid) {
         const ox = this.offset.x;
         const oy = this.offset.y;

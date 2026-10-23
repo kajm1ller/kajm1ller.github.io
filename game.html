@@ -902,6 +902,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             <div class="mbtn" id="mobile-start-btn" data-modes="car">Start</div>
             <div class="mbtn" id="mobile-use-btn" data-modes="foot car plane">Use</div>
             <div class="mbtn" id="mobile-weapon-btn" data-modes="foot">Weapon</div>
+            <div class="mbtn" id="mobile-stroke-btn" data-modes="foot">Stroke</div>
             <div class="mbtn" id="mobile-aim-btn" data-modes="car">Aim</div>
             <div class="mbtn" id="mobile-brake-btn" data-modes="car plane">Brake</div>
             <div class="mbtn" id="mobile-thr-up-btn" data-modes="plane">Thr +</div>
@@ -5426,6 +5427,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         const anothermapoLoader = new AnothermapoLoader({
             basePath: '/mapfinal/',
             batchSize: 6,
+            maxTextureSize: (('ontouchstart' in window) || navigator.maxTouchPoints > 0) ? 512 : 0,
             roadNetwork,
             collisionMeshes
         });
@@ -5624,6 +5626,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         // Weapon switch (Q)
         bindMobileButton(document.getElementById('mobile-weapon-btn'), () => tapVirtualKey('q'));
         // Drive-by aim: hold = right mouse button
+        bindMobileButton(document.getElementById('mobile-stroke-btn'), () => tapVirtualKey('m'));
+
         bindMobileButton(document.getElementById('mobile-aim-btn'), () => fireMouse('mousedown', 2), () => fireMouse('mouseup', 2, document));
         // Handbrake in cars / wheel brake in planes: Space
         bindMobileButton(document.getElementById('mobile-brake-btn'), () => setVirtualKey(' ', true), () => setVirtualKey(' ', false));
