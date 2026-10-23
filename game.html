@@ -218,10 +218,10 @@
             position: absolute;
             bottom: 30px;
             left: 30px;
-            width: 120px;
-            height: 120px;
+            width: 110px;
+            height: 110px;
             border-radius: 50%;
-            background: rgba(255,255,255,0.15);
+            background: rgba(255,255,255,0.12);
             border: 2px solid rgba(255,255,255,0.3);
             pointer-events: auto;
             touch-action: none;
@@ -273,13 +273,26 @@
             position: absolute;
             bottom: 118px;
             right: 16px;
-            display: grid;
-            grid-template-columns: repeat(2, 64px);
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
             gap: 8px;
             pointer-events: none;
         }
+        #mobile-more-menu {
+            position: absolute;
+            bottom: 118px;
+            right: 96px;
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: none;
+        }
+        #mobile-more-menu.open { display: flex; }
+        #mobile-more-menu .mbtn { width: 84px; }
         .mbtn {
-            height: 42px;
+            width: 64px;
+            height: 38px;
             border-radius: 8px;
             background: rgba(0,0,0,0.6);
             border: 1px solid rgba(255,255,255,0.3);
@@ -298,6 +311,8 @@
         #mobile-controls.mode-foot .mbtn:not([data-modes~="foot"]),
         #mobile-controls.mode-car .mbtn:not([data-modes~="car"]),
         #mobile-controls.mode-plane .mbtn:not([data-modes~="plane"]) { display: none; }
+        #mobile-start-btn { background: rgba(40,160,80,0.65); }
+        #mobile-start-btn.engine-on { background: rgba(0,0,0,0.6); }
         #mobile-controls.mode-plane #mobile-spray-btn { display: none; }
         /* Touch devices: keep the page still and move HUD out from under the thumbs */
         body.is-mobile {
@@ -884,14 +899,18 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         <div id="mobile-joystick"><div id="mobile-joystick-thumb"></div></div>
         <div id="mobile-look"></div>
         <div id="mobile-actions">
+            <div class="mbtn" id="mobile-start-btn" data-modes="car">Start</div>
             <div class="mbtn" id="mobile-use-btn" data-modes="foot car plane">Use</div>
             <div class="mbtn" id="mobile-weapon-btn" data-modes="foot">Weapon</div>
             <div class="mbtn" id="mobile-aim-btn" data-modes="car">Aim</div>
             <div class="mbtn" id="mobile-brake-btn" data-modes="car plane">Brake</div>
             <div class="mbtn" id="mobile-thr-up-btn" data-modes="plane">Thr +</div>
             <div class="mbtn" id="mobile-thr-down-btn" data-modes="plane">Thr −</div>
-            <div class="mbtn" id="mobile-radio-btn" data-modes="car plane">📻 R</div>
-            <div class="mbtn" id="mobile-radio-skip-btn" data-modes="car plane">⏭ N</div>
+            <div class="mbtn" id="mobile-more-btn" data-modes="foot car plane">⋯</div>
+        </div>
+        <div id="mobile-more-menu">
+            <div class="mbtn" id="mobile-radio-btn" data-modes="car plane">📻 Radio</div>
+            <div class="mbtn" id="mobile-radio-skip-btn" data-modes="car plane">⏭ Next</div>
             <div class="mbtn" id="mobile-mode-btn" data-modes="foot">Spray</div>
             <div class="mbtn" id="mobile-color-btn" data-modes="foot">Color</div>
             <div class="mbtn" id="mobile-upload-btn" data-modes="foot">📷 Img</div>
@@ -1651,7 +1670,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         }
 
         // A random song plays on the loading screen; music2.mp3 starts once Start is pressed
-        const loadingSongs = ['Lemonade.mp3', 'loveme.mp3', 'bootywerk.mp3', 'BottomsUp.mp3'];
+        const loadingSongs = ['Lemonade.mp3', 'loveme.mp3', 'bootywerk.mp3', 'BottomsUp.mp3', 'IDFWY.mp3', 'AMilli.mp3'];
         const loadingMusic = new Audio('/media/' + loadingSongs[Math.floor(Math.random() * loadingSongs.length)]);
         loadingMusic.loop = true;
         loadingMusic.volume = 0.4;
@@ -3387,26 +3406,41 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             const fwdZ = -Math.cos(vYaw) * sign;
 
             // Forward launch speed & upward arc scale directly with how fast the car is going
-            const forwardLaunchSpeed = Math.max(3.5, absSpeed * 1.35);
-            const upwardLaunchSpeed = Math.min(14.0, 2.8 + absSpeed * 0.42);
+            const forwardLaunchSpeed = Math.max(3.5, absSpeed * 1.2);
+            const upwardLaunchSpeed = Math.min(11.0, 3.0 + absSpeed * 0.35);
+
+            // Off-centre hits shove the body sideways and spin it harder
+            const rightX = Math.cos(vYaw);
+            const rightZ = -Math.sin(vYaw);
+            const offX = ped.mesh.position.x - vehicle.position.x;
+            const offZ = ped.mesh.position.z - vehicle.position.z;
+            const side = THREE.MathUtils.clamp((offX * rightX + offZ * rightZ) / 1.5, -1, 1);
+            const sideSpeed = side * absSpeed * 0.25;
 
             ped.state = 'ragdoll';
             ped.hp = 0;
             ped.impactSpeed = absSpeed;
             ped.ragdollOrigin = { x: ped.mesh.position.x, z: ped.mesh.position.z };
             ped.ragdollDisplacement = 0;
+            ped.ragdollTime = 0;
+            ped.ragdollSettle = 0;
+            ped.ragdollHeading = Math.atan2(fwdX, fwdZ);
+            ped.ragdollFace = (ped.index % 2 === 0) ? 1 : -1;
+            // Tumble around the body's centre of mass, not the feet
+            ped.ragdollCom = new THREE.Vector3(ped.mesh.position.x, ped.mesh.position.y + 1.2, ped.mesh.position.z);
+            ped.ragdollQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), ped.ragdollHeading);
             ped.ragdollVel = new THREE.Vector3(
-                fwdX * forwardLaunchSpeed,
+                fwdX * forwardLaunchSpeed + rightX * sideSpeed,
                 upwardLaunchSpeed,
-                fwdZ * forwardLaunchSpeed
+                fwdZ * forwardLaunchSpeed + rightZ * sideSpeed
             );
+            // World-space spin: pitch over about the car's right axis, plus roll/twist from the off-centre hit
             ped.ragdollAngVel = new THREE.Vector3(
-                5.0 + absSpeed * 0.65,
-                (ped.index % 2 === 0 ? 1 : -1) * (1.5 + absSpeed * 0.2),
-                0
+                rightX * (4.0 + absSpeed * 0.5) + fwdX * side * 4.0,
+                (ped.index % 2 === 0 ? 1 : -1) * (1.0 + absSpeed * 0.1) + side * 2.0,
+                rightZ * (4.0 + absSpeed * 0.5) + fwdZ * side * 4.0
             );
-            ped.mesh.position.y = Math.max(0.35, ped.mesh.position.y + 0.35);
-            ped.mesh.rotation.y = Math.atan2(fwdX, fwdZ);
+            ped.mesh.rotation.set(0, 0, 0);
 
             // Report crime or officer kill to Police System
             const isPlayerCar = !!(vehicle && (
@@ -3471,47 +3505,102 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
         }
 
+        const _ragdollDq = new THREE.Quaternion();
+        const _ragdollTarget = new THREE.Quaternion();
+        const _ragdollAxis = new THREE.Vector3();
+        const _ragdollOffset = new THREE.Vector3();
+        const _ragdollUp = new THREE.Vector3(0, 1, 0);
+        const _ragdollRight = new THREE.Vector3(1, 0, 0);
+
+        // Launched-by-car ragdoll step shared by pedestrians and police officers
+        function stepPedRagdoll(ped, dt) {
+            // Integrate the centre of mass under gravity, spin the body around it
+            const rdt = Math.min(dt, 1 / 30);
+            const com = ped.ragdollCom;
+            const vel = ped.ragdollVel;
+            ped.ragdollTime += rdt;
+            com.addScaledVector(vel, rdt);
+            vel.y -= 24.0 * rdt; // Gravity
+
+            const av = ped.ragdollAngVel;
+            const angSpeed = av.length();
+            if (angSpeed > 1e-4) {
+                _ragdollDq.setFromAxisAngle(_ragdollAxis.copy(av).divideScalar(angSpeed), angSpeed * rdt);
+                ped.ragdollQuat.premultiply(_ragdollDq).normalize();
+            }
+
+            // Limbs flail while airborne and go slack once down
+            const ud = ped.mesh.userData;
+            if (ud.leftLeg && ud.rightLeg) {
+                const flail = com.y > 0.6 ? 1 : 0.25;
+                const ph = ped.ragdollTime * 14 + (ped.index | 0);
+                ud.leftLeg.rotation.x = Math.sin(ph) * 0.9 * flail;
+                ud.rightLeg.rotation.x = Math.sin(ph + 2.2) * 0.9 * flail;
+                ud.leftLeg.rotation.z = -0.25 * flail;
+                ud.rightLeg.rotation.z = 0.25 * flail;
+            }
+
+            // Ground contact (body centre is ~0.25 above the ground when lying flat)
+            const restH = 0.25;
+            if (com.y <= restH && vel.y <= 0) {
+                com.y = restH;
+                const impact = -vel.y;
+                if (impact > 2.5) {
+                    // Bounce, lose most horizontal speed and spin on each hit
+                    vel.y = impact * 0.32;
+                    vel.x *= 0.62;
+                    vel.z *= 0.62;
+                    av.multiplyScalar(0.55);
+                    ped.ragdollSettle = 0;
+                } else {
+                    vel.y = 0;
+                    // Sliding friction
+                    const f = Math.exp(-5.5 * rdt);
+                    vel.x *= f;
+                    vel.z *= f;
+                    av.multiplyScalar(Math.exp(-6 * rdt));
+                    // Come to rest: ease the body into a flat lying pose
+                    if (Math.hypot(vel.x, vel.z) < 1.2) {
+                        ped.ragdollSettle += rdt;
+                        _ragdollTarget.setFromAxisAngle(_ragdollUp, ped.ragdollHeading);
+                        _ragdollDq.setFromAxisAngle(_ragdollRight, ped.ragdollFace * Math.PI / 2);
+                        _ragdollTarget.multiply(_ragdollDq);
+                        ped.ragdollQuat.slerp(_ragdollTarget, 1 - Math.exp(-9 * rdt));
+                        if (ped.ragdollSettle > 0.35 && Math.hypot(vel.x, vel.z) < 0.3) {
+                            ped.ragdollQuat.copy(_ragdollTarget);
+                            vel.set(0, 0, 0);
+                            ped.isDead = true;
+                            ped.state = 'dead';
+                            if (ud.leftLeg) { ud.leftLeg.rotation.set(0, 0, 0); ud.rightLeg.rotation.set(0, 0, 0); }
+                            ped.mesh.quaternion.copy(ped.ragdollQuat);
+                            _ragdollOffset.set(0, 1.0, 0).applyQuaternion(ped.ragdollQuat);
+                            ped.mesh.position.copy(com).sub(_ragdollOffset);
+                            createBloodPool(ped.mesh.position);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // Place the mesh so its centre (1.0 up the body) sits on the centre of mass
+            ped.mesh.quaternion.copy(ped.ragdollQuat);
+            _ragdollOffset.set(0, 1.0, 0).applyQuaternion(ped.ragdollQuat);
+            ped.mesh.position.copy(com).sub(_ragdollOffset);
+
+            if (ped.ragdollOrigin) {
+                ped.ragdollDisplacement = Math.hypot(
+                    ped.mesh.position.x - ped.ragdollOrigin.x,
+                    ped.mesh.position.z - ped.ragdollOrigin.z
+                );
+            }
+        }
+
         function updatePedestrians(dt = 1 / 60) {
             const stepScale = dt / (1 / 60);
             for (let i = 0; i < pedestrians.length; i++) {
                 const ped = pedestrians[i];
                 if (ped.state === 'ragdoll') {
-                    // Integrate 3D ragdoll trajectory under gravity & air/ground drag
-                    ped.mesh.position.x += ped.ragdollVel.x * dt;
-                    ped.mesh.position.y += ped.ragdollVel.y * dt;
-                    ped.mesh.position.z += ped.ragdollVel.z * dt;
-                    ped.ragdollVel.y -= 24.0 * dt; // Gravity
-
-                    // Tumble forward in the air
-                    ped.mesh.rotation.x += ped.ragdollAngVel.x * dt;
-                    ped.mesh.rotation.y += ped.ragdollAngVel.y * dt;
-
-                    if (ped.ragdollOrigin) {
-                        ped.ragdollDisplacement = Math.hypot(
-                            ped.mesh.position.x - ped.ragdollOrigin.x,
-                            ped.mesh.position.z - ped.ragdollOrigin.z
-                        );
-                    }
-
-                    // Ground impact & skidding to rest
-                    if (ped.mesh.position.y <= 0.25 && ped.ragdollVel.y <= 0) {
-                        ped.mesh.position.y = 0.25;
-                        const horizSpd = Math.hypot(ped.ragdollVel.x, ped.ragdollVel.z);
-                        if (horizSpd > 3.5) {
-                            // Skid forward along ground before stopping
-                            ped.ragdollVel.y = Math.min(1.6, horizSpd * 0.12);
-                            ped.ragdollVel.x *= 0.42;
-                            ped.ragdollVel.z *= 0.42;
-                            ped.ragdollAngVel.multiplyScalar(0.45);
-                        } else {
-                            ped.ragdollVel.set(0, 0, 0);
-                            ped.mesh.rotation.x = Math.PI / 2;
-                            ped.mesh.rotation.z = 0;
-                            ped.isDead = true;
-                            ped.state = 'dead';
-                            createBloodPool(ped.mesh.position);
-                        }
-                    }
+                    stepPedRagdoll(ped, dt);
                     continue;
                 }
                 if (ped.isDead) continue;
@@ -5527,6 +5616,11 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
         // Use (E): enter / exit vehicle, talk to a pedestrian
         bindMobileButton(document.getElementById('mobile-use-btn'), () => tapVirtualKey('e'));
+        // Ignition (Q while driving a car)
+        bindMobileButton(document.getElementById('mobile-start-btn'), () => tapVirtualKey('q'));
+        // Secondary buttons live behind the "more" toggle
+        const mobileMoreMenu = document.getElementById('mobile-more-menu');
+        bindMobileButton(document.getElementById('mobile-more-btn'), () => mobileMoreMenu.classList.toggle('open'));
         // Weapon switch (Q)
         bindMobileButton(document.getElementById('mobile-weapon-btn'), () => tapVirtualKey('q'));
         // Drive-by aim: hold = right mouse button
@@ -5554,6 +5648,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
         let _mobileFireLabel = '';
         let _mobileUseLabel = '';
+        let _mobileEngineOn = null;
+        const mobileStartBtn = document.getElementById('mobile-start-btn');
         const mobileUseBtn = document.getElementById('mobile-use-btn');
 
         // Per-frame: map the stick onto keys for the current mode, and keep the button set / labels in sync
@@ -5570,11 +5666,22 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     mobileJoystickThumb.style.transform = 'translate(-50%, -50%)';
                 }
                 mobileMode = mode;
+                mobileMoreMenu.classList.remove('open');
+                _mobileEngineOn = null;
                 mobileControls.classList.remove('mode-foot', 'mode-car', 'mode-plane');
                 mobileControls.classList.add('mode-' + mode);
                 document.body.classList.toggle('mobile-vehicle', mode !== 'foot');
             }
 
+            if (mode === 'car') {
+                const v = playerController.getVehicle();
+                const on = !!(v && v.engineOn);
+                if (on !== _mobileEngineOn) {
+                    _mobileEngineOn = on;
+                    mobileStartBtn.textContent = on ? 'Stop' : 'Start';
+                    mobileStartBtn.classList.toggle('engine-on', on);
+                }
+            }
             const useLabel = mode === 'foot' ? 'Use' : 'Exit';
             if (useLabel !== _mobileUseLabel) {
                 _mobileUseLabel = useLabel;
@@ -5720,6 +5827,11 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             checkVehiclePedestrianImpacts();
             checkPlayerVehicleImpacts();
             updatePedestrians(dt);
+            if (policeSystem) {
+                for (const off of policeSystem.officers) {
+                    if (off && !off.isDead && off.state === 'ragdoll' && off.ragdollCom) stepPedRagdoll(off, dt);
+                }
+            }
             updateProjectiles(dt);
 
             // Update drifting tire smoke particles (space handbrake / skidding)

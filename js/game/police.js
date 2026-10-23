@@ -227,6 +227,7 @@ export class PoliceOfficer {
 
         // Ragdoll physics update if officer was launched by vehicle
         if (this.state === 'ragdoll') {
+            if (this.ragdollCom) return; // stepped by the game's shared ragdoll solver
             this.mesh.position.x += this.ragdollVel.x * dt;
             this.mesh.position.y += this.ragdollVel.y * dt;
             this.mesh.position.z += this.ragdollVel.z * dt;
