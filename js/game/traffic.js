@@ -56,6 +56,24 @@ export const TRAFFIC_CONFIG = Object.freeze({
     INTERSECTION_BOX_RADIUS: 6.0,
     INTERSECTION_APPROACH_DIST: 10.0,
 
+    // Junction yielding: hold short while crossing traffic occupies the junction box
+    JUNCTION_BOX_RADIUS: 7.0,
+    JUNCTION_LOOKAHEAD: 22.0,
+    JUNCTION_HOLD_TIMEOUT: 12.0,     // stale reservations expire so a wedged car can't block forever
+    STUCK_RECYCLE_TIME: 15.0,        // cars crawling this long are moved elsewhere when out of sight
+    STUCK_RECYCLE_MIN_DIST: 45.0,
+
+    // Pedestrians on crosswalks are treated as stopped obstacles in the forward corridor
+    PEDESTRIAN_CORRIDOR_PAD: 1.0,
+
+    // Population streaming around the player (cars far away are recycled onto nearby streets)
+    POPULATION_DESPAWN_RADIUS: 400.0,
+    POPULATION_SPAWN_MIN: 120.0,
+    POPULATION_SPAWN_MAX: 360.0,
+    POPULATION_IN_VIEW_MIN: 200.0,
+    POPULATION_CHECK_INTERVAL: 0.5,
+    POPULATION_MAX_PER_CHECK: 6,
+
     // Anti-Deadlock Watchdog & Anti-Overlap Separation
     WATCHDOG_NUDGE_TIME: 4.0,
     WATCHDOG_RESPAWN_TIME: 10.0,
@@ -180,8 +198,22 @@ export class TrafficAgent {
         this._idHash = Math.abs(this._hashId(vehicle.id));
 
         this.stationaryTimer = 0;
+        this.stuckTime = 0;              // seconds spent crawling (< 1 m/s); used to recycle gridlocked cars
+        this.heldJunction = null;        // road graph node this car has reserved
+        this.heldJunctionX = 0;
+        this.heldJunctionZ = 0;
+        this.heldJunctionFx = 0;
+        this.heldJunctionFz = 0;
+        this.heldJunctionTime = 0;
+        this.heldJunctionStraight = true;
+        // Gridlock breaker: after crawling a while, briefly ignore stopped cars so the jam can untangle
+        this.ghostTimer = 0;
+        this.ghostCooldown = 0;
         this.inIntersection = false;
         this.reservedIntersectionId = null;
+
+        // Lane picked for the next junction; chosen at random so cars roam the whole city
+        this.nextLaneId = null;
 
         this.lookaheadTarget = { x: 0, z: 0, yaw: 0, laneId: '', index: 0 };
         this.detectedLeadGap = Infinity;
@@ -231,9 +263,10 @@ export class TrafficAgent {
 
         if (this.waypointIndex >= totalWps - 1) {
             if (lane.nextLanes && lane.nextLanes.length > 0) {
-                const branchIdx = this._idHash % lane.nextLanes.length;
-                this.laneId = lane.nextLanes[branchIdx];
+                this.laneId = this._plannedNextLane(lane);
                 this.waypointIndex = 0;
+                const newLane = roadNetwork.getLane(this.laneId);
+                this.nextLaneId = newLane ? this._chooseNextLane(newLane) : null;
             } else {
                 const nearest = roadNetwork.getNearestWaypoint(px, pz);
                 this.laneId = nearest.laneId;
@@ -282,8 +315,10 @@ export class TrafficAgent {
                     return this.lookaheadTarget;
                 }
 
-                const branchIdx = this._idHash % lane.nextLanes.length;
-                const nextLane = roadNetwork.getLane(lane.nextLanes[branchIdx]);
+                const nextId = lane.id === this.laneId
+                    ? this._plannedNextLane(lane)
+                    : lane.nextLanes[this._idHash % lane.nextLanes.length];
+                const nextLane = roadNetwork.getLane(nextId);
                 if (!nextLane || nextLane.waypoints.length === 0) {
                     const lastWp = lane.waypoints[lane.waypoints.length - 1];
                     this.lookaheadTarget.x = lastWp.x;
@@ -308,7 +343,106 @@ export class TrafficAgent {
         return this.lookaheadTarget;
     }
 
-    senseForwardCorridor(spatialGrid, out = _sensingResult) {
+    _chooseNextLane(lane) {
+        const next = lane.nextLanes;
+        if (!next || next.length === 0) return null;
+        return next[(Math.random() * next.length) | 0];
+    }
+
+    /** The lane this agent will take when it leaves `lane` (its current lane). */
+    _plannedNextLane(lane) {
+        if (!this.nextLaneId || !lane.nextLanes.includes(this.nextLaneId)) {
+            this.nextLaneId = this._chooseNextLane(lane);
+        }
+        return this.nextLaneId;
+    }
+
+    /** Drops this agent's junction reservation once it has driven clear of the junction. */
+    _releaseJunction(intersectionLocks, force = false) {
+        if (this.heldJunction === null) return;
+        const v = this.vehicle;
+        const dx = v.position.x - this.heldJunctionX;
+        const dz = v.position.z - this.heldJunctionZ;
+        const clear = Math.hypot(dx, dz) > TRAFFIC_CONFIG.JUNCTION_BOX_RADIUS + 2.0 &&
+            (dx * -Math.sin(v.yaw) + dz * -Math.cos(v.yaw)) > 0;
+        this.heldJunctionTime += 1 / 60;
+        if (!force && !clear && this.heldJunctionTime < TRAFFIC_CONFIG.JUNCTION_HOLD_TIMEOUT) return;
+        const holders = intersectionLocks.get(this.heldJunction);
+        if (holders) {
+            const i = holders.indexOf(this);
+            if (i >= 0) holders.splice(i, 1);
+            if (holders.length === 0) intersectionLocks.delete(this.heldJunction);
+        }
+        this.heldJunction = null;
+    }
+
+    /**
+     * Junction reservations: before entering a junction box a car reserves it. Cars approaching
+     * along the same or the opposite heading may share the junction; crossing traffic waits.
+     * A car also won't enter while its way out is blocked. Returns the gap to the stop line
+     * while it has to wait, or Infinity once it may go.
+     */
+    junctionGap(lane, intersectionLocks, sensing, roadNetwork = null) {
+        if (!lane || !(lane.endDegree >= 3) || lane.endX === undefined || !intersectionLocks) return Infinity;
+        const v = this.vehicle;
+        const dx = lane.endX - v.position.x;
+        const dz = lane.endZ - v.position.z;
+        const distToCentre = Math.hypot(dx, dz);
+        const box = TRAFFIC_CONFIG.JUNCTION_BOX_RADIUS;
+        if (distToCentre > TRAFFIC_CONFIG.JUNCTION_LOOKAHEAD) return Infinity;
+        if (this.heldJunction === lane.endNode) return Infinity;
+        // Already rolling through the box without a reservation (e.g. just spawned): keep going
+        if (distToCentre <= box * 0.6) return Infinity;
+
+        const wps = lane.waypoints;
+        const a = wps[Math.max(0, wps.length - 2)], b = wps[wps.length - 1];
+        const ax = b.x - a.x, az = b.z - a.z;
+        const al = Math.hypot(ax, az) || 1;
+        const fx = ax / al, fz = az / al;
+        // Going straight on, or turning?
+        let straight = true;
+        const next = roadNetwork && lane.nextLanes.length ? roadNetwork.getLane(this._plannedNextLane(lane)) : null;
+        if (next && next.waypoints.length >= 2) {
+            const n0 = next.waypoints[0], n1 = next.waypoints[1];
+            const nl = Math.hypot(n1.x - n0.x, n1.z - n0.z) || 1;
+            straight = (fx * (n1.x - n0.x) + fz * (n1.z - n0.z)) / nl > 0.8;
+        }
+
+        const stopGap = Math.max(0.1, distToCentre - box - 1.0);
+        // Don't block the box: wait while the car ahead is stopped just beyond the junction
+        if (sensing && sensing.leadSpeed < 1.0 && sensing.minGap < distToCentre + box + 2.0) return stopGap;
+
+        let holders = intersectionLocks.get(lane.endNode);
+        if (holders) {
+            for (let i = holders.length - 1; i >= 0; i--) {
+                const h = holders[i];
+                if (h.heldJunction !== lane.endNode || h.vehicle.isPlayer || h.vehicle.driverDead) {
+                    holders.splice(i, 1);
+                    continue;
+                }
+                // Following the same way is fine; oncoming traffic may share the box only if both go straight
+                const dot = fx * h.heldJunctionFx + fz * h.heldJunctionFz;
+                if (dot > 0.7) continue;
+                if (dot < -0.7 && straight && h.heldJunctionStraight) continue;
+                return stopGap;
+            }
+        } else {
+            holders = [];
+            intersectionLocks.set(lane.endNode, holders);
+        }
+        if (this.heldJunction !== null) this._releaseJunction(intersectionLocks, true);
+        holders.push(this);
+        this.heldJunction = lane.endNode;
+        this.heldJunctionX = lane.endX;
+        this.heldJunctionZ = lane.endZ;
+        this.heldJunctionFx = fx;
+        this.heldJunctionFz = fz;
+        this.heldJunctionStraight = straight;
+        this.heldJunctionTime = 0;
+        return Infinity;
+    }
+
+    senseForwardCorridor(spatialGrid, out = _sensingResult, pedestrians = null, playerVehicle = null) {
         const v = this.vehicle;
         const egoSpeed = Math.max(0, v.speed);
         const senseRadius = Math.max(
@@ -344,6 +478,7 @@ export class TrafficAgent {
             const itemZ = other.position.z;
             const itemRadius = other.radius || TRAFFIC_CONFIG.VEHICLE_RADIUS;
             const itemSpeed = typeof other.getSpeed === 'function' ? Math.max(0, other.getSpeed()) : 0;
+            if (this.ghostTimer > 0 && itemSpeed < 0.5 && other !== playerVehicle) continue;
 
             if (typeof other.getYaw === 'function') {
                 const otherYaw = other.getYaw();
@@ -375,6 +510,26 @@ export class TrafficAgent {
             }
         }
 
+        // Pedestrians on a crosswalk ahead of us
+        if (pedestrians && pedestrians.length > 0) {
+            const pad = TRAFFIC_CONFIG.PEDESTRIAN_CORRIDOR_PAD;
+            for (let i = 0, len = pedestrians.length; i < len; i++) {
+                const p = pedestrians[i];
+                const dx = p.x - v.position.x;
+                const dz = p.z - v.position.z;
+                const dLong = dx * fwdX + dz * fwdZ;
+                if (dLong < 0.5 || dLong > senseRadius) continue;
+                const dLat = dx * rightX + dz * rightZ;
+                if (Math.abs(dLat) > corridorHalfWidth + pad) continue;
+                const netGap = Math.max(0.1, dLong - egoRadius - pad);
+                if (netGap < minGap) {
+                    minGap = netGap;
+                    leadSpeed = 0;
+                    leadId = 'pedestrian';
+                }
+            }
+        }
+
         this.detectedLeadGap = minGap;
         this.detectedLeadSpeed = leadSpeed;
 
@@ -384,7 +539,7 @@ export class TrafficAgent {
         return out;
     }
 
-    update(dt, spatialGrid, roadNetwork, intersectionLocks, playerVehicle = null) {
+    update(dt, spatialGrid, roadNetwork, intersectionLocks, playerVehicle = null, pedestrians = null) {
         if (this.vehicle.driverDead) {
             this.vehicle.setInputs(0, 0, 0.9, false);
             this.vehicle.update(dt, null);
@@ -408,11 +563,24 @@ export class TrafficAgent {
             _steeringResult
         );
 
-        const sensing = this.senseForwardCorridor(spatialGrid, _sensingResult);
-        const effectiveGap = sensing.minGap;
+        if (this.ghostTimer > 0) this.ghostTimer -= dt;
+        else if (this.ghostCooldown > 0) this.ghostCooldown -= dt;
+        else if (this.stuckTime > 6.0) {
+            this.ghostTimer = 3.0;
+            this.ghostCooldown = 6.0;
+        }
+
+        const sensing = this.senseForwardCorridor(spatialGrid, _sensingResult, pedestrians, playerVehicle);
+        let effectiveGap = sensing.minGap;
+        const currentLane = roadNetwork.getLane(this.laneId);
+        this._releaseJunction(intersectionLocks);
+        const junctionGap = this.ghostTimer > 0 ? Infinity : this.junctionGap(currentLane, intersectionLocks, sensing, roadNetwork);
+        if (junctionGap < effectiveGap) {
+            effectiveGap = junctionGap;
+            sensing.leadSpeed = 0;
+        }
 
         let targetSpeed = this.desiredSpeed;
-        const currentLane = roadNetwork.getLane(this.laneId);
         if (currentLane && currentLane.speedLimit) {
             targetSpeed = Math.min(this.desiredSpeed, currentLane.speedLimit);
         }
@@ -434,8 +602,10 @@ export class TrafficAgent {
 
         const inputs = IDMController.mapToInputs(aCmd, this.vehicle.speed, effectiveGap, _idmInputsResult);
 
+        this.stuckTime = Math.abs(this.vehicle.speed) < 1.0 ? this.stuckTime + dt : 0;
+
         // Anti-deadlock stationary watchdog
-        if (Math.abs(this.vehicle.speed) < 0.25) {
+        if (Math.abs(this.vehicle.speed) < 0.25 && junctionGap === Infinity) {
             this.stationaryTimer += dt;
             if (this.stationaryTimer > TRAFFIC_CONFIG.WATCHDOG_NUDGE_TIME) {
                 inputs.throttle = 0.75;
@@ -445,10 +615,20 @@ export class TrafficAgent {
             this.stationaryTimer = 0;
         }
 
+        // Braking at a standstill would engage reverse in the vehicle model; AI cars just hold still
+        if (inputs.brake > 0 && this.vehicle.speed <= 0.35) {
+            inputs.brake = 0;
+            inputs.throttle = 0;
+        }
+
         this.vehicle.setInputs(inputs.throttle, steering.normalizedSteer, inputs.brake, false);
         // Step vehicle kinematics without static building collision check for on-road AI agents,
         // then resolve dynamic separation in TrafficManager
         this.vehicle.update(dt, null);
+        if (this.vehicle.speed < 0) {
+            this.vehicle.speed = 0;
+            this.vehicle.velocity.set(0, 0);
+        }
 
         // Keep AI traffic strictly centered on their road lane (zero off-road drifting)
         const activeLane = roadNetwork.getLane(this.laneId);
@@ -512,6 +692,10 @@ export class TrafficManager {
         this.scene = null;
         this.instancedFleet = null;
 
+        // Positions of pedestrians currently on a crosswalk ({x, z}); cars stop for them
+        this.pedestrianObstacles = [];
+        this._populationTimer = 0;
+
         this.metrics = {
             count: 0,
             avgSpeed: 0,
@@ -520,7 +704,13 @@ export class TrafficManager {
         };
     }
 
-    initFleet(count = TRAFFIC_CONFIG.DEFAULT_FLEET_SIZE, scene = null) {
+    /**
+     * @param {number} count Fleet size
+     * @param {THREE.Scene} [scene]
+     * @param {Object} [options] { center: {x, z}, minRadius, maxRadius, avoid: [{x, z}] } to scatter
+     *   the fleet over the streets around a point (falls back to the whole network)
+     */
+    initFleet(count = TRAFFIC_CONFIG.DEFAULT_FLEET_SIZE, scene = null, options = {}) {
         if (scene) this.scene = scene;
 
         this.destroy();
@@ -530,10 +720,33 @@ export class TrafficManager {
             Math.min(TRAFFIC_CONFIG.MAX_FLEET_SIZE, count)
         );
 
-        const spawnPoints = this.roadNetwork.getSpawnPoints(
-            desiredCount,
-            TRAFFIC_CONFIG.SPAWN_MIN_SPACING
-        );
+        let spawnPoints = [];
+        if (options.center && typeof this.roadNetwork.getSpawnPointsNear === 'function') {
+            spawnPoints = this.roadNetwork.getSpawnPointsNear(
+                options.center.x,
+                options.center.z,
+                options.minRadius !== undefined ? options.minRadius : 15.0,
+                options.maxRadius !== undefined ? options.maxRadius : TRAFFIC_CONFIG.POPULATION_SPAWN_MAX,
+                desiredCount,
+                TRAFFIC_CONFIG.SPAWN_MIN_SPACING,
+                options.avoid || null
+            );
+        }
+        if (spawnPoints.length < desiredCount) {
+            // Remaining cars start anywhere on the network; population streaming brings them closer
+            const extra = this.roadNetwork.getSpawnPoints(desiredCount * 2, TRAFFIC_CONFIG.SPAWN_MIN_SPACING);
+            for (let i = 0; i < extra.length && spawnPoints.length < desiredCount; i++) {
+                const e = extra[i];
+                let clear = true;
+                for (let j = 0; j < spawnPoints.length; j++) {
+                    if (Math.hypot(spawnPoints[j].x - e.x, spawnPoints[j].z - e.z) < TRAFFIC_CONFIG.SPAWN_MIN_SPACING) {
+                        clear = false;
+                        break;
+                    }
+                }
+                if (clear) spawnPoints.push(e);
+            }
+        }
 
         if (this.scene && this.useInstancing) {
             this.instancedFleet = new InstancedVehicleFleet({
@@ -611,7 +824,7 @@ export class TrafficManager {
                 continue;
             }
 
-            agent.update(dt, this.spatialGrid, this.roadNetwork, this.intersectionLocks, playerVehicle);
+            agent.update(dt, this.spatialGrid, this.roadNetwork, this.intersectionLocks, playerVehicle, this.pedestrianObstacles);
 
             const spd = Math.abs(v.speed);
             totalSpeed += spd;
@@ -719,10 +932,92 @@ export class TrafficManager {
             }
         }
 
-        // Sync collision circles after position adjustments
+        // Sync collision circles after position adjustments; separation impulses must not leave
+        // AI cars sliding sideways, so their velocity stays along their heading
         for (let i = 0; i < count; i++) {
-            vehicles[i]._syncCollisionCircles();
+            const v = vehicles[i];
+            v._syncCollisionCircles();
+            if (!v.isPlayer) {
+                const spd = v.speed;
+                v.velocity.set(-Math.sin(v.yaw) * spd, -Math.cos(v.yaw) * spd);
+            }
         }
+    }
+
+    /** Pedestrians currently on a crosswalk, as an array of {x, z}; cars hold short of them. */
+    setPedestrianObstacles(list) {
+        this.pedestrianObstacles = list || [];
+    }
+
+    /**
+     * Keeps the fleet around the player: cars that drift beyond the despawn radius are moved to
+     * streets in a ring around `center`, out of the camera's view unless they're far away.
+     *
+     * @param {number} dt
+     * @param {{x:number, z:number}} center Player position
+     * @param {{x:number, z:number}} [viewDir] Horizontal camera forward (unit length)
+     */
+    maintainPopulation(dt, center, viewDir = null) {
+        if (!center || typeof this.roadNetwork.getSpawnPointsNear !== 'function') return;
+        this._populationTimer -= dt;
+        if (this._populationTimer > 0) return;
+        this._populationTimer = TRAFFIC_CONFIG.POPULATION_CHECK_INTERVAL;
+
+        const cfg = TRAFFIC_CONFIG;
+        const despawn2 = cfg.POPULATION_DESPAWN_RADIUS * cfg.POPULATION_DESPAWN_RADIUS;
+        const inViewMin2 = cfg.POPULATION_IN_VIEW_MIN * cfg.POPULATION_IN_VIEW_MIN;
+        // True when a point is out of the camera's view or far enough away to change unnoticed
+        const accept = (wp) => {
+            if (!viewDir) return true;
+            const dx = wp.x - center.x, dz = wp.z - center.z;
+            const d2 = dx * dx + dz * dz;
+            if (d2 >= inViewMin2) return true;
+            // Never pop a car into existence where the player is looking
+            return (dx * viewDir.x + dz * viewDir.z) / Math.sqrt(d2) < 0.35;
+        };
+
+        let budget = cfg.POPULATION_MAX_PER_CHECK;
+        for (let i = 0; i < this.agents.length && budget > 0; i++) {
+            const agent = this.agents[i];
+            const v = agent.vehicle;
+            if (v.isPlayer || v.driverDead || v.hasWindowBlood || (v.mesh && v.mesh.parent)) continue;
+            const dx = v.position.x - center.x, dz = v.position.z - center.z;
+            const d2 = dx * dx + dz * dz;
+            const stuck = agent.stuckTime > cfg.STUCK_RECYCLE_TIME &&
+                d2 > cfg.STUCK_RECYCLE_MIN_DIST * cfg.STUCK_RECYCLE_MIN_DIST && accept(v.position);
+            if (d2 < despawn2 && !stuck) continue;
+
+            const pts = this.roadNetwork.getSpawnPointsNear(
+                center.x, center.z,
+                cfg.POPULATION_SPAWN_MIN, cfg.POPULATION_SPAWN_MAX,
+                1, 16.0, this.vehicles, accept
+            );
+            if (pts.length === 0) break;
+            this._placeAgent(agent, pts[0]);
+            budget--;
+        }
+    }
+
+    _placeAgent(agent, sp) {
+        const v = agent.vehicle;
+        v.position.x = sp.x;
+        v.position.z = sp.z;
+        v.yaw = sp.yaw;
+        v.steerAngle = 0;
+        v.speed = agent.desiredSpeed * 0.6;
+        v.velocity.set(-Math.sin(sp.yaw) * v.speed, -Math.cos(sp.yaw) * v.speed);
+        if (v.lastSafePosition) v.lastSafePosition.set(sp.x, 0, sp.z);
+        v.lastSafeYaw = sp.yaw;
+        v.laneId = sp.laneId;
+        v.waypointIndex = sp.index;
+        agent.laneId = sp.laneId;
+        agent.waypointIndex = sp.index;
+        agent.nextLaneId = null;
+        agent.stationaryTimer = 0;
+        agent.stuckTime = 0;
+        agent.ghostTimer = 0;
+        agent._releaseJunction(this.intersectionLocks, true);
+        v._syncCollisionCircles();
     }
 
     getActiveVehicles() {

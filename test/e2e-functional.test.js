@@ -884,7 +884,7 @@ async function runFunctionalTests(options = {}) {
     // ------------------------------------------------------------------------
     // Test 10: WebGL Draw-Call Optimization & Reduced Traffic Density
     // ------------------------------------------------------------------------
-    await ctx.test('Performance: Coalesced /mapfinal draw calls (< 500) and reduced road traffic (10-20 cars)', async () => {
+    await ctx.test('Performance: Coalesced /mapfinal draw calls (< 500) and streamed road traffic (25-75 cars)', async () => {
       const perfStatus = await harness.evaluate(() => {
         const renderer = window.__GAME__.raw && window.__GAME__.raw.renderer;
         const scene = window.__GAME__.raw && window.__GAME__.raw.scene;
@@ -901,9 +901,11 @@ async function runFunctionalTests(options = {}) {
         perfStatus.drawCalls < 500,
         `Expected coalesced WebGL draw calls < 500 (down from 22,980), got ${perfStatus.drawCalls}`
       );
+      // The fleet is streamed around the player (far cars are recycled onto nearby streets),
+      // so a larger fleet stays affordable
       assert(
-        perfStatus.trafficCount >= 10 && perfStatus.trafficCount <= 20,
-        `Expected reduced residential road traffic count between 10 and 20, got ${perfStatus.trafficCount}`
+        perfStatus.trafficCount >= 25 && perfStatus.trafficCount <= 75,
+        `Expected streamed road traffic count between 25 and 75, got ${perfStatus.trafficCount}`
       );
     });
 
@@ -912,7 +914,8 @@ async function runFunctionalTests(options = {}) {
     // ------------------------------------------------------------------------
     await ctx.test('Gameplay: Pedestrians walk around, guns fire with /media sounds, and shot pedestrians die with blood pools', async () => {
       const combatReport = await harness.evaluate(() => {
-        const peds = window.__GAME__.pedestrians.getAll();
+        // Copy: the live list changes as people stream in and out around the player
+        const peds = window.__GAME__.pedestrians.getAll().slice();
         const initialPedCount = peds.length;
         if (initialPedCount === 0) return { initialPedCount: 0 };
 
@@ -941,9 +944,17 @@ async function runFunctionalTests(options = {}) {
         const activeWeapon = window.__GAME__.weapons.getCurrentWeapon();
         const shotResult = window.__GAME__.actions.shootWeapon();
 
-        // Step a few frames so blood pool expands
-        for (let i = 0; i < 15; i++) {
+        // Shot pedestrians stagger clutching the wound, then ragdoll to the ground and bleed
+        const targetDeadOnHit = targetPed.isDead;
+        const targetDyingState = targetPed.state;
+        for (let i = 0; i < 300; i++) {
           window.__GAME__.simulation.step(1 / 60);
+        }
+        const bodyUp = { x: 0, y: 1, z: 0 };
+        {
+          const q = targetPed.mesh.quaternion;
+          // y component of the body's up axis after rotation: 1 - 2(x^2 + z^2)
+          bodyUp.y = 1 - 2 * (q.x * q.x + q.z * q.z);
         }
 
         const bloodPools = window.__GAME__.pedestrians.getBloodPools();
@@ -955,7 +966,10 @@ async function runFunctionalTests(options = {}) {
           shotFired: shotResult && shotResult.fired,
           lastPlayedSound: window.__GAME__.weapons.getLastPlayedSound(),
           targetDead: targetPed.isDead,
-          targetRotX: targetPed.mesh.rotation.x,
+          targetDeadOnHit,
+          targetDyingState,
+          targetFinalState: targetPed.state,
+          targetUpY: bodyUp.y,
           bloodPoolCount: bloodPools.length
         };
       });
@@ -977,7 +991,10 @@ async function runFunctionalTests(options = {}) {
         `Expected gunshot audio from /media folder, got ${combatReport.lastPlayedSound}`
       );
       assertEqual(combatReport.targetDead, true, 'Shot pedestrian must die');
-      assert(Math.abs(combatReport.targetRotX - Math.PI / 2) < 0.01, 'Dead pedestrian mesh must fall flat on ground');
+      assert(combatReport.targetDeadOnHit, 'Shot pedestrian must count as dead as soon as the shot lands');
+      assertEqual(combatReport.targetDyingState, 'dying', 'Shot pedestrian must stagger (dying) before falling');
+      assertEqual(combatReport.targetFinalState, 'dead', 'Shot pedestrian must ragdoll to the ground and come to rest');
+      assert(Math.abs(combatReport.targetUpY) < 0.3, `Dead pedestrian must lie flat on the ground (up.y=${combatReport.targetUpY.toFixed(2)})`);
       assert(combatReport.bloodPoolCount >= 1, `Dead pedestrian must leave a pool of blood, found ${combatReport.bloodPoolCount}`);
     });
 

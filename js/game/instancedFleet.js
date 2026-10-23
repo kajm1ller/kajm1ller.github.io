@@ -147,19 +147,18 @@ export class InstancedVehicleFleet {
         cabin.translate(0, 1.1, -0.3);
         this.geometries.cabin = cabin;
 
-        const windshield = new THREE.BoxGeometry(1.7, 0.5, 0.05);
-        windshield.rotateX(-0.2);
-        windshield.translate(0, 1.1, -1.4);
+        // Glass sits flush in the cabin faces (same layout as the individual Civic mesh)
+        const windshield = new THREE.BoxGeometry(1.78, 0.5, 0.012);
+        windshield.translate(0, 1.1, -1.406);
 
-        const rearGlass = new THREE.BoxGeometry(1.7, 0.45, 0.05);
-        rearGlass.rotateX(0.2);
-        rearGlass.translate(0, 1.05, 0.8);
+        const rearGlass = new THREE.BoxGeometry(1.72, 0.44, 0.012);
+        rearGlass.translate(0, 1.11, 0.806);
 
-        const leftWindow = new THREE.BoxGeometry(0.05, 0.4, 1.8);
-        leftWindow.translate(-0.97, 1.1, -0.3);
+        const leftWindow = new THREE.BoxGeometry(0.012, 0.42, 1.98);
+        leftWindow.translate(-0.956, 1.1, -0.3);
 
-        const rightWindow = new THREE.BoxGeometry(0.05, 0.4, 1.8);
-        rightWindow.translate(0.97, 1.1, -0.3);
+        const rightWindow = new THREE.BoxGeometry(0.012, 0.42, 1.98);
+        rightWindow.translate(0.956, 1.1, -0.3);
 
         this.geometries.glass = mergeBufferGeometries([windshield, rearGlass, leftWindow, rightWindow]);
 
@@ -191,13 +190,14 @@ export class InstancedVehicleFleet {
     }
 
     _initMaterials() {
-        this.materials.body = new THREE.MeshLambertMaterial({ color: 0xffffff });
-        this.materials.cabin = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
-        this.materials.glass = new THREE.MeshLambertMaterial({ color: 0x4488aa, transparent: true, opacity: 0.5, depthWrite: false });
+        // Physically based paint / glass so the traffic fleet reflects the sky like the player's car
+        this.materials.body = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.45, envMapIntensity: 1.1 });
+        this.materials.cabin = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.6, metalness: 0.1 });
+        this.materials.glass = new THREE.MeshStandardMaterial({ color: 0x6fa4c4, transparent: true, opacity: 0.55, depthWrite: false, roughness: 0.05, metalness: 0.3, envMapIntensity: 1.3 });
         this.materials.headlights = new THREE.MeshBasicMaterial({ color: 0xffffcc });
         this.materials.taillights = new THREE.MeshBasicMaterial({ color: 0xff2222 });
-        this.materials.bumpers = new THREE.MeshLambertMaterial({ color: 0x333333 });
-        this.materials.wheel = new THREE.MeshLambertMaterial({ color: 0x222222 });
+        this.materials.bumpers = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.55, metalness: 0.2 });
+        this.materials.wheel = new THREE.MeshStandardMaterial({ color: 0x1e1e1e, roughness: 0.85, metalness: 0.1 });
     }
 
     init(scene) {

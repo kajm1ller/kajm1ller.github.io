@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "node server.js",
     "server": "node server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "build:nav": "node --max-old-space-size=8192 tools/buildCityNav.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.19.3",

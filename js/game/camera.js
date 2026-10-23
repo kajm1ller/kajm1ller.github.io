@@ -71,7 +71,16 @@ export class CameraController {
         this.aimTransition = 0.0; // 0.0 = 3rd person chase, 1.0 = 1st person cockpit
         this.aimYaw = 0;          // Full 360 degree aim yaw in radians
         this.aimPitch = 0;        // Vertical aim pitch in radians
-        this.cockpitOffset = new THREE.Vector3(-0.4, 1.25, -0.45); // Driver eye position in vehicle local space (-Z = toward the front of the car)
+        this.cockpitOffset = new THREE.Vector3(-0.4, 1.15, -0.22); // Driver eye position in vehicle local space (-Z = toward the front of the car)
+
+        // Drive cars from the driver's seat (the game enables this; V toggles the chase camera)
+        this.cockpitView = !!options.cockpitView;
+        this.viewBlend = 0.0;     // 0 = chase camera, 1 = driver's seat
+        // Leaning out of the driver's window to shoot (0 = seated, 1 = head and arm out); the
+        // game sets leanTarget each frame, the camera eases towards it
+        this.lean = 0.0;
+        this.leanTarget = 0.0;
+        this._shakeTime = 0;
 
         // Zero-allocation scratch vectors
         this._desiredPos = new THREE.Vector3();
@@ -82,6 +91,27 @@ export class CameraController {
         this._cockpitPos = new THREE.Vector3();
         this._cockpitAimTarget = new THREE.Vector3();
         this._blendedLookTarget = new THREE.Vector3();
+        this._chasePos = new THREE.Vector3();
+        this._chaseLook = new THREE.Vector3();
+        this._seatLook = new THREE.Vector3();
+    }
+
+    /** Whether a target can be driven from the driver's seat (cars yes, aircraft no). */
+    _cockpitCapable(target) {
+        return !!(target && target.isHondaCivic && !target.isPlane);
+    }
+
+    /** True while the camera sits in the driver's seat of the current vehicle. */
+    isCockpitView() {
+        return this.mode === CameraMode.CHASE && this._cockpitCapable(this.targetVehicle) && this.cockpitView && this.viewBlend > 0.5;
+    }
+
+    /** Switches between the driver's-seat view and the chase camera. */
+    toggleDriveView() {
+        this.cockpitView = !this.cockpitView;
+        this.orbitYaw = 0;
+        this.orbitPitch = 0;
+        return this.cockpitView;
     }
 
     /**
@@ -127,6 +157,7 @@ export class CameraController {
             this.targetVehicle = target;
             this.isAiming = false;
             this.aimTransition = 0.0;
+            this.viewBlend = (this.cockpitView && this._cockpitCapable(target)) ? 1.0 : 0.0;
 
             if (target) {
                 const vYaw = typeof target.getYaw === 'function' ? target.getYaw() : 0;
@@ -195,6 +226,12 @@ export class CameraController {
                 // Wrap yaw to [-PI, PI] without any clamp, allowing full 360 rotation
                 while (this.aimYaw > Math.PI) this.aimYaw -= 2 * Math.PI;
                 while (this.aimYaw < -Math.PI) this.aimYaw += 2 * Math.PI;
+            } else if (this.cockpitView && this._cockpitCapable(this.targetVehicle)) {
+                // Look around the cabin from the driver's seat
+                this.orbitYaw -= movementX * this.mouseSensitivity;
+                this.orbitPitch -= movementY * this.mouseSensitivity;
+                this.orbitYaw = Math.max(-2.3, Math.min(2.3, this.orbitYaw));
+                this.orbitPitch = Math.max(-0.65, Math.min(0.5, this.orbitPitch));
             } else {
                 // Orbit camera around car
                 this.orbitYaw -= movementX * this.mouseSensitivity;
@@ -294,45 +331,69 @@ export class CameraController {
                 vp.z - Math.cos(vy) * lookahead
             );
 
-            if (this.aimTransition <= 0.001) {
-                // Pure Third-Person Chase View
-                const posBeta = 1.0 - Math.exp(-dt * this.posFollowRate);
-                this.camera.position.lerp(this._desiredPos, posBeta);
-                this.camera.lookAt(this._lookTarget);
-            } else {
-                // Compute First-Person Cockpit Position (Driver seat eye position)
-                const cosY = Math.cos(vy);
-                const sinY = Math.sin(vy);
-                this._cockpitPos.set(
-                    vp.x + this.cockpitOffset.x * cosY + this.cockpitOffset.z * sinY,
-                    (vp.y || 0) + this.cockpitOffset.y,
-                    vp.z - this.cockpitOffset.x * sinY + this.cockpitOffset.z * cosY
+            // Driver's seat <-> chase camera blend
+            const wantCockpit = this.cockpitView && this._cockpitCapable(this.targetVehicle);
+            const viewStep = 1.0 - Math.exp(-dt * 7.0);
+            this.viewBlend += ((wantCockpit ? 1 : 0) - this.viewBlend) * viewStep;
+            if (Math.abs(this.viewBlend - (wantCockpit ? 1 : 0)) < 0.002) this.viewBlend = wantCockpit ? 1 : 0;
+            const seat = this.viewBlend * this.viewBlend * (3.0 - 2.0 * this.viewBlend);
+
+            // Chase placement (orbit only applies to the chase camera)
+            const posBeta = 1.0 - Math.exp(-dt * this.posFollowRate);
+            if (wantCockpit) {
+                this._desiredPos.set(
+                    vp.x + Math.sin(this.chaseYaw) * currentDist,
+                    (vp.y || 0) + chaseHeight + speedRatio * 0.4,
+                    vp.z + Math.cos(this.chaseYaw) * currentDist
                 );
-
-                // Compute 360-degree Cockpit Aim Target
-                const cosP = Math.cos(this.aimPitch);
-                const sinP = Math.sin(this.aimPitch);
-                const aimDirX = -Math.sin(this.aimYaw) * cosP;
-                const aimDirY = sinP;
-                const aimDirZ = -Math.cos(this.aimYaw) * cosP;
-                this._cockpitAimTarget.set(
-                    this._cockpitPos.x + aimDirX * 25.0,
-                    this._cockpitPos.y + aimDirY * 25.0,
-                    this._cockpitPos.z + aimDirZ * 25.0
-                );
-
-                // Smoothstep interpolation between 3rd person and 1st person
-                const t = this.aimTransition * this.aimTransition * (3.0 - 2.0 * this.aimTransition);
-
-                // Blend camera position smoothly
-                this._desiredPos.lerp(this._cockpitPos, t);
-                const posBeta = 1.0 - Math.exp(-dt * this.posFollowRate);
-                this.camera.position.lerp(this._desiredPos, posBeta);
-
-                // Blend look target smoothly
-                this._blendedLookTarget.lerpVectors(this._lookTarget, this._cockpitAimTarget, t);
-                this.camera.lookAt(this._blendedLookTarget);
             }
+            this._chasePos.copy(this.camera.position).lerp(this._desiredPos, posBeta);
+            this._chaseLook.copy(this._lookTarget);
+
+            // Driver's eye, rigidly attached to the car, with a touch of road vibration and lean into turns
+            const cosY = Math.cos(vy);
+            const sinY = Math.sin(vy);
+            this._shakeTime += dt * (2 + Math.abs(speed) * 1.3);
+            const lean = Math.max(-0.05, Math.min(0.05, -(this.targetVehicle.steerAngle || 0) * Math.abs(speed) * 0.006));
+            this.lean += (this.leanTarget - this.lean) * (1.0 - Math.exp(-dt * 6.0));
+            const out = this.lean * this.lean * (3.0 - 2.0 * this.lean);
+            const ox = this.cockpitOffset.x + lean - out * 0.8;
+            const oy = this.cockpitOffset.y + out * 0.07 + Math.sin(this._shakeTime * 7.3) * Math.min(0.004, Math.abs(speed) * 0.0002);
+            const oz = this.cockpitOffset.z - out * 0.12;
+            this._cockpitPos.set(
+                vp.x + ox * cosY + oz * sinY,
+                (vp.y || 0) + oy,
+                vp.z - ox * sinY + oz * cosY
+            );
+
+            // Where the driver looks: ahead plus mouse look (seat view), or the drive-by aim
+            const lookYaw = vy + (wantCockpit ? this.orbitYaw : 0);
+            const lookPitch = wantCockpit ? this.orbitPitch - 0.06 : -0.06;
+            this._seatLook.set(
+                this._cockpitPos.x - Math.sin(lookYaw) * Math.cos(lookPitch) * 25.0,
+                this._cockpitPos.y + Math.sin(lookPitch) * 25.0,
+                this._cockpitPos.z - Math.cos(lookYaw) * Math.cos(lookPitch) * 25.0
+            );
+            const cosP = Math.cos(this.aimPitch);
+            const sinP = Math.sin(this.aimPitch);
+            this._cockpitAimTarget.set(
+                this._cockpitPos.x - Math.sin(this.aimYaw) * cosP * 25.0,
+                this._cockpitPos.y + sinP * 25.0,
+                this._cockpitPos.z - Math.cos(this.aimYaw) * cosP * 25.0
+            );
+            const aim = this.aimTransition * this.aimTransition * (3.0 - 2.0 * this.aimTransition);
+
+            // Aiming always pulls the camera into the seat, even from the chase view
+            const inSeat = Math.max(seat, aim);
+            if (inSeat >= 0.999) {
+                this.camera.position.copy(this._cockpitPos);
+            } else {
+                this.camera.position.lerpVectors(this._chasePos, this._cockpitPos, inSeat);
+            }
+            // Look: chase target -> seat look -> aim
+            this._blendedLookTarget.lerpVectors(this._chaseLook, this._seatLook, seat);
+            this._blendedLookTarget.lerp(this._cockpitAimTarget, aim);
+            this.camera.lookAt(this._blendedLookTarget);
         }
     }
 }

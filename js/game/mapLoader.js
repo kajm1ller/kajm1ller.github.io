@@ -245,6 +245,60 @@ function classifyMapMaterial(mName, isTerrainPart) {
     return 'SOLID';
 }
 
+// How each kind of surface reacts to light when PBR materials are enabled
+const SURFACE_LOOKS = Object.freeze({
+    default:  { roughness: 0.9,  metalness: 0.0, roughnessWithMap: 1.0, metalnessWithMap: 1.0, normalScale: 0.8, envMapIntensity: 0.45 },
+    ground:   { roughness: 1.0,  metalness: 0.0, roughnessWithMap: 1.0, metalnessWithMap: 0.0, normalScale: 1.0, envMapIntensity: 0.3 },
+    road:     { roughness: 0.85, metalness: 0.0, roughnessWithMap: 1.0, metalnessWithMap: 0.0, normalScale: 0.7, envMapIntensity: 0.45 },
+    glass:    { roughness: 0.12, metalness: 0.25, roughnessWithMap: 0.4, metalnessWithMap: 0.3, normalScale: 0.3, envMapIntensity: 1.2 },
+    metal:    { roughness: 0.45, metalness: 0.7, roughnessWithMap: 1.0, metalnessWithMap: 1.0, normalScale: 0.6, envMapIntensity: 1.0 },
+    water:    { roughness: 0.08, metalness: 0.0, roughnessWithMap: 0.08, metalnessWithMap: 0.0, normalScale: 0.4, envMapIntensity: 1.4 },
+    foliage:  { roughness: 0.95, metalness: 0.0, roughnessWithMap: 1.0, metalnessWithMap: 0.0, normalScale: 0.5, envMapIntensity: 0.35 },
+    marking:  { roughness: 0.7,  metalness: 0.0, roughnessWithMap: 0.7, metalnessWithMap: 0.0, normalScale: 0.0, envMapIntensity: 0.4 }
+});
+
+// Ground surfaces that never grow grass (roads, pavements, gravel, water, dirt, sand, courts, markings)
+const GRASS_BLOCKER_TEXTURES = /Asphalt|Concrete|PavingStones|Gravel|Water|Ground042|Ground033|Rocks|Rock034|Tiles036|Marble|KnerrKerb|road_marking|road_arrow|runway|helipad|pitchTennis\.png|pitchTennisSingles|pitchBeach|ManholeCover|Snow|Ice003/;
+const GRASS_BLOCKER_NAMES = /ASPHALT|CONCRETE|PAVING|GRAVEL|WATER|EARTH|SAND|KERB|RAIL_BALLAST|PEBBLE|ROAD_MARKING|PARKING/;
+
+function colorNear(color, r, g, b, tolerance = 0.03) {
+    return Math.abs(color.r - r) <= tolerance && Math.abs(color.g - g) <= tolerance && Math.abs(color.b - b) <= tolerance;
+}
+
+/**
+ * OSM2World falls back to a few stock colours wherever OpenStreetMap has no colour tag: khaki plaster
+ * walls and a saturated blood-red roof. Nudge those defaults (and only those) towards a friendlier palette.
+ */
+function restyleDefaultColor(color, map, mName, materialClass) {
+    const url = map && map.userData ? (map.userData.sourceUrl || '') : '';
+    if (url.includes('Plaster002') && colorNear(color, 1.0, 0.902, 0.549)) {
+        // Default building wall: khaki -> warm cream
+        color.setRGB(0.96, 0.92, 0.82);
+    } else if (url.includes('RoofingTiles') && colorNear(color, 0.8, 0.0, 0.0)) {
+        // Default roof: pure dark red -> terracotta
+        color.setRGB(0.70, 0.27, 0.19);
+    } else if (url.includes('RoofingTiles') && colorNear(color, 0.392, 0.392, 0.392, 0.02)) {
+        // Grey tile roofs are rendered far too dark against the bright sky
+        color.setRGB(0.55, 0.55, 0.57);
+    } else if (url.includes('RoofingTiles') && colorNear(color, 0.298, 0.298, 0.298, 0.02)) {
+        color.setRGB(0.42, 0.42, 0.45);
+    } else if ((materialClass === 'TERRAIN' || url.includes('Ground003')) && colorNear(color, 1.0, 1.0, 1.0)) {
+        // Lawns and fields: lift the green a little over the dirt-brown ground photo
+        color.setRGB(0.90, 1.0, 0.80);
+    }
+}
+
+function classifySurfaceLook(mName, materialClass) {
+    if (mName.includes('WATER')) return 'water';
+    if (mName.includes('GLASS')) return 'glass';
+    if (mName.includes('STEEL') || mName.includes('METAL') || mName.includes('CHROME')) return 'metal';
+    if (mName.includes('HEDGE') || mName.includes('TREE') || mName.includes('SCRUB')) return 'foliage';
+    if (materialClass === 'TERRAIN' || materialClass === 'GROUND') return 'ground';
+    if (materialClass === 'ROAD' || materialClass === 'PAVEMENT') return 'road';
+    if (materialClass === 'MARKING') return 'marking';
+    return 'default';
+}
+
 function applyMapMaterialClass(material, materialClass) {
     switch (materialClass) {
         case 'TERRAIN':
@@ -308,6 +362,15 @@ export class AnothermapoLoader {
         this.collisionMeshes = options.collisionMeshes || null;
         // Cap on texture width/height in px (0 = full size). Mobile GPUs/tabs cannot hold the ~680MB of decoded 2048px textures.
         this.maxTextureSize = options.maxTextureSize || 0;
+        // Physically based surfaces: MeshStandardMaterial with the cc0textures normal / ORM maps that sit next to each colour map
+        this.pbr = options.pbr !== undefined ? !!options.pbr : false;
+        this.anisotropy = options.anisotropy || 1;
+        // Pull OSM2World's crossed-quad tree billboards out of the tile geometry so TreeSystem can draw real trees instead
+        this.extractTrees = options.extractTrees !== undefined ? !!options.extractTrees : false;
+        this.treeInstances = [];
+        this._treeKeys = new Map();
+        this._pbrTextureCache = new Map();
+        this._texLoader = null;
 
         this.materials = null;
         this.materialInfoCache = new Map();
@@ -342,14 +405,14 @@ export class AnothermapoLoader {
     }
 
     async load(scene, spatialGrid = null, onProgress = null) {
-        const report = (percent, statusText) => {
+        const report = (percent, statusText, extra = null) => {
             if (typeof onProgress === 'function') {
-                onProgress({
+                onProgress(Object.assign({
                     percent: Math.min(100, Math.max(0, Math.round(percent))),
                     loadedCount: this.loadedCount,
                     totalParts: this.totalParts,
                     statusText
-                });
+                }, extra));
             }
         };
 
@@ -367,6 +430,7 @@ export class AnothermapoLoader {
                         // and track every texture so load() only resolves once they have all arrived
                         const texCache = new Map();
                         const texLoader = new THREE.TextureLoader(materials.manager);
+                        this._texLoader = texLoader;
                         materials.loadTexture = (url, mapping, onLoad, onProgress, onError) => {
                             if (texCache.has(url)) {
                                 return texCache.get(url);
@@ -391,6 +455,8 @@ export class AnothermapoLoader {
                             if (mapping !== undefined) texture.mapping = mapping;
                             texture.wrapS = THREE.RepeatWrapping;
                             texture.wrapT = THREE.RepeatWrapping;
+                            texture.anisotropy = this.anisotropy;
+                            texture.userData.sourceUrl = url;
                             texCache.set(url, texture);
                             return texture;
                         };
@@ -415,6 +481,7 @@ export class AnothermapoLoader {
                 const partIndex = currentIndex++;
                 const partName = this._partName(partIndex);
 
+                let partFailed = false;
                 try {
                     const resp = await fetch(this.basePath + partName);
                     if (!resp.ok) {
@@ -424,12 +491,13 @@ export class AnothermapoLoader {
                     this._ingestObjText(rawText, partName, this._isTerrainPart(partIndex), spatialGrid);
                     this.parts.push(partName);
                 } catch (err) {
+                    partFailed = true;
                     this.failedParts.push(partName);
                     console.warn(`[AnothermapoLoader] Warning: part ${partName} skipped:`, err);
                 } finally {
                     this.loadedCount++;
                     const pct = 15 + ((this.loadedCount / this.totalParts) * 75);
-                    report(pct, `Loaded ${this.loadedCount}/${this.totalParts} map parts...`);
+                    report(pct, `Loaded ${this.loadedCount}/${this.totalParts} map parts...`, { partName, partFailed });
                 }
                 // Yield briefly to keep main thread responsive
                 await new Promise((r) => setTimeout(r, 0));
@@ -469,6 +537,7 @@ export class AnothermapoLoader {
         }
 
         report(100, `Map ready! ${this.parts.length}/${this.totalParts} parts loaded (${this.obstacleCount} colliders registered).`);
+        this._treeKeys.clear();
 
         return {
             isLoaded: true,
@@ -480,7 +549,8 @@ export class AnothermapoLoader {
             loadedPartsCount: this.parts.length,
             loadedCount: this.loadedCount,
             obstacleCount: this.obstacleCount,
-            totalTriangles: this.totalTriangles
+            totalTriangles: this.totalTriangles,
+            treeInstances: this.treeInstances
         };
     }
 
@@ -579,10 +649,22 @@ export class AnothermapoLoader {
                 opacity = source.opacity !== undefined ? source.opacity : 1.0;
             }
         }
+        // OSM2World writes half of the surface colour into Ka and half into Kd (illum 2 adds them back together).
+        // Three.js only reads Kd, so without this everything renders at half brightness and plaster walls go olive.
+        // MTLLoader has already converted Kd from sRGB to linear, so go back to sRGB, double, restyle, and return.
+        color.convertLinearToSRGB();
+        color.r = Math.min(1, color.r * 2);
+        color.g = Math.min(1, color.g * 2);
+        color.b = Math.min(1, color.b * 2);
+        restyleDefaultColor(color, map, mName, materialClass);
+        color.convertSRGBToLinear();
+
+        const surface = classifySurfaceLook(mName, materialClass);
 
         // Materials that only differ by Kd colour share one batch material; the colour moves into the vertex colour attribute
         const batchKey = [
             materialClass,
+            surface,
             map ? map.uuid : '-',
             alphaMap ? alphaMap.uuid : '-',
             transparent ? 1 : 0,
@@ -590,21 +672,49 @@ export class AnothermapoLoader {
         ].join('|');
 
         if (!this.batchMaterials.has(batchKey)) {
-            const batchMaterial = new THREE.MeshLambertMaterial({
-                name: name,
-                color: 0xffffff,
-                vertexColors: true,
-                map,
-                alphaMap,
-                transparent,
-                opacity
-            });
+            let batchMaterial;
+            if (this.pbr) {
+                const pbrMaps = map ? this._loadPbrSiblings(map) : null;
+                const look = SURFACE_LOOKS[surface] || SURFACE_LOOKS.default;
+                batchMaterial = new THREE.MeshStandardMaterial({
+                    name: name,
+                    color: 0xffffff,
+                    vertexColors: true,
+                    map,
+                    alphaMap,
+                    transparent,
+                    opacity,
+                    normalMap: pbrMaps ? pbrMaps.normalMap : null,
+                    normalScale: new THREE.Vector2(look.normalScale, look.normalScale),
+                    roughnessMap: pbrMaps ? pbrMaps.ormMap : null,
+                    metalnessMap: pbrMaps ? pbrMaps.ormMap : null,
+                    roughness: pbrMaps && pbrMaps.ormMap ? look.roughnessWithMap : look.roughness,
+                    metalness: pbrMaps && pbrMaps.ormMap ? look.metalnessWithMap : look.metalness,
+                    envMapIntensity: look.envMapIntensity
+                });
+            } else {
+                batchMaterial = new THREE.MeshLambertMaterial({
+                    name: name,
+                    color: 0xffffff,
+                    vertexColors: true,
+                    map,
+                    alphaMap,
+                    transparent,
+                    opacity
+                });
+            }
             if (batchMaterial.map) {
                 batchMaterial.map.wrapS = THREE.RepeatWrapping;
                 batchMaterial.map.wrapT = THREE.RepeatWrapping;
             }
             applyMapMaterialClass(batchMaterial, materialClass);
             batchMaterial.userData.batchKey = batchKey;
+            // Tags for GrassSystem: hard ground surfaces clear grass, natural ground keeps it
+            const texUrl = map && map.userData ? (map.userData.sourceUrl || '') : '';
+            batchMaterial.userData.grassBlocker = GRASS_BLOCKER_TEXTURES.test(texUrl) ||
+                (!texUrl && GRASS_BLOCKER_NAMES.test(mName));
+            batchMaterial.userData.grassFriendly = !batchMaterial.userData.grassBlocker &&
+                (materialClass === 'TERRAIN' || materialClass === 'GROUND' || /Grass-2048|Ground003/.test(texUrl));
             this.batchMaterials.set(batchKey, batchMaterial);
         }
 
@@ -619,6 +729,70 @@ export class AnothermapoLoader {
         };
         this.materialInfoCache.set(cacheKey, info);
         return info;
+    }
+
+    /**
+     * cc0textures ship <Name>_Color, <Name>_Normal and <Name>_ORM (occlusion / roughness / metalness) side by side.
+     * Load the normal and ORM maps that belong to a colour map, sharing one texture per URL across every material.
+     */
+    _loadPbrSiblings(colorMap) {
+        const url = colorMap && colorMap.userData ? colorMap.userData.sourceUrl : null;
+        if (!url || !this._texLoader || !/_Color\.(png|jpe?g)$/i.test(url)) return null;
+        const cached = this._pbrTextureCache.get(url);
+        if (cached) return cached;
+
+        const loadLinear = (siblingUrl) => {
+            let settle;
+            this.texturePromises.push(new Promise((r) => { settle = r; }));
+            const tex = this._texLoader.load(
+                siblingUrl,
+                (t) => { this._downscaleTexture(t); settle(); },
+                undefined,
+                () => {
+                    // A missing normal / ORM map just means the surface stays flat; never fail the map load for it
+                    settle();
+                }
+            );
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            tex.anisotropy = this.anisotropy;
+            tex.colorSpace = THREE.NoColorSpace;
+            return tex;
+        };
+
+        const result = {
+            normalMap: loadLinear(url.replace(/_Color\.(png|jpe?g)$/i, '_Normal.jpg')),
+            ormMap: loadLinear(url.replace(/_Color\.(png|jpe?g)$/i, '_ORM.jpg'))
+        };
+        this._pbrTextureCache.set(url, result);
+        return result;
+    }
+
+    /**
+     * Record one OSM2World tree billboard triangle. Every tree is two vertical quads that share a centre
+     * (x, z), so the XZ centre of any of its triangles' bounding boxes identifies the tree.
+     */
+    _collectTreeTriangle(positions, v0, v1, v2, isConifer) {
+        const x0 = positions[v0 * 3], x1 = positions[v1 * 3], x2 = positions[v2 * 3];
+        const y0 = positions[v0 * 3 + 1], y1 = positions[v1 * 3 + 1], y2 = positions[v2 * 3 + 1];
+        const z0 = positions[v0 * 3 + 2], z1 = positions[v1 * 3 + 2], z2 = positions[v2 * 3 + 2];
+        const minX = Math.min(x0, x1, x2), maxX = Math.max(x0, x1, x2);
+        const minY = Math.min(y0, y1, y2), maxY = Math.max(y0, y1, y2);
+        const minZ = Math.min(z0, z1, z2), maxZ = Math.max(z0, z1, z2);
+        const cx = (minX + maxX) * 0.5;
+        const cz = (minZ + maxZ) * 0.5;
+        const key = (Math.round(cx * 20) / 20) + ',' + (Math.round(cz * 20) / 20);
+        let tree = this._treeKeys.get(key);
+        if (!tree) {
+            tree = { x: cx, y: minY, z: cz, h: maxY - minY, w: Math.max(maxX - minX, maxZ - minZ), type: isConifer ? 1 : 0 };
+            this._treeKeys.set(key, tree);
+            this.treeInstances.push(tree);
+        } else {
+            if (minY < tree.y) tree.y = minY;
+            if (maxY - tree.y > tree.h) tree.h = maxY - tree.y;
+            const w = Math.max(maxX - minX, maxZ - minZ);
+            if (w > tree.w) tree.w = w;
+        }
     }
 
     /**
@@ -781,6 +955,13 @@ export class AnothermapoLoader {
 
         // Bucket every triangle by the world tile its centroid falls in, de-duplicating shared corners per material
         const slotInfo = slotNames.map((name) => this._getMaterialInfo(name, isTerrainPart));
+        // 0 = ordinary surface, 1 = broad-leaved tree billboard, 2 = coniferous tree billboard
+        const slotTreeKind = slotNames.map((name) => {
+            if (!this.extractTrees) return 0;
+            const upper = name.toUpperCase();
+            if (!upper.includes('TREE_BILLBOARD')) return 0;
+            return upper.includes('CONIFER') ? 2 : 1;
+        });
         const tileSize = this.tileSize;
         const posCount = positions.length / 3;
         const uvCount = uvs.length / 2;
@@ -794,6 +975,12 @@ export class AnothermapoLoader {
             const v1 = corners[base + 3];
             const v2 = corners[base + 6];
             if (v0 < 0 || v1 < 0 || v2 < 0 || v0 >= posCount || v1 >= posCount || v2 >= posCount) continue;
+
+            const treeKind = slotTreeKind[triangleSlots[t]];
+            if (treeKind !== 0) {
+                this._collectTreeTriangle(positions, v0, v1, v2, treeKind === 2);
+                continue;
+            }
 
             const cx = (positions[v0 * 3] + positions[v1 * 3] + positions[v2 * 3]) / 3;
             const cz = (positions[v0 * 3 + 2] + positions[v1 * 3 + 2] + positions[v2 * 3 + 2]) / 3;
@@ -1046,7 +1233,223 @@ export class OSMRoadNetwork {
         this.segments = [];
         this.nodes = new Map();
 
-        this._buildNetworkFromOSM();
+        // Spatial index over waypoints for nearest/spawn lookups on the city-wide network
+        this._wpCell = 32;
+        this._wpGrid = new Map();
+
+        if (config.cityNav && config.cityNav.roads && config.cityNav.roads.length > 0) {
+            this.waypointStep = config.waypointStep || 10.0;
+            this._buildNetworkFromCityNav(config.cityNav);
+        } else {
+            this._buildNetworkFromOSM();
+        }
+        this._indexWaypoints();
+    }
+
+    /**
+     * Builds traffic lanes for every street on the map from the baked city navigation graph.
+     * Two-way streets get one lane per direction in the right-hand half; one-way streets drive
+     * in their rightmost lane. Lanes link to every lane leaving their end junction (U-turns only
+     * at dead ends), so cars can wander the whole city.
+     */
+    _buildNetworkFromCityNav(nav) {
+        const maxStep = this.waypointStep;
+        const lanesFrom = new Map();
+
+        const makeLane = (id, road, startNode, endNode) => {
+            const lane = {
+                id,
+                roadId: `road_${road.id}`,
+                name: '',
+                speedLimit: road.speedLimit,
+                spawnWeight: road.spawnWeight,
+                waypoints: [],
+                nextLanes: [],
+                prevLanes: [],
+                length: 0,
+                startNode,
+                endNode,
+                endX: nav.roadNodeX[endNode],
+                endZ: nav.roadNodeZ[endNode],
+                endDegree: nav.roadNodeDegree[endNode]
+            };
+            if (!lanesFrom.has(startNode)) lanesFrom.set(startNode, []);
+            lanesFrom.get(startNode).push(lane);
+            return lane;
+        };
+
+        // Offset a polyline to the right of its direction of travel (mitred joins), resampled to <= maxStep
+        const buildWaypoints = (lane, pts, reverse, offset) => {
+            const n = pts.length / 2;
+            const px = (i) => pts[(reverse ? n - 1 - i : i) * 2];
+            const pz = (i) => pts[(reverse ? n - 1 - i : i) * 2 + 1];
+            const off = [];
+            for (let i = 0; i < n; i++) {
+                let r1x = 0, r1z = 0, r2x = 0, r2z = 0;
+                if (i > 0) {
+                    const L = Math.hypot(px(i) - px(i - 1), pz(i) - pz(i - 1)) || 1;
+                    // Right of travel direction u is (-uz, ux)
+                    r1x = -(pz(i) - pz(i - 1)) / L;
+                    r1z = (px(i) - px(i - 1)) / L;
+                }
+                if (i < n - 1) {
+                    const L = Math.hypot(px(i + 1) - px(i), pz(i + 1) - pz(i)) || 1;
+                    r2x = -(pz(i + 1) - pz(i)) / L;
+                    r2z = (px(i + 1) - px(i)) / L;
+                }
+                if (i === 0) { r1x = r2x; r1z = r2z; }
+                if (i === n - 1) { r2x = r1x; r2z = r1z; }
+                let mx = r1x + r2x, mz = r1z + r2z;
+                const ml = Math.hypot(mx, mz) || 1;
+                mx /= ml; mz /= ml;
+                const cosA = Math.max(0.5, mx * r1x + mz * r1z);
+                off.push(px(i) + (mx * offset) / cosA, pz(i) + (mz * offset) / cosA);
+            }
+            const wps = lane.waypoints;
+            for (let i = 0; i < n - 1; i++) {
+                const ax = off[i * 2], az = off[i * 2 + 1], bx = off[i * 2 + 2], bz = off[i * 2 + 3];
+                const dx = bx - ax, dz = bz - az;
+                const segLen = Math.hypot(dx, dz);
+                if (segLen < 0.05) continue;
+                const yaw = Math.atan2(-dx, -dz);
+                const steps = Math.max(1, Math.ceil(segLen / maxStep));
+                for (let s = (wps.length === 0 ? 0 : 1); s <= steps; s++) {
+                    const t = s / steps;
+                    const wp = {
+                        x: ax + dx * t,
+                        z: az + dz * t,
+                        yaw,
+                        laneId: lane.id,
+                        index: wps.length,
+                        speedLimit: lane.speedLimit
+                    };
+                    wps.push(wp);
+                    this.waypoints.push(wp);
+                }
+                lane.length += segLen;
+            }
+        };
+
+        for (const road of nav.roads) {
+            if (road.pts.length < 4) continue;
+            const lanesPerDir = road.oneway ? Math.max(1, road.lanes) : Math.max(1, Math.floor(road.lanes / 2));
+            const laneWidth = road.oneway ? (road.halfWidth * 2) / lanesPerDir : road.halfWidth / lanesPerDir;
+            const offset = road.oneway ? road.halfWidth - laneWidth * 0.5 : Math.max(1.2, road.halfWidth - laneWidth * 0.5);
+
+            const fwd = makeLane(`lane_fwd_${road.id}`, road, road.a, road.b);
+            buildWaypoints(fwd, road.pts, false, offset);
+            const created = [fwd];
+            if (!road.oneway) {
+                const rev = makeLane(`lane_rev_${road.id}`, road, road.b, road.a);
+                buildWaypoints(rev, road.pts, true, offset);
+                created.push(rev);
+            }
+            for (const lane of created) {
+                if (lane.waypoints.length < 2) continue;
+                this.lanes.push(lane);
+                this.lanesById.set(lane.id, lane);
+            }
+            for (let i = 0; i + 3 < road.pts.length; i += 2) {
+                const p0 = { x: road.pts[i], z: road.pts[i + 1] };
+                const p1 = { x: road.pts[i + 2], z: road.pts[i + 3] };
+                this.segments.push({
+                    roadId: `road_${road.id}`,
+                    p0, p1,
+                    halfWidth: road.halfWidth,
+                    minX: Math.min(p0.x, p1.x),
+                    maxX: Math.max(p0.x, p1.x),
+                    minZ: Math.min(p0.z, p1.z),
+                    maxZ: Math.max(p0.z, p1.z)
+                });
+            }
+        }
+
+        for (const lane of this.lanes) {
+            const outs = (lanesFrom.get(lane.endNode) || []).filter((l) => this.lanesById.has(l.id));
+            const nonUturn = outs.filter((l) => l.roadId !== lane.roadId);
+            const chosen = nonUturn.length > 0 ? nonUturn : outs;
+            for (const next of chosen) {
+                lane.nextLanes.push(next.id);
+                next.prevLanes.push(lane.id);
+            }
+        }
+    }
+
+    _indexWaypoints() {
+        const c = this._wpCell;
+        this._wpGrid.clear();
+        for (let i = 0; i < this.waypoints.length; i++) {
+            const wp = this.waypoints[i];
+            const k = Math.floor(wp.x / c) * 73856093 + Math.floor(wp.z / c);
+            let arr = this._wpGrid.get(k);
+            if (!arr) {
+                arr = [];
+                this._wpGrid.set(k, arr);
+            }
+            arr.push(wp);
+        }
+    }
+
+    /** Visits waypoints in grid cells overlapping the square of half-size r around (x, z). */
+    _forEachWaypointNear(x, z, r, fn) {
+        const c = this._wpCell;
+        const x0 = Math.floor((x - r) / c), x1 = Math.floor((x + r) / c);
+        const z0 = Math.floor((z - r) / c), z1 = Math.floor((z + r) / c);
+        for (let cx = x0; cx <= x1; cx++) {
+            for (let cz = z0; cz <= z1; cz++) {
+                const arr = this._wpGrid.get(cx * 73856093 + cz);
+                if (!arr) continue;
+                for (let i = 0; i < arr.length; i++) fn(arr[i]);
+            }
+        }
+    }
+
+    /**
+     * Traffic spawn points on lanes in a ring around (cx, cz), weighted towards busier streets,
+     * at least minSpacing apart from each other and from any position in `avoid`. `accept(wp)`
+     * can veto candidates (e.g. ones in plain view of the camera).
+     */
+    getSpawnPointsNear(cx, cz, minR, maxR, count, minSpacing = 12.0, avoid = null, accept = null) {
+        const cands = [];
+        let totalW = 0;
+        const min2 = minR * minR, max2 = maxR * maxR;
+        this._forEachWaypointNear(cx, cz, maxR, (wp) => {
+            const dx = wp.x - cx, dz = wp.z - cz;
+            const d = dx * dx + dz * dz;
+            if (d < min2 || d > max2) return;
+            const lane = this.lanesById.get(wp.laneId);
+            if (!lane || wp.index < 1 || wp.index >= lane.waypoints.length - 2) return;
+            if (accept && !accept(wp)) return;
+            const w = lane.spawnWeight || 1;
+            totalW += w;
+            cands.push(wp, w);
+        });
+        const spawns = [];
+        if (cands.length === 0) return spawns;
+        const sp2 = minSpacing * minSpacing;
+        const tooClose = (x, z, list) => {
+            if (!list) return false;
+            for (let i = 0; i < list.length; i++) {
+                const p = list[i].position || list[i];
+                const dx = p.x - x, dz = p.z - z;
+                if (dx * dx + dz * dz < sp2) return true;
+            }
+            return false;
+        };
+        for (let attempt = 0; attempt < count * 12 && spawns.length < count; attempt++) {
+            let r = Math.random() * totalW;
+            let wp = cands[0];
+            for (let i = 0; i < cands.length; i += 2) {
+                r -= cands[i + 1];
+                if (r <= 0) {
+                    wp = cands[i];
+                    break;
+                }
+            }
+            if (tooClose(wp.x, wp.z, spawns) || tooClose(wp.x, wp.z, avoid)) continue;
+            spawns.push({ x: wp.x, z: wp.z, yaw: wp.yaw, laneId: wp.laneId, index: wp.index });
+        }
+        return spawns;
     }
 
     _buildNetworkFromOSM() {
@@ -1228,9 +1631,7 @@ export class OSMRoadNetwork {
     getNearestWaypoint(x, z) {
         let nearest = null;
         let minDistSq = Infinity;
-
-        for (let i = 0; i < this.waypoints.length; i++) {
-            const wp = this.waypoints[i];
+        const visit = (wp) => {
             const dx = wp.x - x;
             const dz = wp.z - z;
             const dSq = dx * dx + dz * dz;
@@ -1238,6 +1639,14 @@ export class OSMRoadNetwork {
                 minDistSq = dSq;
                 nearest = wp;
             }
+        };
+
+        // Grow the search square until the best hit is provably the closest
+        for (let r = this._wpCell; r <= 1024 && (!nearest || Math.sqrt(minDistSq) > r); r *= 2) {
+            this._forEachWaypointNear(x, z, r, visit);
+        }
+        if (!nearest) {
+            for (let i = 0; i < this.waypoints.length; i++) visit(this.waypoints[i]);
         }
 
         if (!nearest) {

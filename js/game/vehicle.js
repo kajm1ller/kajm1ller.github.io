@@ -50,9 +50,9 @@ export class CivicGeometryPool {
             this._pool = {
                 body: new THREE.BoxGeometry(2.2, 0.7, 4.5),
                 cabin: new THREE.BoxGeometry(1.9, 0.6, 2.2),
-                windshield: new THREE.BoxGeometry(1.7, 0.5, 0.05),
-                rearGlass: new THREE.BoxGeometry(1.7, 0.45, 0.05),
-                sideWindow: new THREE.BoxGeometry(0.05, 0.4, 1.8),
+                windshield: new THREE.BoxGeometry(1.78, 0.5, 0.012),
+                rearGlass: new THREE.BoxGeometry(1.72, 0.44, 0.012),
+                sideWindow: new THREE.BoxGeometry(0.012, 0.42, 1.98),
                 headlight: new THREE.BoxGeometry(0.35, 0.2, 0.05),
                 taillight: new THREE.BoxGeometry(0.3, 0.15, 0.05),
                 wheelTire: wheelTireGeo,
@@ -84,21 +84,25 @@ export class CivicMaterialPool {
 
     static getCommon() {
         if (!this._materials) {
+            // Physically based so the sky environment map gives paint and glass real reflections
             this._materials = {
-                cabin: new THREE.MeshLambertMaterial({ color: 0x1a1a1a }),
-                glass: new THREE.MeshLambertMaterial({
-                    color: 0x4488aa,
+                cabin: new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.6, metalness: 0.1 }),
+                glass: new THREE.MeshStandardMaterial({
+                    color: 0x6fa4c4,
                     transparent: true,
-                    opacity: 0.5,
-                    depthWrite: false
+                    opacity: 0.55,
+                    depthWrite: false,
+                    roughness: 0.05,
+                    metalness: 0.3,
+                    envMapIntensity: 1.3
                 }),
                 headlight: new THREE.MeshBasicMaterial({ color: 0xffffcc }),
                 taillight: new THREE.MeshBasicMaterial({ color: 0xff2222 }),
-                wheelTire: new THREE.MeshLambertMaterial({ color: 0x222222 }),
-                wheelHub: new THREE.MeshLambertMaterial({ color: 0x666666 }),
-                bumper: new THREE.MeshLambertMaterial({ color: 0x333333 }),
-                licensePlate: new THREE.MeshLambertMaterial({ color: 0xeeeeee }),
-                exhaust: new THREE.MeshLambertMaterial({ color: 0x888888 })
+                wheelTire: new THREE.MeshStandardMaterial({ color: 0x1e1e1e, roughness: 0.9, metalness: 0.0 }),
+                wheelHub: new THREE.MeshStandardMaterial({ color: 0x8a8d92, roughness: 0.35, metalness: 0.85 }),
+                bumper: new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.55, metalness: 0.2 }),
+                licensePlate: new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.5, metalness: 0.1 }),
+                exhaust: new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.4, metalness: 0.8 })
             };
         }
         return this._materials;
@@ -106,7 +110,13 @@ export class CivicMaterialPool {
 
     static getBodyMaterial(colorHex = 0x111111) {
         if (!this._bodyColors.has(colorHex)) {
-            this._bodyColors.set(colorHex, new THREE.MeshLambertMaterial({ color: colorHex }));
+            // Car paint: smooth clear coat look, picks up the sky in the environment map
+            this._bodyColors.set(colorHex, new THREE.MeshStandardMaterial({
+                color: colorHex,
+                roughness: 0.32,
+                metalness: 0.45,
+                envMapIntensity: 1.1
+            }));
         }
         return this._bodyColors.get(colorHex);
     }
@@ -152,29 +162,27 @@ export function createOptimizedHondaCivic(color = 0x111111, id = 'civic') {
     cabin.position.set(0, 1.1, -0.3);
     root.add(cabin);
 
-    // 3. Windshield (Front Glass, angled -0.2 rad)
+    // 3. Windshield, set flush into the front face of the cabin (cabin spans x +-0.95, y 0.8-1.4, z -1.4..0.8)
     const windshield = new THREE.Mesh(geos.windshield, mats.glass);
     windshield.name = 'windshield';
-    windshield.position.set(0, 1.1, -1.4);
-    windshield.rotation.x = -0.2;
+    windshield.position.set(0, 1.1, -1.406);
     root.add(windshield);
 
-    // 4. Rear Window (Angled +0.2 rad)
+    // 4. Rear Window, flush with the back face of the cabin
     const rearGlass = new THREE.Mesh(geos.rearGlass, mats.glass);
     rearGlass.name = 'rear_glass';
-    rearGlass.position.set(0, 1.05, 0.8);
-    rearGlass.rotation.x = 0.2;
+    rearGlass.position.set(0, 1.11, 0.806);
     root.add(rearGlass);
 
-    // 5. Side Windows
+    // 5. Side Windows, flush with the cabin sides
     const leftWindow = new THREE.Mesh(geos.sideWindow, mats.glass);
     leftWindow.name = 'left_window_glass';
-    leftWindow.position.set(-0.97, 1.1, -0.3);
+    leftWindow.position.set(-0.956, 1.1, -0.3);
     root.add(leftWindow);
 
     const rightWindow = new THREE.Mesh(geos.sideWindow, mats.glass);
     rightWindow.name = 'right_window_glass';
-    rightWindow.position.set(0.97, 1.1, -0.3);
+    rightWindow.position.set(0.956, 1.1, -0.3);
     root.add(rightWindow);
 
     // 6. Headlights (-Z Front)

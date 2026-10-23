@@ -61,11 +61,11 @@ function getGeos() {
 function getMats() {
     if (!_mats) {
         _mats = {
-            trim: new THREE.MeshLambertMaterial({ color: 0xcc2222 }),
-            glass: new THREE.MeshLambertMaterial({ color: 0x4488aa, transparent: true, opacity: 0.55, depthWrite: false }),
-            dark: new THREE.MeshLambertMaterial({ color: 0x222222 }),
-            metal: new THREE.MeshLambertMaterial({ color: 0x888888 }),
-            prop: new THREE.MeshLambertMaterial({ color: 0x1a1a1a }),
+            trim: new THREE.MeshStandardMaterial({ color: 0xcc2222, roughness: 0.35, metalness: 0.3 }),
+            glass: new THREE.MeshStandardMaterial({ color: 0x6fa4c4, transparent: true, opacity: 0.55, depthWrite: false, roughness: 0.05, metalness: 0.3, envMapIntensity: 1.3 }),
+            dark: new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.6, metalness: 0.2 }),
+            metal: new THREE.MeshStandardMaterial({ color: 0x9a9da3, roughness: 0.35, metalness: 0.9 }),
+            prop: new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.5, metalness: 0.4 }),
             lightRed: new THREE.MeshBasicMaterial({ color: 0xff2222 }),
             lightGreen: new THREE.MeshBasicMaterial({ color: 0x22ff44 })
         };
@@ -76,7 +76,7 @@ function getMats() {
 const _bodyMats = new Map();
 function getBodyMat(color) {
     if (!_bodyMats.has(color)) {
-        _bodyMats.set(color, new THREE.MeshLambertMaterial({ color }));
+        _bodyMats.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.3, envMapIntensity: 1.0 }));
     }
     return _bodyMats.get(color);
 }

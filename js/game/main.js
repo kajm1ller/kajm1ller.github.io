@@ -448,7 +448,14 @@ export function initGameAPI(context) {
             scene: context.scene,
             camera: context.camera,
             renderer: context.renderer,
-            config: CONFIG
+            config: CONFIG,
+            trafficManager: context.trafficManager,
+            roadNetwork: context.roadNetwork,
+            pedestrianSystem: context.pedestrianSystem,
+            cameraController: context.cameraController,
+            throwPunch: context.throwPunch,
+            setBlocking: context.setBlocking,
+            getPlayerHealth: context.getPlayerHealth
         }
     };
 

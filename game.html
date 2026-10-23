@@ -27,6 +27,58 @@
         #loading-title { position: relative; font-size: 32px; letter-spacing: 4px; text-align: center; line-height: 1.2; }
         #loading-fill { transition: stroke-dasharray 0.2s; }
         #loading-text { font-size: 16px; color: #aaa; min-height: 20px; }
+        /* Boot terminal (left) and finished video (right) beside the loading ring */
+        /* Left side of the screen, from the edge up to the loading ring */
+        #loading-terminal {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: calc(50% - 175px);
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            background: #000;
+            font-family: Consolas, 'Courier New', monospace;
+        }
+        #loading-terminal-log {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 20px;
+            font-size: 13px;
+            line-height: 1.5;
+            color: #fff;
+            white-space: pre-wrap;
+            word-break: break-word;
+            scrollbar-color: #fff #000;
+        }
+        #loading-terminal-log .term-ok { font-weight: bold; }
+        #loading-terminal-log .term-warn { text-decoration: underline; }
+        #loading-terminal-log .term-error { background: #fff; color: #000; }
+        #loading-video-panel {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: min(30vw, 440px);
+            height: min(70vh, 560px);
+            box-sizing: border-box;
+            right: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #loading-video {
+            display: none;
+            max-width: 100%;
+            max-height: 100%;
+            border-radius: 8px;
+            background: #000;
+        }
+        @media (max-width: 900px) {
+            #loading-terminal { width: 50%; top: auto; height: 40vh; }
+            #loading-terminal-log { font-size: 10px; padding: 8px; }
+            #loading-video-panel { right: 8px; width: 42vw; height: 40vh; top: auto; bottom: 8px; transform: none; }
+        }
         #start-btn {
             padding: 12px 40px;
             font-size: 20px;
@@ -827,7 +879,49 @@
         </div>
         <div id="loading-text">Loading map... 0%</div>
         <button id="start-btn">Start</button>
+        <div id="loading-terminal" aria-label="Loading log">
+            <div id="loading-terminal-log"></div>
+        </div>
+        <div id="loading-video-panel">
+            <video id="loading-video" src="media/Finished.mp4" playsinline preload="auto"></video>
+        </div>
     </div>
+    <script>
+        // Boot terminal on the loading screen: everything the game does while loading is echoed here.
+        // A plain script so it exists before the game module runs (and catches its early errors).
+        (function () {
+            const logEl = document.getElementById('loading-terminal-log');
+            const t0 = performance.now();
+            const MAX_LINES = 400;
+            let active = true;
+            function bootLog(msg, level) {
+                if (!active || !logEl) return;
+                const line = document.createElement('div');
+                line.className = 'term-line' + (level ? ' term-' + level : '');
+                const secs = ((performance.now() - t0) / 1000).toFixed(2).padStart(6, ' ');
+                line.textContent = '[' + secs + '] ' + msg;
+                const stick = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 8;
+                logEl.appendChild(line);
+                while (logEl.childNodes.length > MAX_LINES) logEl.removeChild(logEl.firstChild);
+                if (stick) logEl.scrollTop = logEl.scrollHeight;
+            }
+            bootLog.stop = function () { active = false; };
+            window.bootLog = bootLog;
+
+            // Mirror warnings and errors into the terminal while loading
+            const fmt = (args) => Array.from(args).map((a) => (a instanceof Error ? a.message : (typeof a === 'object' ? (() => { try { return JSON.stringify(a); } catch (e) { return String(a); } })() : String(a)))).join(' ').slice(0, 300);
+            const origWarn = console.warn, origError = console.error;
+            console.warn = function () { bootLog(fmt(arguments), 'warn'); return origWarn.apply(console, arguments); };
+            console.error = function () { bootLog(fmt(arguments), 'error'); return origError.apply(console, arguments); };
+            window.addEventListener('error', (e) => bootLog('Uncaught: ' + (e.message || e), 'error'));
+            window.addEventListener('unhandledrejection', (e) => bootLog('Unhandled rejection: ' + (e.reason && e.reason.message ? e.reason.message : e.reason), 'error'));
+
+            bootLog('Kaj Simulator boot sequence started');
+            bootLog('User agent: ' + navigator.userAgent.slice(0, 90));
+            bootLog('Viewport ' + window.innerWidth + 'x' + window.innerHeight + ' @' + (window.devicePixelRatio || 1) + 'x, ' + (navigator.hardwareConcurrency || '?') + ' CPU threads');
+            bootLog('Fetching three.js and game modules...');
+        })();
+    </script>
     <div id="car-indicator"><span class="key-hint">(E) </span>Enter Car</div>
     <div id="ped-talk-indicator"><span class="key-hint">(E) </span>Talk</div>
     <div id="ped-dialog"><div id="ped-dialog-speaker">Pedestrian</div><div id="ped-dialog-text"></div></div>
@@ -952,11 +1046,26 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             PLANE_CONFIG
         } from './js/game/main.js';
         import { MultiplayerClient, RemotePlayers, MP_SEND_INTERVAL, resolveServerUrl } from './js/game/multiplayer.js';
+        import { TreeSystem, CloudLayer, createSkyMaterial, buildEnvironmentMap, SKY_COLORS } from './js/game/environment.js';
+        import { GrassSystem } from './js/game/grass.js';
+        import { loadCityNav } from './js/game/cityNav.js';
+        import { PedestrianSystem } from './js/game/pedestrians.js';
+        import { CarInterior, GlassShatterSystem } from './js/game/carInterior.js';
+
+        // Loading-screen terminal (defined by the inline script next to #loading)
+        const bootLog = window.bootLog || (() => {});
+        bootLog('Game modules loaded (three.js r' + THREE.REVISION + ')', 'ok');
+
+        // Phones and tablets get the lighter rendering path (no MSAA, no PBR maps, smaller shadows)
+        const lowSpecDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+        bootLog(lowSpecDevice ? 'Touch device detected: using low-spec rendering path' : 'Desktop detected: using full rendering path');
 
         // ============ SCENE SETUP ============
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0xa8d8f0);
-        scene.fog = new THREE.Fog(0xa8d8f0, 150, 800);
+        const FOG_NEAR = 140;
+        const FOG_FAR = 950;
+        scene.background = new THREE.Color(SKY_COLORS.fog);
+        scene.fog = new THREE.Fog(SKY_COLORS.fog, FOG_NEAR, FOG_FAR);
         
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.25, 3000);
         
@@ -973,62 +1082,24 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         const playerRadius = 0.4;
         
         // ============ RENDERER (SHADOWS, TONE MAPPING & SHADERS) ============
-        const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+        const renderer = new THREE.WebGLRenderer({ antialias: !lowSpecDevice, powerPreference: 'high-performance' });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.35;
+        renderer.toneMappingExposure = 1.05;
         renderer.outputColorSpace = THREE.SRGBColorSpace;
         document.body.appendChild(renderer.domElement);
-        
+        const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
+        bootLog(`WebGL renderer up: PCF soft shadows, ACES tone mapping, max anisotropy ${maxAnisotropy}x`);
+
         // ============ LIGHTING, SHADOWS & PROCEDURAL SKY / SUN SHADERS ============
         const sunDirection = new THREE.Vector3(80, 180, 60).normalize();
 
-        // Atmospheric Sky Dome with custom GLSL Rayleigh/Mie scattering & solar halo shader
+        // Atmospheric sky dome (gradient + horizon haze + Mie glow + solar disc), see environment.js
         const skyDomeGeo = new THREE.SphereGeometry(2400, 32, 20);
-        const skyDomeMat = new THREE.ShaderMaterial({
-            name: 'AtmosphericSkyShader',
-            side: THREE.BackSide,
-            depthWrite: false,
-            uniforms: {
-                uSunDir: { value: sunDirection.clone() },
-                uZenithColor: { value: new THREE.Color(0x2868c7) },
-                uHorizonColor: { value: new THREE.Color(0xb8e2ff) },
-                uGroundColor: { value: new THREE.Color(0x6e8562) },
-                uSunColor: { value: new THREE.Color(0xfff4d2) }
-            },
-            vertexShader: `
-                varying vec3 vWorldDir;
-                void main() {
-                    vec4 wp = modelMatrix * vec4(position, 1.0);
-                    vWorldDir = normalize(position);
-                    gl_Position = projectionMatrix * viewMatrix * wp;
-                }
-            `,
-            fragmentShader: `
-                uniform vec3 uSunDir;
-                uniform vec3 uZenithColor;
-                uniform vec3 uHorizonColor;
-                uniform vec3 uGroundColor;
-                uniform vec3 uSunColor;
-                varying vec3 vWorldDir;
-                void main() {
-                    vec3 dir = normalize(vWorldDir);
-                    float y = dir.y;
-                    vec3 skyCol = y >= 0.0
-                        ? mix(uHorizonColor, uZenithColor, pow(clamp(y, 0.0, 1.0), 0.55))
-                        : mix(uHorizonColor, uGroundColor, clamp(-y * 3.0, 0.0, 1.0));
-                    float sunDot = max(dot(dir, normalize(uSunDir)), 0.0);
-                    // Atmospheric Mie glow around the sun
-                    skyCol += uSunColor * pow(sunDot, 16.0) * 0.45;
-                    // Intense solar corona & disc
-                    skyCol += vec3(1.0, 0.98, 0.9) * smoothstep(0.9982, 0.9996, sunDot) * 2.2;
-                    gl_FragColor = vec4(skyCol, 1.0);
-                }
-            `
-        });
+        const skyDomeMat = createSkyMaterial(sunDirection);
         const skyDomeMesh = new THREE.Mesh(skyDomeGeo, skyDomeMat);
         skyDomeMesh.name = 'sky_shader_dome';
         skyDomeMesh.frustumCulled = false;
@@ -1085,43 +1156,79 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         sunSkyGroup.add(sunHaloMesh);
         scene.add(sunSkyGroup);
 
-        // Hemisphere light for natural sky/ground color bounce
-        const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x556b2f, 0.75);
+        // Sky-blue from above, grass-green bounce from below
+        const hemiLight = new THREE.HemisphereLight(0xa9cdf2, 0x6b7d4e, 0.55);
         hemiLight.position.set(0, 200, 0);
         scene.add(hemiLight);
 
-        // Bright ambient fill
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.45);
+        // Small flat ambient so shadowed sides never go fully black
+        const ambientLight = new THREE.AmbientLight(0xdfe8ff, 0.12);
         scene.add(ambientLight);
-        
-        // Main sun directional light with follow-player PCFSoftShadowMap shadows
-        const sunLight = new THREE.DirectionalLight(0xfff5e6, 1.9);
+
+        // Main sun directional light. The shadow frustum follows the player and is pushed ahead of the
+        // camera so most of the shadow map covers what you are actually looking at.
+        const sunLight = new THREE.DirectionalLight(0xfff0dc, 2.6);
         sunLight.name = 'sun_directional_light';
         sunLight.position.set(80, 180, 60);
         sunLight.castShadow = true;
-        sunLight.shadow.mapSize.width = 1024;
-        sunLight.shadow.mapSize.height = 1024;
-        sunLight.shadow.camera.near = 10;
-        sunLight.shadow.camera.far = 420;
-        const shadowExtent = 95;
+        const shadowMapSize = lowSpecDevice ? 1024 : 2048;
+        sunLight.shadow.mapSize.width = shadowMapSize;
+        sunLight.shadow.mapSize.height = shadowMapSize;
+        sunLight.shadow.camera.near = 20;
+        sunLight.shadow.camera.far = 400;
+        const shadowExtent = lowSpecDevice ? 60 : 85;
         sunLight.shadow.camera.left = -shadowExtent;
         sunLight.shadow.camera.right = shadowExtent;
         sunLight.shadow.camera.top = shadowExtent;
         sunLight.shadow.camera.bottom = -shadowExtent;
-        sunLight.shadow.bias = -0.0008;
+        sunLight.shadow.bias = -0.00035;
+        sunLight.shadow.normalBias = 0.035;
         scene.add(sunLight);
         scene.add(sunLight.target);
+        const shadowFocusOffset = shadowExtent * 0.45; // how far ahead of the camera the shadow frustum is centred
+        const shadowLookDir = new THREE.Vector3();
 
-        // Secondary fill light from opposite direction
-        const fillLight = new THREE.DirectionalLight(0xc4deff, 0.45);
+        // Cool fill from the opposite side so shaded facades keep some shape
+        const fillLight = new THREE.DirectionalLight(0xbfd6f5, 0.28);
         fillLight.position.set(-60, 100, -80);
         scene.add(fillLight);
 
-        // ============ /ANOTHERMAPO OSM ROAD NETWORK ============
-        const roadNetwork = new OSMRoadNetwork();
+        // Sky reflections for every physically based surface (car paint, glass, water, wet asphalt)
+        bootLog('Building sky dome, sun corona shader and sky reflection map...');
+        scene.environment = buildEnvironmentMap(renderer, skyDomeMat);
+
+        // Drifting cumulus clouds above the neighbourhood
+        const cloudLayer = new CloudLayer({
+            clumps: lowSpecDevice ? 20 : 36,
+            puffsPerClump: lowSpecDevice ? 5 : 7,
+            radius: 1700,
+            sunDirection
+        });
+        scene.add(cloudLayer.mesh);
+
+        // Real 3D trees replace the OSM2World billboards once the map has loaded
+        let treeSystem = null;
+        // GPU-instanced grass on every lawn, park and field near the camera (built once the map has loaded)
+        let grassSystem = null;
+        const grassFeetPos = new THREE.Vector3();
+
+        // ============ CITY-WIDE ROAD & SIDEWALK NETWORK ============
+        // Baked from the /mapfinal OSM extract by tools/buildCityNav.mjs (null if it fails to load,
+        // in which case traffic falls back to the hand-built neighbourhood roads)
+        bootLog('Fetching city navigation data (js/game/data/cityNav.json)...');
+        const cityNav = await loadCityNav('./js/game/data/cityNav.json');
+        if (cityNav) {
+            bootLog(`City nav indexed: ${cityNav.roads.length} street segments, ${cityNav.nodeCount} sidewalk nodes, ${cityNav.seatCount} seats, ${cityNav.hangoutCount} hangout spots`, 'ok');
+        } else {
+            bootLog('City nav unavailable: falling back to hand-built neighbourhood roads', 'warn');
+        }
+        bootLog('Building traffic lanes for the road network...');
+        const roadNetwork = new OSMRoadNetwork({ cityNav });
+        bootLog(`Road network ready: ${roadNetwork.lanes.length} lanes, ${roadNetwork.waypoints.length} waypoints`, 'ok');
 
         // ============ CAMERA CONTROLLER (FIRST-PERSON & CHASE) ============
-        const cameraController = new CameraController({ camera, domElement: renderer.domElement });
+        // Cars are driven from the driver's seat (V toggles the chase camera)
+        const cameraController = new CameraController({ camera, domElement: renderer.domElement, cockpitView: true });
 
         // ============ PLAYER CONTROLLER & VEHICLES ============
         myPosition.copy(playerStartPos);
@@ -1154,9 +1261,15 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         scene.add(playerVehicle.getMesh());
         spatialGrid.insertDynamic(playerVehicle.id, playerVehicle.position.x, playerVehicle.position.z, playerVehicle.radius, playerVehicle);
 
-        // Spawn 12 autonomous AI traffic Honda Civics along /mapfinal streets using GPU InstancedVehicleFleet
+        // Autonomous AI traffic (GPU InstancedVehicleFleet) scattered over the streets around the player;
+        // cars that fall far behind are recycled onto streets ahead, so traffic follows you around the map
         const trafficManager = new TrafficManager(roadNetwork, spatialGrid, { useInstancing: true });
-        const trafficVehicles = trafficManager.initFleet(12, scene);
+        const trafficVehicles = trafficManager.initFleet(lowSpecDevice ? 30 : 56, scene, {
+            center: playerStartPos,
+            minRadius: 12,
+            avoid: [playerVehicle.position]
+        });
+        bootLog(`Spawned ${trafficVehicles.length} AI traffic cars around Kaj's house (instanced fleet)`);
 
         // Immediately sync initial proximity HUD so #car-indicator is shown on startup
         playerController.update(1 / 60, spatialGrid, roadNetwork);
@@ -1164,8 +1277,107 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         // Tire smoke drifting particle system
         const tireSmokeSystem = new TireSmokeSystem(scene, 80);
 
+        // ============ DRIVER'S SEAT: CAR INTERIOR & DRIVER WINDOW ============
+        const glassShatter = new GlassShatterSystem(scene);
+        let activeCarInterior = null;
+        // Left click in the car: with a gun Kaj holds it out in his left hand (leaning out of the
+        // window); without one his right hand reaches out, e.g. to press the radio's touch buttons
+        let carGunHeld = false;
+        let carReachHeld = false;
+        let hoveredScreenButton = null;
+        let cockpitPointerActive = false;
+        const _cockpitRaycaster = new THREE.Raycaster();
+        _cockpitRaycaster.far = 1.5;
+        const _cockpitCenter = new THREE.Vector2(0, 0);
+        const _cockpitReachPoint = new THREE.Vector3();
+        const _cockpitLookDir = new THREE.Vector3();
+
+        // Each car gets its detailed interior the first time the player sits in it
+        function getCarInterior(vehicle) {
+            if (!vehicle || !vehicle.isHondaCivic || vehicle.isPlane || !vehicle.mesh) return null;
+            if (!vehicle.interior) vehicle.interior = new CarInterior(vehicle);
+            return vehicle.interior;
+        }
+
+        function updateCarInterior(dt) {
+            const v = playerController.getState() === 'IN_VEHICLE' ? playerController.getVehicle() : null;
+            const interior = getCarInterior(v);
+            if (activeCarInterior && activeCarInterior !== interior) activeCarInterior.setCockpitActive(false);
+            activeCarInterior = interior;
+            hoveredScreenButton = null;
+            cockpitPointerActive = false;
+            if (!interior) {
+                cameraController.leanTarget = 0;
+                carGunHeld = carReachHeld = false;
+            }
+            if (interior) {
+                const aiming = cameraController.isAiming;
+                // Raising the gun (left hand) means leaning out of the driver's window: all the way when
+                // aiming out to the left or behind, a little when aiming ahead or across the car
+                if (aiming) {
+                    let rel = (cameraController.aimYaw - v.yaw) % (Math.PI * 2);
+                    if (rel > Math.PI) rel -= Math.PI * 2;
+                    if (rel < -Math.PI) rel += Math.PI * 2;
+                    const outward = Math.max(Math.sin(rel), -Math.cos(rel) * 0.9);
+                    cameraController.leanTarget = Math.max(0, Math.min(1, 0.3 + 0.7 * outward));
+                } else {
+                    cameraController.leanTarget = 0;
+                }
+                const inSeat = cameraController.isCockpitView() || cameraController.aimTransition > 0.5;
+                interior.setCockpitActive(inSeat && cameraController.lean < 0.55);
+
+                // What the driver is looking at on the dash (touch buttons light up under the crosshair)
+                if (inSeat && !aiming) {
+                    _cockpitRaycaster.setFromCamera(_cockpitCenter, camera);
+                    hoveredScreenButton = interior.pickScreenButton(_cockpitRaycaster);
+                    cockpitPointerActive = !!hoveredScreenButton || carReachHeld;
+                }
+                interior.setHoverButton(hoveredScreenButton ? hoveredScreenButton.index : -1);
+                if (hoveredScreenButton) {
+                    _cockpitReachPoint.copy(hoveredScreenButton.point);
+                } else {
+                    camera.getWorldDirection(_cockpitLookDir);
+                    _cockpitReachPoint.copy(camera.position).addScaledVector(_cockpitLookDir, 0.6);
+                }
+
+                const track = radioState.tracks[radioState.currentTrackIndex];
+                interior.update(dt, {
+                    aiming: cameraController.aimTransition,
+                    leftHandOff: cameraController.aimTransition > 0.3,
+                    reach: carReachHeld && !aiming,
+                    reachPoint: _cockpitReachPoint,
+                    radioTitle: track && isEngineRunning(v) ? track.title : '',
+                    radioPlaying: radioState.isPlaying && !radioState.isUserPaused
+                });
+
+                // Holding the trigger keeps automatic weapons firing out of the window
+                const w = weapons[currentWeaponIndex];
+                if (carGunHeld && w && w.automatic && cameraController.aimTransition > 0.5) shootWeapon();
+            }
+            glassShatter.update(dt);
+        }
+
+        // Right hand on the radio's touch buttons
+        function pressScreenButton(btn) {
+            if (!btn || !activeCarInterior) return false;
+            activeCarInterior.flashButton(btn.index);
+            if (!isEngineRunning(radioState.sourceVehicle)) return true;
+            if (btn.id === 'rewind') rewindRadioTrack();
+            else if (btn.id === 'playpause') toggleRadioPause();
+            else if (btn.id === 'skip') skipRadioTrack();
+            return true;
+        }
+
+        // The first time the player raises a gun in a car, they smash out the driver's window
+        function smashDriverWindowForAim() {
+            const v = playerController.getState() === 'IN_VEHICLE' ? playerController.getVehicle() : null;
+            if (!v || !v.isHondaCivic || v.isPlane || v.driverWindowBroken) return false;
+            return glassShatter.breakDriverWindow(v, ensureCarAudioEngine());
+        }
+
         // Police system (triggers on shooting or vehicular homicide)
         const policeSystem = new PoliceSystem(scene, spatialGrid, roadNetwork, null);
+        bootLog('Police dispatch system armed');
 
         // ============ PLAYER HEALTH & DAMAGE SYSTEM ============
         let playerHealth = 100;
@@ -1787,6 +1999,23 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
         }
 
+        // Rewind: back to the start of the song, or to the previous song if it only just started
+        function rewindRadioTrack() {
+            if (radioAudio.currentTime > 3) {
+                restartRadioTrack();
+                return;
+            }
+            radioState.currentTrackIndex = (radioState.currentTrackIndex - 1 + RADIO_TRACKS.length) % RADIO_TRACKS.length;
+            const track = RADIO_TRACKS[radioState.currentTrackIndex];
+            radioAudio.src = track.file;
+            radioAudio.currentTime = 0;
+            if (!radioState.isUserPaused) {
+                playRadioCurrentTrack();
+            } else {
+                updateRadioUI();
+            }
+        }
+
         function restartRadioTrack() {
             radioAudio.currentTime = 0;
             if (radioState.isUserPaused) {
@@ -2195,6 +2424,17 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         // ============ WEAPON & VIEWMODEL SYSTEM (SPRAY CAN + KAJ SIMULATOR GUNS) ============
         const weapons = [
             {
+                // Slot 1: bare hands. In a car the right hand presses the radio's touch buttons
+                name: 'Hands',
+                type: 'hands',
+                damage: 0,
+                fireRate: 350,
+                range: 1.5,
+                spread: 0,
+                projectileSpeed: 0,
+                sound: null
+            },
+            {
                 name: 'Spray Can',
                 type: 'spray',
                 damage: 0,
@@ -2255,10 +2495,20 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
         let currentWeaponIndex = 0;
         let lastShotTime = 0;
+        // Fists (Hands slot): punches alternate hands, leading with Kaj's left; right mouse blocks
+        let punchLead = 0;      // 0..1 punch animation, left (lead) hand
+        let punchRear = 0;      // 0..1 punch animation, right hand
+        let nextPunchLead = true;
+        let lastPunchTime = 0;
+        let isBlocking = false;
+        let blockAmount = 0;    // 0..1 guard raise for the viewmodel
+        const currentWeaponType = () => (weapons[currentWeaponIndex] ? weapons[currentWeaponIndex].type : 'hands');
         let isFiringGun = false;
         const projectiles = [];
 
         let viewmodelScene = null;
+        // Kaj is left-handed: everything held in first person is mirrored into the left hand
+        let viewmodelRoot = null;
         let viewmodelCamera = null;
         let viewmodelSprayCan = null;
         const viewmodelMeshes = [];
@@ -2266,6 +2516,33 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         let viewmodelBobTime = 0;
         let viewmodelRecoil = 0;
         let sprayParticleTime = 0;
+
+        // Two fists, low in view. The viewmodel is mirrored for the left-handed Kaj, so the jabbing
+        // fist (built on the right here) ends up as his left hand
+        function createHandsViewmodel() {
+            const group = new THREE.Group();
+            group.name = 'viewmodel_hands';
+            const skin = new THREE.MeshLambertMaterial({ color: 0xe0ac69 });
+            const sleeve = new THREE.MeshLambertMaterial({ color: 0x2b2b30 });
+            const fist = (x) => {
+                const f = new THREE.Group();
+                const knuckles = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.075, 0.09), skin);
+                f.add(knuckles);
+                const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.025, 0.06), skin);
+                thumb.position.set(-Math.sign(x) * 0.035, 0.03, 0.0);
+                f.add(thumb);
+                const arm = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.075, 0.3), sleeve);
+                arm.position.set(0, -0.01, 0.19);
+                f.add(arm);
+                f.position.set(x, -0.17, -0.38);
+                f.rotation.set(0.15, 0, -Math.sign(x) * 0.15);
+                group.add(f);
+                return f;
+            };
+            group.userData.lead = fist(0.17);
+            group.userData.rear = fist(-0.17);
+            return group;
+        }
 
         function createSprayCanViewmodel() {
             const group = new THREE.Group();
@@ -2523,6 +2800,12 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             vmDir.position.set(1, 1, 1);
             viewmodelScene.add(vmDir);
 
+            viewmodelRoot = new THREE.Group();
+            viewmodelRoot.name = 'viewmodel_left_handed';
+            viewmodelRoot.scale.x = -1;
+            viewmodelScene.add(viewmodelRoot);
+
+            const handsVM = createHandsViewmodel();
             viewmodelSprayCan = createSprayCanViewmodel();
             const pistolVM = createPistolViewmodel();
             const rifleVM = createRifleViewmodel();
@@ -2530,15 +2813,15 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             const rpgVM = createRPGViewmodel();
 
             viewmodelMeshes.length = 0;
-            viewmodelMeshes.push(viewmodelSprayCan, pistolVM, rifleVM, shotgunVM, rpgVM);
+            viewmodelMeshes.push(handsVM, viewmodelSprayCan, pistolVM, rifleVM, shotgunVM, rpgVM);
 
             for (let i = 0; i < viewmodelMeshes.length; i++) {
                 viewmodelMeshes[i].visible = (i === currentWeaponIndex);
-                viewmodelScene.add(viewmodelMeshes[i]);
+                viewmodelRoot.add(viewmodelMeshes[i]);
             }
 
             viewmodelStroke = createStrokeViewmodel();
-            viewmodelScene.add(viewmodelStroke);
+            viewmodelRoot.add(viewmodelStroke);
         }
 
         function updateWeaponHUD() {
@@ -2551,8 +2834,10 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
             if (w.type === 'spray') {
                 sprayHudEl.textContent = `${weaponBar}   (Q: Switch Weapon | C: Colors | V: Spray/Image)`;
+            } else if (w.type === 'hands') {
+                sprayHudEl.textContent = `${weaponBar}   (Left Click: Punch, or press the car radio | Q / 1-6: Switch)`;
             } else {
-                sprayHudEl.textContent = `${weaponBar}   (Left Click: Shoot | Q / 1-5: Switch Weapon)`;
+                sprayHudEl.textContent = `${weaponBar}   (Left Click: Shoot | Q / 1-6: Switch Weapon)`;
             }
         }
 
@@ -2568,6 +2853,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
             currentWeaponIndex = targetIdx;
             isSpraying = false;
+            isBlocking = false;
 
             for (let i = 0; i < viewmodelMeshes.length; i++) {
                 if (viewmodelMeshes[i]) {
@@ -2583,28 +2869,17 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         const bloodPools = [];
         const maxBloodPools = 60;
 
-        // Shared geometries and materials for pedestrians & blood pools (minimal draw calls)
-        const pedBodyGeo = new THREE.BoxGeometry(0.5, 1.4, 0.3);
-        const pedHeadGeo = new THREE.BoxGeometry(0.35, 0.35, 0.35);
-        const pedLegGeo = new THREE.BoxGeometry(0.2, 0.65, 0.22);
-        const pedSkinMaterials = [
-            new THREE.MeshLambertMaterial({ color: 0xffdbac }),
-            new THREE.MeshLambertMaterial({ color: 0xf1c27d }),
-            new THREE.MeshLambertMaterial({ color: 0xe0ac69 }),
-            new THREE.MeshLambertMaterial({ color: 0xc68642 }),
-            new THREE.MeshLambertMaterial({ color: 0x8d5524 })
-        ];
-        const pedShirtMaterials = [
-            new THREE.MeshLambertMaterial({ color: 0x2b5797 }),
-            new THREE.MeshLambertMaterial({ color: 0xb91d47 }),
-            new THREE.MeshLambertMaterial({ color: 0x1e7145 }),
-            new THREE.MeshLambertMaterial({ color: 0xe3a21a }),
-            new THREE.MeshLambertMaterial({ color: 0x603cba }),
-            new THREE.MeshLambertMaterial({ color: 0x00a300 }),
-            new THREE.MeshLambertMaterial({ color: 0xda532c }),
-            new THREE.MeshLambertMaterial({ color: 0x333333 })
-        ];
-        const pedPantsMat = new THREE.MeshLambertMaterial({ color: 0x222b35 });
+        // Pedestrian looks, routines (sidewalk routes, crossings, seats, groups) and population
+        // streaming around the player all live in js/game/pedestrians.js
+        const pedestrianSystem = new PedestrianSystem({ scene, nav: cityNav, pedestrians, lowSpec: lowSpecDevice });
+        trafficManager.setPedestrianObstacles(pedestrianSystem.crossingObstacles);
+        // Police officers use the same jointed bodies and procedural deaths as everyone else
+        if (policeSystem) {
+            policeSystem.createOfficerMesh = (seed) => pedestrianSystem.createPoliceOfficerMesh(seed);
+            policeSystem.onOfficerKilled = (officer, hit) => pedestrianSystem.startShotDeath(officer, hit);
+        }
+
+        // Shared geometry for blood pools
         const sharedBloodGeo = new THREE.CircleGeometry(0.85, 16);
         sharedBloodGeo.rotateX(-Math.PI / 2);
 
@@ -2654,39 +2929,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         }
 
         function createPedestrianMesh(idx) {
-            const group = new THREE.Group();
-            group.name = `pedestrian_${idx}`;
-            group.userData.isPedestrian = true;
-
-            const shirtMat = pedShirtMaterials[idx % pedShirtMaterials.length];
-            const skinMat = pedSkinMaterials[idx % pedSkinMaterials.length];
-
-            const body = new THREE.Mesh(pedBodyGeo, shirtMat);
-            body.position.y = 0.95;
-            group.add(body);
-
-            const head = new THREE.Mesh(pedHeadGeo, skinMat);
-            head.position.y = 1.82;
-            group.add(head);
-
-            const leftLeg = new THREE.Mesh(pedLegGeo, pedPantsMat);
-            leftLeg.position.set(-0.13, 0.32, 0);
-            group.add(leftLeg);
-
-            const rightLeg = new THREE.Mesh(pedLegGeo, pedPantsMat);
-            rightLeg.position.set(0.13, 0.32, 0);
-            group.add(rightLeg);
-
-            group.traverse((c) => {
-                if (c.isMesh) {
-                    c.castShadow = true;
-                    c.receiveShadow = true;
-                }
-            });
-
-            group.userData.leftLeg = leftLeg;
-            group.userData.rightLeg = rightLeg;
-            return group;
+            return pedestrianSystem.createPedestrianMesh(idx * 7919 + 13);
         }
 
         const PEDESTRIAN_DIALOG_LINES = [
@@ -2740,7 +2983,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
             // Auto-equip Pistol (or keep current gun if a gun is already equipped) to point at driver
             const prevWeapon = currentWeaponIndex;
-            if (currentWeaponIndex === 0) {
+            if (currentWeaponType() !== 'gun') {
                 selectWeapon('Pistol');
             }
 
@@ -2995,66 +3238,143 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         }
 
         function spawnPedestrians(count = 24) {
-            const lanes = roadNetwork.lanes || [];
-            if (lanes.length === 0) return;
+            if (cityNav) {
+                // Walkers, people sitting outside and groups on the grass around the player
+                pedestrianSystem.populateInitial(playerStartPos);
+                return;
+            }
 
-            for (let i = 0; i < count; i++) {
+            // No nav data: put people on the road shoulders like before
+            const lanes = roadNetwork.lanes || [];
+            const points = [];
+            for (let i = 0; i < count && lanes.length > 0; i++) {
                 const lane = lanes[i % lanes.length];
                 if (!lane.waypoints || lane.waypoints.length < 2) continue;
+                const wp = lane.waypoints[Math.floor((i * 3.7 + 4) % lane.waypoints.length)];
+                const side = (i % 2 === 0) ? 3.2 : -3.2;
+                const px = wp.x - Math.sin(wp.yaw + Math.PI / 2) * side;
+                const pz = wp.z - Math.cos(wp.yaw + Math.PI / 2) * side;
+                if (Math.hypot(px - playerStartPos.x, pz - playerStartPos.z) < 8.0) continue;
+                points.push({ x: px, z: pz, yaw: wp.yaw });
+            }
+            pedestrianSystem.spawnFallbackWalkers(points);
+        }
 
-                let wpIndex = Math.floor((i * 3.7 + 4) % lane.waypoints.length);
-                let wp = lane.waypoints[wpIndex];
-                // Place pedestrian on sidewalk / curb edge (offset 3.2m outside lane)
-                const sideSign = (i % 2 === 0) ? 1 : -1;
-                const sideOffset = 3.2 * sideSign;
-                let nx = -Math.sin(wp.yaw + Math.PI / 2);
-                let nz = -Math.cos(wp.yaw + Math.PI / 2);
+        // Shot pedestrians stagger clutching the wound, then ragdoll to the ground (see
+        // PedestrianSystem.startShotDeath); `hit` = {x, y, z, dirX, dirY, dirZ, explosive}
+        // ============ FIST FIGHTS ============
+        const PUNCH_RANGE = 1.7;
+        const PUNCH_INTERVAL_MS = 320;
+        const _punchFwd = new THREE.Vector3();
 
-                let px = wp.x + nx * sideOffset;
-                let pz = wp.z + nz * sideOffset;
-
-                // Keep initial spawn clear of player spawn so vehicle boarding at spawn is unambiguous
-                if (Math.hypot(px - playerStartPos.x, pz - playerStartPos.z) < 8.0) {
-                    wpIndex = (wpIndex + Math.floor(lane.waypoints.length / 2)) % lane.waypoints.length;
-                    wp = lane.waypoints[wpIndex];
-                    nx = -Math.sin(wp.yaw + Math.PI / 2);
-                    nz = -Math.cos(wp.yaw + Math.PI / 2);
-                    px = wp.x + nx * sideOffset;
-                    pz = wp.z + nz * sideOffset;
+        function playPunchSound(landed) {
+            const ctx = ensureCarAudioEngine();
+            if (!ctx) return;
+            try {
+                if (ctx.state === 'suspended') ctx.resume();
+                const t0 = ctx.currentTime;
+                const len = Math.floor(ctx.sampleRate * 0.18);
+                const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+                const d = buf.getChannelData(0);
+                for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, landed ? 4 : 2);
+                const src = ctx.createBufferSource();
+                src.buffer = buf;
+                const f = ctx.createBiquadFilter();
+                f.type = landed ? 'lowpass' : 'bandpass';
+                f.frequency.value = landed ? 700 : 1800;
+                const g = ctx.createGain();
+                g.gain.value = landed ? 0.9 : 0.25;
+                src.connect(f).connect(g).connect(ctx.destination);
+                src.start(t0);
+                if (landed) {
+                    // Body thump
+                    const o = ctx.createOscillator();
+                    o.frequency.setValueAtTime(140, t0);
+                    o.frequency.exponentialRampToValueAtTime(55, t0 + 0.09);
+                    const og = ctx.createGain();
+                    og.gain.setValueAtTime(0.7, t0);
+                    og.gain.exponentialRampToValueAtTime(0.001, t0 + 0.12);
+                    o.connect(og).connect(ctx.destination);
+                    o.start(t0);
+                    o.stop(t0 + 0.13);
                 }
-
-                const mesh = createPedestrianMesh(i);
-                mesh.position.set(px, 0, pz);
-                mesh.rotation.y = wp.yaw;
-                scene.add(mesh);
-
-                const ped = {
-                    id: `ped_${i}`,
-                    index: i,
-                    mesh,
-                    position: mesh.position,
-                    velocity: new THREE.Vector3(),
-                    speed: 0.055 + (i % 4) * 0.008,
-                    state: 'walking',
-                    hp: 100,
-                    maxHp: 100,
-                    isDead: false,
-                    laneId: lane.id,
-                    wpIndex: (wpIndex + 1) % lane.waypoints.length,
-                    sideOffset,
-                    walkPhase: i * 0.9,
-                    fleeTimer: 0,
-                    talkTimer: 0,
-                    talkCount: 0
-                };
-                mesh.userData.pedestrian = ped;
-                pedestrians.push(ped);
+            } catch (e) {
+                // Audio is optional
             }
         }
 
-        function killPedestrian(ped) {
+        /** Throws a punch (alternating hands, Kaj leads with his left) at whoever is in front. */
+        function throwPunch() {
+            const now = performance.now();
+            if (isBlocking || now - lastPunchTime < PUNCH_INTERVAL_MS) return null;
+            lastPunchTime = now;
+            const lead = nextPunchLead;
+            nextPunchLead = !nextPunchLead;
+            if (lead) punchLead = 1; else punchRear = 1;
+
+            camera.getWorldDirection(_punchFwd);
+            _punchFwd.y = 0;
+            if (_punchFwd.lengthSq() < 1e-6) return null;
+            _punchFwd.normalize();
+            const targets = (policeSystem && policeSystem.officers.length > 0) ? [...pedestrians, ...policeSystem.officers] : pedestrians;
+            let best = null, bestD = PUNCH_RANGE;
+            for (let i = 0; i < targets.length; i++) {
+                const ped = targets[i];
+                if (!ped || ped.isDead || ped.state === 'ragdoll' || ped.state === 'dying' || !ped.mesh) continue;
+                const dx = ped.mesh.position.x - myPosition.x, dz = ped.mesh.position.z - myPosition.z;
+                const d = Math.hypot(dx, dz);
+                if (d > bestD || d < 0.05) continue;
+                if ((dx * _punchFwd.x + dz * _punchFwd.z) / d < 0.6) continue;
+                best = ped;
+                bestD = d;
+            }
+            if (!best) {
+                playPunchSound(false);
+                return { landed: false, hand: lead ? 'left' : 'right' };
+            }
+            const hitY = best.mesh.position.y + (Math.random() < 0.6 ? 1.6 : 1.25) * (best.mesh.scale.y || 1);
+            const result = pedestrianSystem.punchPed(best, {
+                dirX: _punchFwd.x, dirZ: _punchFwd.z,
+                damage: 20 + Math.random() * 10,
+                x: best.mesh.position.x - _punchFwd.x * 0.2, y: hitY, z: best.mesh.position.z - _punchFwd.z * 0.2
+            });
+            playPunchSound(true);
+            if (best.isPoliceOfficer && policeSystem) {
+                if (result.knockedOut) {
+                    policeSystem.killOfficer(best, { x: best.mesh.position.x, y: hitY, z: best.mesh.position.z, dirX: _punchFwd.x, dirY: 0, dirZ: _punchFwd.z });
+                }
+            } else if (result.knockedOut && policeSystem) {
+                policeSystem.triggerCrime('assault', best.mesh.position);
+            }
+            return { landed: true, knockedOut: result.knockedOut, target: best, hand: lead ? 'left' : 'right' };
+        }
+
+        /** An NPC's punch connects; blocking while facing them takes most of it. */
+        function onPedestrianPunchesPlayer(ped, damage) {
+            if (playerHealth <= 0 || playerController.getState() !== 'ON_FOOT') return;
+            camera.getWorldDirection(_punchFwd);
+            _punchFwd.y = 0;
+            const dx = ped.mesh.position.x - myPosition.x, dz = ped.mesh.position.z - myPosition.z;
+            const d = Math.hypot(dx, dz) || 1;
+            const facing = _punchFwd.lengthSq() > 1e-6 && (dx * _punchFwd.x + dz * _punchFwd.z) / (d * _punchFwd.length()) > 0.3;
+            const blocked = isBlocking && facing;
+            playPunchSound(true);
+            damagePlayer(blocked ? damage * 0.25 : damage);
+            if (!blocked) {
+                // Knocked back a little
+                myPosition.x -= (dx / d) * 0.15;
+                myPosition.z -= (dz / d) * 0.15;
+                if (playerController && playerController.position) playerController.position.copy(myPosition);
+            }
+        }
+
+        function killPedestrian(ped, hit = null) {
             if (!ped || ped.isDead) return false;
             ped.hp = 0;
+            if (ped.mesh && ped.mesh.userData.rig) {
+                pedestrianSystem.startShotDeath(ped, hit || {});
+                return true;
+            }
             ped.isDead = true;
             ped.state = 'dead';
             ped.mesh.rotation.x = Math.PI / 2;
@@ -3369,15 +3689,15 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 }
             }
 
-            // 3. Side windows (driver / passenger doors): local X = +/-0.97
+            // 3. Side windows (driver / passenger doors): local X = +/-0.956
             if (Math.abs(locDirX) > 0.001) {
                 for (let side = -1; side <= 1; side += 2) {
-                    const tSide = (side * 0.97 - locOrigX) / locDirX;
+                    const tSide = (side * 0.956 - locOrigX) / locDirX;
                     if (tSide > 0 && tSide <= maxRange) {
                         const hitZ = locOrigZ + locDirZ * tSide;
                         const hitY = locOrigY + locDirY * tSide;
-                        // Side glass spans roughly Z in [-1.25, 0.65], Y in [0.85, 1.4]
-                        if (hitZ >= -1.25 && hitZ <= 0.65 && hitY >= 0.85 && hitY <= 1.4) {
+                        // Side glass spans Z in [-1.29, 0.69], Y in [0.89, 1.31]
+                        if (hitZ >= -1.29 && hitZ <= 0.69 && hitY >= 0.89 && hitY <= 1.31) {
                             if (!closestHit || tSide < closestHit.distance) {
                                 closestHit = {
                                     vehicle: veh,
@@ -3442,6 +3762,9 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 rightZ * (4.0 + absSpeed * 0.5) + fwdZ * side * 4.0
             );
             ped.mesh.rotation.set(0, 0, 0);
+            if (ped.mesh.userData.rig) {
+                pedestrianSystem.attachImpactDeath(ped, fwdX, fwdZ, absSpeed);
+            }
 
             // Report crime or officer kill to Police System
             const isPlayerCar = !!(vehicle && (
@@ -3493,7 +3816,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         function makeNearbyPedestriansFlee(shotOrigin) {
             for (let i = 0; i < pedestrians.length; i++) {
                 const ped = pedestrians[i];
-                if (ped.isDead) continue;
+                if (ped.isDead || ped.state === 'ragdoll' || ped.state === 'carjacked') continue;
                 const dx = ped.mesh.position.x - shotOrigin.x;
                 const dz = ped.mesh.position.z - shotOrigin.z;
                 const dist = Math.hypot(dx, dz);
@@ -3532,7 +3855,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
             // Limbs flail while airborne and go slack once down
             const ud = ped.mesh.userData;
-            if (ud.leftLeg && ud.rightLeg) {
+            // Pedestrians with procedural death motion animate their own limbs (pedestrians.js)
+            if (ud.leftLeg && ud.rightLeg && !ped.death) {
                 const flail = com.y > 0.6 ? 1 : 0.25;
                 const ph = ped.ragdollTime * 14 + (ped.index | 0);
                 ud.leftLeg.rotation.x = Math.sin(ph) * 0.9 * flail;
@@ -3572,7 +3896,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                             vel.set(0, 0, 0);
                             ped.isDead = true;
                             ped.state = 'dead';
-                            if (ud.leftLeg) { ud.leftLeg.rotation.set(0, 0, 0); ud.rightLeg.rotation.set(0, 0, 0); }
+                            if (ud.leftLeg && !ped.death) { ud.leftLeg.rotation.set(0, 0, 0); ud.rightLeg.rotation.set(0, 0, 0); }
                             ped.mesh.quaternion.copy(ped.ragdollQuat);
                             _ragdollOffset.set(0, 1.0, 0).applyQuaternion(ped.ragdollQuat);
                             ped.mesh.position.copy(com).sub(_ragdollOffset);
@@ -3596,72 +3920,41 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
         }
 
+        const _pedViewDir = { x: 0, z: -1 };
+        const _pedWatchedVehicles = [];
+        // Every car pedestrians look out for before crossing (and dodge if it comes at them)
+        function getPedestrianWatchedVehicles() {
+            const list = _pedWatchedVehicles;
+            list.length = 0;
+            list.push(playerVehicle);
+            for (let i = 0; i < trafficVehicles.length; i++) list.push(trafficVehicles[i]);
+            for (let i = 0; i < spawnedVehicles.length; i++) list.push(spawnedVehicles[i]);
+            if (policeSystem && policeSystem.policeCars) {
+                for (let i = 0; i < policeSystem.policeCars.length; i++) list.push(policeSystem.policeCars[i]);
+            }
+            return list;
+        }
+
         function updatePedestrians(dt = 1 / 60) {
             const stepScale = dt / (1 / 60);
             for (let i = 0; i < pedestrians.length; i++) {
                 const ped = pedestrians[i];
-                if (ped.state === 'ragdoll') {
-                    stepPedRagdoll(ped, dt);
-                    continue;
-                }
-                if (ped.isDead) continue;
-
-                if (ped.state === 'talking') {
-                    ped.talkTimer -= stepScale;
-                    const dxP = myPosition.x - ped.mesh.position.x;
-                    const dzP = myPosition.z - ped.mesh.position.z;
-                    ped.mesh.rotation.y = Math.atan2(dxP, dzP);
-                    if (ped.mesh.userData.leftLeg && ped.mesh.userData.rightLeg) {
-                        ped.mesh.userData.leftLeg.rotation.x = 0;
-                        ped.mesh.userData.rightLeg.rotation.x = 0;
-                    }
-                    if (ped.talkTimer <= 0 || Math.hypot(dxP, dzP) > 6.0) {
-                        ped.state = 'walking';
-                    }
-                    continue;
-                }
-
-                if (ped.state === 'fleeing') {
-                    ped.fleeTimer -= stepScale;
-                    ped.mesh.position.x += ped.velocity.x * stepScale;
-                    ped.mesh.position.z += ped.velocity.z * stepScale;
-                    ped.mesh.rotation.y = Math.atan2(ped.velocity.x, ped.velocity.z);
-                    if (ped.fleeTimer <= 0) {
-                        ped.state = 'walking';
-                        ped.speed = 0.06;
-                    }
-                } else {
-                    const lane = roadNetwork.lanesById.get(ped.laneId);
-                    if (lane && lane.waypoints.length > 0) {
-                        const wp = lane.waypoints[ped.wpIndex];
-                        const nx = -Math.sin(wp.yaw + Math.PI / 2);
-                        const nz = -Math.cos(wp.yaw + Math.PI / 2);
-                        const targetX = wp.x + nx * ped.sideOffset;
-                        const targetZ = wp.z + nz * ped.sideOffset;
-
-                        const dx = targetX - ped.mesh.position.x;
-                        const dz = targetZ - ped.mesh.position.z;
-                        const dist = Math.hypot(dx, dz);
-
-                        if (dist < 1.5) {
-                            ped.wpIndex = (ped.wpIndex + 1) % lane.waypoints.length;
-                        } else {
-                            const moveStep = ped.speed * stepScale;
-                            ped.mesh.position.x += (dx / dist) * moveStep;
-                            ped.mesh.position.z += (dz / dist) * moveStep;
-                            ped.mesh.rotation.y = Math.atan2(dx, dz);
-                        }
-                    }
-                }
-
-                // Animate walking legs
-                ped.walkPhase += (ped.state === 'fleeing' ? 0.28 : 0.12) * stepScale;
-                const legSwing = Math.sin(ped.walkPhase) * 0.45;
-                if (ped.mesh.userData.leftLeg && ped.mesh.userData.rightLeg) {
-                    ped.mesh.userData.leftLeg.rotation.x = legSwing;
-                    ped.mesh.userData.rightLeg.rotation.x = -legSwing;
-                }
+                if (ped.state === 'ragdoll') stepPedRagdoll(ped, dt);
             }
+
+            // Routes, crossings, sitting, groups, population streaming and instanced rendering
+            const onFoot = !!(playerController && playerController.getState() === 'ON_FOOT');
+            _pedViewDir.x = shadowLookDir.x;
+            _pedViewDir.z = shadowLookDir.z;
+            pedestrianSystem.update(dt, {
+                center: myPosition,
+                viewDir: _pedViewDir,
+                playerPos: myPosition,
+                playerOnFoot: onFoot,
+                onPlayerHit: onPedestrianPunchesPlayer,
+                vehicles: getPedestrianWatchedVehicles(),
+                officers: policeSystem ? policeSystem.officers : null
+            });
 
             // Update pedestrian talk prompt & dialog timer
             const talkIndicatorEl = document.getElementById('ped-talk-indicator');
@@ -3686,8 +3979,12 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             updateBloodPools();
         }
 
-        // Spawn neighborhood pedestrians right away
+        // Populate the streets around the player right away
         spawnPedestrians(24);
+        {
+            const st = pedestrianSystem.getStats();
+            bootLog(`Spawned ${st.total} pedestrians: ${st.walking} walking routes, ${st.sitting} sitting outside, ${st.hanging} in ${st.groups} groups`);
+        }
 
         // ============ PROJECTILES & SHOOTING MECHANICS ============
         const sharedBulletGeo = new THREE.SphereGeometry(0.08, 6, 6);
@@ -3767,9 +4064,17 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                             ped.hp -= weapon.damage;
                             if (ped.hp <= 0) {
                                 if (ped.isPoliceOfficer && policeSystem) {
-                                    policeSystem.killOfficer(ped);
+                                    policeSystem.killOfficer(ped, {
+                                        x: closestX, y: closestY, z: closestZ,
+                                        dirX: dir.x, dirY: dir.y, dirZ: dir.z,
+                                        explosive: !!weapon.explosive
+                                    });
                                 } else {
-                                    killPedestrian(ped);
+                                    killPedestrian(ped, {
+                                        x: closestX, y: closestY, z: closestZ,
+                                        dirX: dir.x, dirY: dir.y, dirZ: dir.z,
+                                        explosive: !!weapon.explosive
+                                    });
                                     if (policeSystem) {
                                         policeSystem.triggerCrime('shooting', ped.mesh.position);
                                     }
@@ -3899,9 +4204,17 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                         ped.hp -= proj.damage;
                         if (ped.hp <= 0) {
                             if (ped.isPoliceOfficer && policeSystem) {
-                                policeSystem.killOfficer(ped);
+                                policeSystem.killOfficer(ped, {
+                                    x: proj.mesh.position.x, y: proj.mesh.position.y, z: proj.mesh.position.z,
+                                    dirX: proj.velocity.x, dirY: proj.velocity.y, dirZ: proj.velocity.z,
+                                    explosive: !!proj.explosive
+                                });
                             } else {
-                                killPedestrian(ped);
+                                killPedestrian(ped, {
+                                    x: proj.mesh.position.x, y: proj.mesh.position.y, z: proj.mesh.position.z,
+                                    dirX: proj.velocity.x, dirY: proj.velocity.y, dirZ: proj.velocity.z,
+                                    explosive: !!proj.explosive
+                                });
                                 if (policeSystem) {
                                     policeSystem.triggerCrime('shooting', ped.mesh.position);
                                 }
@@ -3944,7 +4257,25 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 viewmodelRecoil = 0;
             }
 
-            if (currentWeaponIndex === 0 && viewmodelSprayCan) {
+            if (currentWeaponType() === 'hands') {
+                // Fists bob with walking, snap out on punches and come up to the face to block.
+                // (The viewmodel is mirrored, so `lead`, built on +X, shows as Kaj's left hand.)
+                if (punchLead > 0) punchLead = Math.max(0, punchLead - 0.085);
+                if (punchRear > 0) punchRear = Math.max(0, punchRear - 0.085);
+                blockAmount += ((isBlocking ? 1 : 0) - blockAmount) * 0.3;
+                const jl = Math.sin(punchLead * Math.PI), jr = Math.sin(punchRear * Math.PI);
+                const b = blockAmount;
+                const lead = activeVM.userData.lead, rear = activeVM.userData.rear;
+                activeVM.position.set(bobX, bobY, 0);
+                if (lead) {
+                    lead.position.set(0.17 - jl * 0.13 - b * 0.09, -0.17 + jl * 0.08 + b * 0.11, -0.38 - jl * 0.24 + b * 0.08);
+                    lead.rotation.set(0.15 + b * 1.1, 0, -0.15 - b * 0.35);
+                }
+                if (rear) {
+                    rear.position.set(-0.17 + jr * 0.13 + b * 0.09, -0.18 + jr * 0.08 + b * 0.1, -0.36 - jr * 0.24 + b * 0.07);
+                    rear.rotation.set(0.15 + b * 1.1, 0, 0.15 + b * 0.35);
+                }
+            } else if (currentWeaponType() === 'spray' && viewmodelSprayCan) {
                 viewmodelSprayCan.position.x = 0.2 + bobX;
                 viewmodelSprayCan.position.y = -0.22 + bobY;
 
@@ -3971,7 +4302,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                             -0.015
                         );
                         particle.userData.life = 0;
-                        viewmodelScene.add(particle);
+                        viewmodelRoot.add(particle);
                         vmSprayParticles.push(particle);
                     }
                 } else {
@@ -3991,7 +4322,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 p.userData.life++;
                 p.material.opacity -= 0.06;
                 if (p.material.opacity <= 0 || p.userData.life > 15) {
-                    viewmodelScene.remove(p);
+                    viewmodelRoot.remove(p);
                     p.geometry.dispose();
                     p.material.dispose();
                     vmSprayParticles.splice(i, 1);
@@ -4685,7 +5016,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             camera.lookAt(_pCameraTarget);
             
             // Spray or automatic gun fire while holding mouse
-            if (currentWeaponIndex === 0) {
+            if (currentWeaponType() === 'spray') {
                 if (isSpraying) sprayAtTarget();
             } else if (isFiringGun && weapons[currentWeaponIndex] && weapons[currentWeaponIndex].automatic) {
                 shootWeapon();
@@ -5114,25 +5445,38 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     if (cameraController) {
                         cameraController.setAiming(true);
                     }
+                    smashDriverWindowForAim();
                     if (!weapons[currentWeaponIndex] || weapons[currentWeaponIndex].type !== 'gun') {
                         selectWeapon('Pistol');
                     }
+                } else if (currentWeaponType() === 'hands') {
+                    isBlocking = true; // fists up: takes most of the sting out of punches from the front
                 }
                 return;
             }
 
             if (e.button === 0) { // Left click
                 if (inVehicle) {
-                    // Drive-by shooting: allowed when aiming or transitioned into cockpit
-                    if (isVehicleAiming || (cameraController && cameraController.aimTransition > 0.2)) {
+                    const w = weapons[currentWeaponIndex];
+                    if (w && w.type === 'gun') {
+                        // Kaj (left-handed) holds the gun out in his left hand, leaning out of the window
+                        carGunHeld = true;
+                        if (cameraController) cameraController.setAiming(true);
+                        smashDriverWindowForAim();
                         shootWeapon();
+                    } else {
+                        // No gun: the right hand reaches out and presses whatever it's pointed at
+                        carReachHeld = true;
+                        pressScreenButton(hoveredScreenButton);
                     }
                     return;
                 }
 
-                if (currentWeaponIndex > 0) {
+                if (currentWeaponType() === 'gun') {
                     isFiringGun = true;
                     shootWeapon();
+                } else if (currentWeaponType() === 'hands') {
+                    throwPunch();
                 } else if (imageMode) {
                     pasteImageAtTarget();
                 } else {
@@ -5146,13 +5490,19 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             if (e.button === 2) {
                 isRightMouseDown = false;
                 isVehicleAiming = false;
-                if (cameraController) {
+                isBlocking = false;
+                if (cameraController && !carGunHeld) {
                     cameraController.setAiming(false);
                 }
             }
             if (e.button === 0) {
                 isSpraying = false;
                 isFiringGun = false;
+                carReachHeld = false;
+                if (carGunHeld) {
+                    carGunHeld = false;
+                    if (cameraController && !isRightMouseDown) cameraController.setAiming(false);
+                }
             }
         });
         
@@ -5162,7 +5512,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             if (!gameStarted) return;
             if (playerController && playerController.getState() === 'IN_VEHICLE') return;
             
-            if (currentWeaponIndex > 0) {
+            if (currentWeaponType() !== 'spray') {
                 const delta = event.deltaY > 0 ? 1 : -1;
                 selectWeapon((currentWeaponIndex + delta + weapons.length) % weapons.length);
             } else if (imageMode) {
@@ -5211,7 +5561,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     scene.fog = null;
                     renderer.domElement.requestPointerLock();
                 } else {
-                    scene.fog = new THREE.Fog(0xa8d8f0, 150, 800);
+                    scene.fog = new THREE.Fog(SKY_COLORS.fog, FOG_NEAR, FOG_FAR);
                     camera.far = 3000;
                     camera.updateProjectionMatrix();
                     devFlyKeys.w = devFlyKeys.a = devFlyKeys.s = devFlyKeys.d = false;
@@ -5278,8 +5628,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 return;
             }
 
-            // Weapon selection keys 1..5 and Q to cycle
-            if (event.key >= '1' && event.key <= '5') {
+            // Weapon selection keys 1..6 (1 = hands) and Q to cycle
+            if (event.key >= '1' && event.key <= '6') {
                 selectWeapon(parseInt(event.key, 10) - 1);
                 return;
             }
@@ -5323,7 +5673,13 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     }
                     break;
                 case 'c': toggleColorPicker(); break;
-                case 'v': toggleMode(); break;
+                case 'v':
+                    if (playerController.getState() === 'IN_VEHICLE' && !getActivePlane()) {
+                        showToast(cameraController.toggleDriveView() ? 'Driver view' : 'Chase camera', 1200);
+                    } else {
+                        toggleMode();
+                    }
+                    break;
                 case 'r':
                     if (playerController.getState() === 'IN_VEHICLE' && isEngineRunning(radioState.sourceVehicle)) {
                         toggleRadioPause();
@@ -5398,12 +5754,34 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
         }
 
+        // Plays media/Finished.mp4 on the right of the loading screen once everything is loaded
+        const loadingVideo = document.getElementById('loading-video');
+        function playFinishedVideo() {
+            if (!loadingVideo) return;
+            loadingVideo.style.display = 'block';
+            loadingVideo.currentTime = 0;
+            loadingVideo.muted = false;
+            loadingVideo.play().catch(() => {
+                // Browsers block sound until the page has been interacted with: play muted, unmute on the first click
+                loadingVideo.muted = true;
+                loadingVideo.play().catch(() => {});
+                const unmute = () => { loadingVideo.muted = false; };
+                document.addEventListener('pointerdown', unmute, { once: true });
+                document.addEventListener('keydown', unmute, { once: true });
+            });
+        }
+
         function showStartButton() {
             document.getElementById('loading-fill').setAttribute('stroke-dasharray', '100 100');
             document.getElementById('loading-text').textContent = 'He is ready for you.';
+            bootLog('All systems loaded. He is ready for you.', 'ok');
+            bootLog('Waiting for Start...');
+            playFinishedVideo();
             const startBtn = document.getElementById('start-btn');
             startBtn.style.display = 'block';
             startBtn.onclick = () => {
+                if (loadingVideo) loadingVideo.pause();
+                if (window.bootLog && window.bootLog.stop) window.bootLog.stop();
                 loadingMusic.pause();
                 gameMusicAllowed = true;
                 ensureBackgroundMusicPlaying();
@@ -5427,15 +5805,35 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         const anothermapoLoader = new AnothermapoLoader({
             basePath: '/mapfinal/',
             batchSize: 6,
-            maxTextureSize: (('ontouchstart' in window) || navigator.maxTouchPoints > 0) ? 512 : 0,
+            maxTextureSize: lowSpecDevice ? 512 : 0,
+            pbr: !lowSpecDevice,
+            anisotropy: lowSpecDevice ? 2 : Math.min(8, maxAnisotropy),
+            extractTrees: true,
             roadNetwork,
             collisionMeshes
         });
         mapState.totalParts = anothermapoLoader.totalParts;
+        bootLog(`Streaming /mapfinal: ${anothermapoLoader.totalParts} OBJ parts, ${6} parallel workers`);
+        let lastBootStatus = '';
+        let lastBootTilePercent = -1;
         anothermapoLoader.load(scene, spatialGrid, (progress) => {
             document.getElementById('loading-fill').setAttribute('stroke-dasharray', progress.percent + ' 100');
             document.getElementById('loading-text').textContent = 'Loading map... ' + progress.percent + '%';
+            if (progress.partName) {
+                bootLog(progress.partFailed
+                    ? `GET /mapfinal/${progress.partName} FAILED`
+                    : `GET /mapfinal/${progress.partName} -> parsed, ${progress.loadedCount}/${progress.totalParts} (${progress.percent}%)`,
+                    progress.partFailed ? 'error' : undefined);
+            } else if (/^Building map tiles \d/.test(progress.statusText)) {
+                // Tile batching reports every tile; log once per percent
+                if (progress.percent !== lastBootTilePercent) bootLog(`${progress.statusText} (${progress.percent}%)`);
+                lastBootTilePercent = progress.percent;
+            } else if (progress.statusText && progress.statusText !== lastBootStatus) {
+                bootLog(progress.statusText);
+            }
+            lastBootStatus = progress.statusText;
         }).then((result) => {
+            bootLog(`Map ready: ${result.loadedPartsCount} parts, ${result.tiles ? result.tiles.length : 0} tiles, ${result.obstacleCount} building colliders, ${(result.totalTriangles / 1e6).toFixed(2)}M triangles`, 'ok');
             mapState.isLoaded = true;
             mapState.parts = result.parts;
             mapState.failedParts = result.failedParts;
@@ -5443,6 +5841,47 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             mapState.loadedPartsCount = result.loadedPartsCount;
             mapState.obstacleCount = result.obstacleCount;
             mapState.totalTriangles = result.totalTriangles;
+            if (result.treeInstances && result.treeInstances.length > 0) {
+                try {
+                    treeSystem = new TreeSystem(result.treeInstances, {
+                        cellSize: 160,
+                        lod0Distance: lowSpecDevice ? 130 : 260,
+                        castShadows: true,
+                        variants: lowSpecDevice ? 1 : 2,
+                        anisotropy: lowSpecDevice ? 2 : Math.min(8, maxAnisotropy)
+                    });
+                    scene.add(treeSystem.root);
+                    mapState.treeCount = treeSystem.treeCount;
+                    bootLog(`Planted ${treeSystem.treeCount} 3D trees (replacing map billboards)`);
+                    mapState.treeInstances = result.treeInstances;
+                } catch (err) {
+                    console.error('[Trees] Failed to build 3D trees:', err);
+                }
+            }
+            try {
+                bootLog('Growing instanced grass on lawns, parks and fields...');
+                grassSystem = new GrassSystem(anothermapoLoader.tiles, { lowSpec: lowSpecDevice });
+                scene.add(grassSystem.root);
+                mapState.getGrassStats = () => grassSystem.getStats();
+            } catch (err) {
+                console.error('[Grass] Failed to build grass:', err);
+            }
+            // Compile tree / grass shaders behind the loading screen, so the first time a far tree LOD or the
+            // grass comes into view does not stall a frame. compile() skips hidden meshes, so show them briefly.
+            try {
+                const hiddenForCompile = [];
+                scene.traverse((o) => {
+                    if (o.isMesh && !o.visible && (o.name.startsWith('trees_') || o.name === 'grass_field')) {
+                        o.visible = true;
+                        hiddenForCompile.push(o);
+                    }
+                });
+                bootLog('Precompiling shaders...');
+                renderer.compile(scene, camera);
+                hiddenForCompile.forEach((o) => { o.visible = false; });
+            } catch (err) {
+                console.warn('[Render] Shader precompile skipped:', err);
+            }
             showStartButton();
             buildSprayTargets();
         }).catch((err) => {
@@ -5693,7 +6132,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
             let fireLabel = 'Fire';
             if (mode === 'foot') {
-                fireLabel = currentWeaponIndex > 0 ? 'Fire' : (imageMode ? 'Paste' : 'Spray');
+                const t = currentWeaponType();
+                fireLabel = t === 'gun' ? 'Fire' : t === 'hands' ? 'Punch' : (imageMode ? 'Paste' : 'Spray');
             }
             if (fireLabel !== _mobileFireLabel) {
                 _mobileFireLabel = fireLabel;
@@ -5807,6 +6247,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 }
             }
             updateExplosions(dt);
+            updateCarInterior(dt);
             mpTick(dt);
             const pilotedPlane = getActivePlane();
             updatePlaneHUD(pilotedPlane && !pilotedPlane.wrecked ? pilotedPlane : null);
@@ -5819,13 +6260,21 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 sunDirection.y * 1400,
                 myPosition.z + sunDirection.z * 1400
             );
-            sunLight.position.set(myPosition.x + 80, 180, myPosition.z + 60);
-            sunLight.target.position.set(myPosition.x, 0, myPosition.z);
+            // Centre the shadow frustum a little ahead of where the camera looks
+            camera.getWorldDirection(shadowLookDir);
+            shadowLookDir.y = 0;
+            if (shadowLookDir.lengthSq() > 1e-6) shadowLookDir.normalize();
+            const shadowFocusX = myPosition.x + shadowLookDir.x * shadowFocusOffset;
+            const shadowFocusZ = myPosition.z + shadowLookDir.z * shadowFocusOffset;
+            sunLight.position.set(shadowFocusX + 80, 180, shadowFocusZ + 60);
+            sunLight.target.position.set(shadowFocusX, 0, shadowFocusZ);
 
-            // Update 12 autonomous AI traffic fleet (Pure Pursuit + IDM + Anti-Overlap + InstancedMesh)
+            // Update the AI traffic fleet (Pure Pursuit + IDM + Anti-Overlap + InstancedMesh)
             // (A plane flying overhead is not a road obstacle, so traffic keeps using the Civic as its reference.)
             const trafficRef = (drivenVehicle && !drivenVehicle.isPlane) ? drivenVehicle : playerVehicle;
             trafficManager.update(dt, trafficRef);
+            // Recycle cars left far behind onto streets around the player (out of view)
+            trafficManager.maintainPopulation(dt, myPosition, shadowLookDir);
 
             // Check vehicle-pedestrian impacts (ragdoll launch scaled by car speed) & update pedestrians/projectiles
             checkVehiclePedestrianImpacts();
@@ -5833,7 +6282,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             updatePedestrians(dt);
             if (policeSystem) {
                 for (const off of policeSystem.officers) {
-                    if (off && !off.isDead && off.state === 'ragdoll' && off.ragdollCom) stepPedRagdoll(off, dt);
+                    if (off && off.state === 'ragdoll' && off.ragdollCom) stepPedRagdoll(off, dt);
                 }
             }
             updateProjectiles(dt);
@@ -5909,12 +6358,25 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         /**
          * Variable-rate visual and rendering update
          */
+        let lastRenderTime = performance.now();
         function renderFrame() {
+            const nowMs = performance.now();
+            const renderDt = Math.min(0.1, (nowMs - lastRenderTime) / 1000);
+            lastRenderTime = nowMs;
             sunHaloMesh.lookAt(camera.position);
             updateViewmodel();
-            
+
             // Skip map tiles that sit entirely past the fog (or the far plane when fog is off in dev fly mode)
-            anothermapoLoader.updateVisibility(camera.position, scene.fog ? scene.fog.far : camera.far);
+            const viewDistance = scene.fog ? scene.fog.far : camera.far;
+            anothermapoLoader.updateVisibility(camera.position, viewDistance);
+            if (treeSystem) treeSystem.update(camera.position, viewDistance);
+            if (grassSystem) {
+                // Blades only part around the player while walking
+                const onFoot = playerController.getState() === 'ON_FOOT' && !devMode;
+                if (onFoot) grassFeetPos.set(myPosition.x, 0, myPosition.z);
+                grassSystem.update(camera.position, onFoot ? grassFeetPos : null, nowMs / 1000);
+            }
+            cloudLayer.update(renderDt, camera.position);
             
             renderer.render(scene, camera);
             
@@ -5931,7 +6393,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             const crosshairEl = document.getElementById('crosshair');
             if (crosshairEl && gameStarted) {
                 const showCrosshair = (playerController.getState() === 'ON_FOOT') ||
-                    (cameraController && cameraController.aimTransition > 0.15);
+                    (cameraController && cameraController.aimTransition > 0.15) ||
+                    cockpitPointerActive;
                 crosshairEl.style.display = showCrosshair ? 'block' : 'none';
             }
         }
@@ -5987,10 +6450,14 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             hasVehicles: true,
             spatialGrid,
             pedestrians,
+            pedestrianSystem,
+            roadNetwork,
             bloodPools,
             weapons,
             selectWeapon,
             shootWeapon,
+            throwPunch: () => { lastPunchTime = 0; return throwPunch(); },
+            setBlocking: (on) => { isBlocking = !!on; },
             resetWeaponCooldown: () => { lastShotTime = 0; },
             talkToNearbyPedestrian,
             getNearbyPedestrian,
@@ -6043,6 +6510,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             setVehicleAiming: (aiming) => {
                 isVehicleAiming = !!aiming;
                 if (cameraController) cameraController.setAiming(aiming);
+                if (aiming) smashDriverWindowForAim();
                 if (aiming && (!weapons[currentWeaponIndex] || weapons[currentWeaponIndex].type !== 'gun')) {
                     selectWeapon('Pistol');
                 }

@@ -191,9 +191,13 @@ export function createPoliceOfficerMesh(id) {
  * Deploys from police cruiser, pursues player, aims gun, and fires live rounds.
  */
 export class PoliceOfficer {
-    constructor(id, x, z, yaw, scene = null) {
+    /**
+     * @param {Function} [meshFactory] Builds the officer's body (the game passes the jointed NPC
+     *   rig from pedestrians.js); defaults to the simple box officer
+     */
+    constructor(id, x, z, yaw, scene = null, meshFactory = null) {
         this.id = id;
-        this.mesh = createPoliceOfficerMesh(id);
+        this.mesh = meshFactory ? meshFactory(id) : createPoliceOfficerMesh(id);
         this.position = this.mesh.position;
         this.position.set(x, 0, z);
         this.mesh.rotation.y = yaw || 0;
@@ -263,15 +267,15 @@ export class PoliceOfficer {
             this.position.x += dirX * this.speed;
             this.position.z += dirZ * this.speed;
 
-            // Animate running legs
+            // Animate running legs (rigged officers are animated by the pedestrian system)
             this.walkPhase += 0.24;
-            if (this.mesh.userData.leftLeg && this.mesh.userData.rightLeg) {
+            if (this.mesh.userData.leftLeg && this.mesh.userData.rightLeg && !this.mesh.userData.rig) {
                 this.mesh.userData.leftLeg.rotation.x = Math.sin(this.walkPhase) * 0.5;
                 this.mesh.userData.rightLeg.rotation.x = -Math.sin(this.walkPhase) * 0.5;
             }
         } else {
             // Stand firm, aim service pistol
-            if (this.mesh.userData.leftLeg && this.mesh.userData.rightLeg) {
+            if (this.mesh.userData.leftLeg && this.mesh.userData.rightLeg && !this.mesh.userData.rig) {
                 this.mesh.userData.leftLeg.rotation.x = 0;
                 this.mesh.userData.rightLeg.rotation.x = 0;
             }
@@ -318,8 +322,8 @@ export class PoliceVehicle extends Vehicle {
 
     _buildPoliceAesthetics() {
         const root = this.getMesh();
-        const whiteMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
-        const blackMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+        const whiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.45, envMapIntensity: 1.1 });
+        const blackMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.32, metalness: 0.45, envMapIntensity: 1.1 });
 
         // Left white door decal
         const leftDoor = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.58, 1.4), whiteMat);
@@ -504,6 +508,10 @@ export class PoliceSystem {
 
         this.onDamagePlayer = null;
         this.createBloodPoolCallback = null;
+        // Optional hooks set by the game: officer body factory (id -> THREE.Group) and the death
+        // animation for rigged officers ((officer, hit) => void)
+        this.createOfficerMesh = null;
+        this.onOfficerKilled = null;
         this.onPlayOfficerGunSound = null;
 
         this.sirenAudio = new PoliceSirenAudio(audioContext);
@@ -665,7 +673,10 @@ export class PoliceSystem {
      */
     spawnOfficer(pos, cruiser = null) {
         const offId = `officer_${this.officerIdCounter++}`;
-        const officer = new PoliceOfficer(offId, pos.x, pos.z, pos.yaw || 0, this.scene);
+        const factory = this.createOfficerMesh
+            ? () => this.createOfficerMesh(this.officerIdCounter * 7919 + 3)
+            : null;
+        const officer = new PoliceOfficer(offId, pos.x, pos.z, pos.yaw || 0, this.scene, factory);
         officer.cruiser = cruiser;
         this.officers.push(officer);
         return officer;
@@ -675,17 +686,27 @@ export class PoliceSystem {
      * Called when a police officer is killed by player gunfire or vehicle impact.
      * "If you kill the police officers you gain more stars."
      */
-    killOfficer(officer) {
+    killOfficer(officer, hit = null) {
         if (!officer || officer.isDead) return false;
 
         officer.hp = 0;
-        officer.isDead = true;
-        officer.state = 'dead';
-        officer.mesh.rotation.x = Math.PI / 2;
-        officer.mesh.position.y = 0.25;
+        if (officer.mesh.userData.rig && typeof this.onOfficerKilled === 'function') {
+            // Rigged officers stagger and ragdoll (they bleed once the body comes to rest);
+            // one already launched by a car keeps its ragdoll
+            if (officer.state === 'ragdoll') {
+                officer.isDead = true;
+            } else {
+                this.onOfficerKilled(officer, hit || {});
+            }
+        } else {
+            officer.isDead = true;
+            officer.state = 'dead';
+            officer.mesh.rotation.x = Math.PI / 2;
+            officer.mesh.position.y = 0.25;
 
-        if (typeof this.createBloodPoolCallback === 'function') {
-            this.createBloodPoolCallback(officer.mesh.position);
+            if (typeof this.createBloodPoolCallback === 'function') {
+                this.createBloodPoolCallback(officer.mesh.position);
+            }
         }
 
         // KILLING POLICE OFFICERS INCREASES WANTED STARS!
