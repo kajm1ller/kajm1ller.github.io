@@ -1146,10 +1146,73 @@ console.timeEnd('places');
 console.log(`furniture ${furniture.length} (lawn sets ${lawnSets}, patios ${patios}, benches ${benches}), seats ${seats.length}, hangouts ${hangouts.length} (yards ${yardHangouts}, greens ${greenHangouts})`);
 
 // ---------------------------------------------------------------------------------------------
+// 6e. Traffic control: the junctions OSM maps with traffic signals, and the street approaches
+//     that have a stop sign (highway=stop; stop=all makes the whole junction an all-way stop)
+// ---------------------------------------------------------------------------------------------
+console.time('traffic control');
+const CONTROL_REACH = 30; // a control node further than this along its street from a junction is ignored
+const edgesAtOsmNode = new Map(); // osm node idx -> [{ e, i }] position in each road edge's pts
+for (const e of roadEdges) {
+    e.pts.forEach((r, i) => {
+        if (!edgesAtOsmNode.has(r)) edgesAtOsmNode.set(r, []);
+        edgesAtOsmNode.get(r).push({ e, i });
+    });
+}
+const junctionDegree = (gid) => graphNodes[gid].edges.length;
+// Distance along edge e from its pts[i] to the end at pts[0] (toB = false) or pts[last] (toB = true)
+function alongEdge(e, i, toB) {
+    let L = 0;
+    const from = toB ? i : 0, to = toB ? e.pts.length - 1 : i;
+    for (let k = from; k < to; k++) L += Math.hypot(NX[e.pts[k + 1]] - NX[e.pts[k]], NZ[e.pts[k + 1]] - NZ[e.pts[k]]);
+    return L;
+}
+// The junction a control node on edge e (at pts[i]) governs: the nearer junction end within reach
+function governedEnd(e, i) {
+    const ends = [];
+    if (junctionDegree(e.a) >= 3) ends.push({ end: 0, node: e.a, d: alongEdge(e, i, false) });
+    if (junctionDegree(e.b) >= 3) ends.push({ end: 1, node: e.b, d: alongEdge(e, i, true) });
+    ends.sort((p, q) => p.d - q.d);
+    return ends.length && ends[0].d <= CONTROL_REACH ? ends[0] : null;
+}
+const signalNodes = new Set();
+const stopApproaches = new Map(); // `${edgeId}:${end}` -> { e, end }
+const allWayNodes = new Set();
+const classRank = (e) => e.cls.weight;
+for (const n of taggedNodes) {
+    const hw = n.tags.highway;
+    if (hw !== 'traffic_signals' && hw !== 'stop') continue;
+    const gid = graphNodeId.get(n.idx);
+    if (gid !== undefined && junctionDegree(gid) >= 3) {
+        // Tagged on the junction node itself
+        if (hw === 'traffic_signals') signalNodes.add(gid);
+        else if (n.tags.stop === 'all') allWayNodes.add(gid);
+        else {
+            // Ambiguous: the stop applies to the junction's lowest-class streets
+            const edges = graphNodes[gid].edges.map((id) => roadEdges[id]);
+            const minRank = Math.min(...edges.map(classRank));
+            const maxRank = Math.max(...edges.map(classRank));
+            if (minRank === maxRank) allWayNodes.add(gid);
+            else for (const e of edges) if (classRank(e) === minRank) stopApproaches.set(`${e.id}:${e.a === gid ? 0 : 1}`, { e, end: e.a === gid ? 0 : 1 });
+        }
+        continue;
+    }
+    for (const { e, i } of edgesAtOsmNode.get(n.idx) || []) {
+        const g = governedEnd(e, i);
+        if (!g) continue;
+        if (hw === 'traffic_signals') signalNodes.add(g.node);
+        else if (n.tags.stop === 'all') allWayNodes.add(g.node);
+        else stopApproaches.set(`${e.id}:${g.end}`, { e, end: g.end });
+    }
+}
+console.timeEnd('traffic control');
+console.log(`signalized junctions ${signalNodes.size}, stop approaches ${stopApproaches.size}, all-way stops ${allWayNodes.size}`);
+
+// ---------------------------------------------------------------------------------------------
 // 7. Write compact JSON (positions in decimetres, angles in milliradians)
 // ---------------------------------------------------------------------------------------------
 const dm = (v) => Math.round(v * 10);
 const mr = (v) => Math.round(v * 1000);
+const roadOutIndex = new Map(); // road edge id -> index in roadsOut
 const roadsOut = roadEdges.map((e) => {
     const flat = [];
     let px = null, pz = null;
@@ -1159,8 +1222,15 @@ const roadsOut = roadEdges.map((e) => {
         flat.push(x, z);
         px = x; pz = z;
     }
-    return [e.a, e.b, e.oneway, dm(e.halfW), e.lanes, Math.round(e.speed * 10), Math.round(e.cls.weight * 10), flat];
-}).filter((r) => r[7].length >= 4);
+    return [e.a, e.b, e.oneway, dm(e.halfW), e.lanes, Math.round(e.speed * 10), Math.round(e.cls.weight * 10), flat, e.id];
+}).filter((r) => r[7].length >= 4).map((r, i) => {
+    roadOutIndex.set(r.pop(), i);
+    return r;
+});
+const stopsOut = [];
+for (const { e, end } of stopApproaches.values()) {
+    if (roadOutIndex.has(e.id)) stopsOut.push(roadOutIndex.get(e.id), end);
+}
 
 const out = {
     version: 1,
@@ -1181,7 +1251,14 @@ const out = {
     // [x, z, yaw, accessNode, cluster, furnitureType]
     seats: seats.map(([x, z, y, a, c, t]) => [dm(x), dm(z), mr(y), a, c, t]).flat(),
     // [x, z, accessNode]
-    hangouts: hangouts.map(([x, z, a]) => [dm(x), dm(z), a]).flat()
+    hangouts: hangouts.map(([x, z, a]) => [dm(x), dm(z), a]).flat(),
+    control: {
+        // Road graph nodes of junctions with traffic signals / all-way stops
+        signals: [...signalNodes].sort((p, q) => p - q),
+        allWayStops: [...allWayNodes].sort((p, q) => p - q),
+        // [road, end] pairs: traffic on `road` approaching its end node a (0) or b (1) has a stop sign
+        stops: stopsOut
+    }
 };
 fs.mkdirSync(path.dirname(OUT_FILE), { recursive: true });
 const json = JSON.stringify(out);

@@ -1,17 +1,16 @@
 /**
  * js/game/vehicle.js
- * 
- * High-performance Vehicle Physics, Collision Response, and Kaj Simulator
- * Honda Civic Procedural Mesh System (extracted from commit 7e9eef5:game.html).
- * 
+ *
+ * High-performance Vehicle Physics, Collision Response, and Kaj Simulator car meshes.
+ *
  * Conforms to:
- * - Authentic Kaj Simulator Honda Civic car basis (sedan body 2.2x0.7x4.5, cabin 1.9x0.6x2.2,
- *   angled windshield & rear glass, side windows, headlights, taillights, bumpers, license plate,
- *   4 steerable/rolling wheels & hubcaps, #car-indicator & #car-speed-hud HUD integration)
- * - Shared CivicGeometryPool & CivicMaterialPool for zero duplicate shader/geometry allocations
+ * - Multiple car models from js/game/carModels.js (Civic, hatchback, sports coupe, muscle car,
+ *   SUV, pickup, van, cruiser, taxi): each sets the body, dimensions, physics, gearbox and engine
+ *   sound; the default is Kaj's Honda Civic, whose handling is unchanged
  * - Extended Kinematic Bicycle model with slip angle and lateral grip damping
+ * - Simulated automatic gearbox and engine RPM (drives the tachometer and the engine sound)
  * - Project coordinate frame: yaw=0 points along -Z (Three.js standard camera & roadNetwork convention)
- * - 2D planar collision detection (3-circle decomposition with zero-gap capsule coverage)
+ * - 2D planar collision detection (3-circle decomposition sized to each model)
  * - Contact normal MTV separation and impulse reflection against SpatialGrid obstacles
  * - World boundary clamping at the edge of the map (CONFIG.WORLD.SAFE_BOUNDS)
  * - Defensive Number.isFinite() validation with lastSafePosition corruption recovery
@@ -21,299 +20,71 @@
 
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
+import {
+    getCarModel, buildCarMesh, cabinShape, getModelGeometry, buildCabinFrame,
+    getPartMaterials, getPaintMaterial, DEFAULT_CAR_MODEL
+} from './carModels.js';
 
 // Pre-allocated reusable scratch vectors for zero-allocation physics stepping
 const _scratchForward = new THREE.Vector3();
 const _scratchRight = new THREE.Vector3();
 const _scratchImpulse = new THREE.Vector3();
 const _scratchCollisionResults = [];
-// Circle offsets along heading: Front (+1.35m fwd), Center (0m), Rear (-1.35m fwd)
-const _circleOffsets = [1.35, 0.0, -1.35];
+
+// Handling every model starts from (Kaj's Civic); models override what differs
+const BASE_PHYSICS = Object.freeze({
+    maxForwardSpeed: 28.0,            // Max forward velocity (m/s)
+    maxReverseSpeed: -9.0,            // Max reverse velocity (m/s)
+    baseAccel: 9.5,                   // Stall forward acceleration (m/s^2)
+    reverseAccel: 5.0,                // Reverse gear acceleration (m/s^2)
+    brakeDecel: 16.0,                 // Braking deceleration (m/s^2)
+    handbrakeDecel: 24.0,             // Handbrake deceleration (m/s^2)
+    rollingFriction: 0.6,             // Rolling resistance (m/s^2)
+    dragCoeff: 0.0035,                // Aerodynamic drag coefficient
+    normalGrip: 36.0,                 // High normal lateral tire grip so cars track road without drifting (s^-1)
+    handbrakeGrip: 2.5,               // Drifting lateral grip damping factor (s^-1)
+    maxSteerAngle: 0.55,              // Maximum wheel turn angle (~31.5 deg)
+    steerSpeed: 4.5,                  // Steering turn rate (rad/s)
+    steerCenterSpeed: 6.0             // Steering auto-centering rate (rad/s)
+});
 
 // ============================================================================
-// SHARED GEOMETRY POOL (Singleton cache across all Honda Civic instances)
+// Legacy pools (kept for callers of the old Civic-only API)
 // ============================================================================
 export class CivicGeometryPool {
-    static _pool = null;
-
     static get() {
-        if (!this._pool) {
-            const wheelTireGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.25, 12);
-            wheelTireGeo.rotateZ(Math.PI / 2);
-
-            const wheelHubGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.26, 8);
-            wheelHubGeo.rotateZ(Math.PI / 2);
-
-            const exhaustGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.25, 8);
-            exhaustGeo.rotateX(Math.PI / 2);
-
-            this._pool = {
-                body: new THREE.BoxGeometry(2.2, 0.7, 4.5),
-                cabin: new THREE.BoxGeometry(1.9, 0.6, 2.2),
-                windshield: new THREE.BoxGeometry(1.78, 0.5, 0.012),
-                rearGlass: new THREE.BoxGeometry(1.72, 0.44, 0.012),
-                sideWindow: new THREE.BoxGeometry(0.012, 0.42, 1.98),
-                headlight: new THREE.BoxGeometry(0.35, 0.2, 0.05),
-                taillight: new THREE.BoxGeometry(0.3, 0.15, 0.05),
-                wheelTire: wheelTireGeo,
-                wheelHub: wheelHubGeo,
-                bumper: new THREE.BoxGeometry(2.0, 0.15, 0.15),
-                licensePlate: new THREE.BoxGeometry(0.6, 0.2, 0.02),
-                exhaust: exhaustGeo
-            };
-        }
-        return this._pool;
+        return getModelGeometry(DEFAULT_CAR_MODEL);
     }
 
-    static disposeAll() {
-        if (this._pool) {
-            Object.values(this._pool).forEach(geo => {
-                if (geo && typeof geo.dispose === 'function') geo.dispose();
-            });
-            this._pool = null;
-        }
-    }
+    static disposeAll() {}
 }
 
-// ============================================================================
-// SHARED MATERIAL POOL (Singleton cache across all Honda Civic instances)
-// ============================================================================
 export class CivicMaterialPool {
-    static _materials = null;
-    static _bodyColors = new Map();
-
     static getCommon() {
-        if (!this._materials) {
-            // Physically based so the sky environment map gives paint and glass real reflections
-            this._materials = {
-                cabin: new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.6, metalness: 0.1 }),
-                glass: new THREE.MeshStandardMaterial({
-                    color: 0x6fa4c4,
-                    transparent: true,
-                    opacity: 0.55,
-                    depthWrite: false,
-                    roughness: 0.05,
-                    metalness: 0.3,
-                    envMapIntensity: 1.3
-                }),
-                headlight: new THREE.MeshBasicMaterial({ color: 0xffffcc }),
-                taillight: new THREE.MeshBasicMaterial({ color: 0xff2222 }),
-                wheelTire: new THREE.MeshStandardMaterial({ color: 0x1e1e1e, roughness: 0.9, metalness: 0.0 }),
-                wheelHub: new THREE.MeshStandardMaterial({ color: 0x8a8d92, roughness: 0.35, metalness: 0.85 }),
-                bumper: new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.55, metalness: 0.2 }),
-                licensePlate: new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.5, metalness: 0.1 }),
-                exhaust: new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.4, metalness: 0.8 })
-            };
-        }
-        return this._materials;
+        return getPartMaterials();
     }
 
     static getBodyMaterial(colorHex = 0x111111) {
-        if (!this._bodyColors.has(colorHex)) {
-            // Car paint: smooth clear coat look, picks up the sky in the environment map
-            this._bodyColors.set(colorHex, new THREE.MeshStandardMaterial({
-                color: colorHex,
-                roughness: 0.32,
-                metalness: 0.45,
-                envMapIntensity: 1.1
-            }));
-        }
-        return this._bodyColors.get(colorHex);
+        return getPaintMaterial(colorHex);
     }
 
-    static disposeAll() {
-        if (this._materials) {
-            Object.values(this._materials).forEach(mat => {
-                if (mat && typeof mat.dispose === 'function') mat.dispose();
-            });
-            this._materials = null;
-        }
-        this._bodyColors.forEach(mat => mat.dispose());
-        this._bodyColors.clear();
-    }
+    static disposeAll() {}
 }
 
 /**
- * Constructs the authentic Kaj Simulator Honda Civic mesh hierarchy (from 7e9eef5:game.html)
- * using pooled geometries and materials, with steerable front wheels and spin-capable wheel rollers.
- * 
+ * Builds a car mesh hierarchy with steerable front wheels, rolling wheels and an opening door.
+ *
  * @param {number} [color=0x111111] Body paint color hex (0x111111 is Kaj Simulator black)
  * @param {string|number} [id='civic'] Vehicle ID
- * @returns {{ root: THREE.Group, wheelPivots: object, wheels: object }}
+ * @param {string} [modelId='civic'] Car model (see carModels.js)
+ * @returns {{ root: THREE.Group, wheelPivots: object, wheels: object, leftDoorPivot: THREE.Group, cabinAnchor: THREE.Group }}
  */
-export function createOptimizedHondaCivic(color = 0x111111, id = 'civic') {
-    const geos = CivicGeometryPool.get();
-    const mats = CivicMaterialPool.getCommon();
-    const bodyMat = CivicMaterialPool.getBodyMaterial(color);
-
-    const root = new THREE.Group();
-    root.name = `honda_civic_${id}`;
-    root.userData.isHondaCivic = true;
-
-    // 1. Main Sedan Body (2.2 x 0.7 x 4.5)
-    const body = new THREE.Mesh(geos.body, bodyMat);
-    body.name = 'sedan_body';
-    body.position.y = 0.55;
-    root.add(body);
-
-    // 2. Cabin / Roof Greenhouse (1.9 x 0.6 x 2.2)
-    const cabin = new THREE.Mesh(geos.cabin, mats.cabin);
-    cabin.name = 'cabin_roof';
-    cabin.position.set(0, 1.1, -0.3);
-    root.add(cabin);
-
-    // 3. Windshield, set flush into the front face of the cabin (cabin spans x +-0.95, y 0.8-1.4, z -1.4..0.8)
-    const windshield = new THREE.Mesh(geos.windshield, mats.glass);
-    windshield.name = 'windshield';
-    windshield.position.set(0, 1.1, -1.406);
-    root.add(windshield);
-
-    // 4. Rear Window, flush with the back face of the cabin
-    const rearGlass = new THREE.Mesh(geos.rearGlass, mats.glass);
-    rearGlass.name = 'rear_glass';
-    rearGlass.position.set(0, 1.11, 0.806);
-    root.add(rearGlass);
-
-    // 5. Side Windows, flush with the cabin sides
-    const leftWindow = new THREE.Mesh(geos.sideWindow, mats.glass);
-    leftWindow.name = 'left_window_glass';
-    leftWindow.position.set(-0.956, 1.1, -0.3);
-    root.add(leftWindow);
-
-    const rightWindow = new THREE.Mesh(geos.sideWindow, mats.glass);
-    rightWindow.name = 'right_window_glass';
-    rightWindow.position.set(0.956, 1.1, -0.3);
-    root.add(rightWindow);
-
-    // 6. Headlights (-Z Front)
-    const headlightL = new THREE.Mesh(geos.headlight, mats.headlight);
-    headlightL.name = 'headlight_left';
-    headlightL.position.set(-0.7, 0.55, -2.26);
-    root.add(headlightL);
-
-    const headlightR = new THREE.Mesh(geos.headlight, mats.headlight);
-    headlightR.name = 'headlight_right';
-    headlightR.position.set(0.7, 0.55, -2.26);
-    root.add(headlightR);
-
-    // 7. Taillights (+Z Rear)
-    const taillightL = new THREE.Mesh(geos.taillight, mats.taillight);
-    taillightL.name = 'taillight_left';
-    taillightL.position.set(-0.7, 0.55, 2.26);
-    root.add(taillightL);
-
-    const taillightR = new THREE.Mesh(geos.taillight, mats.taillight);
-    taillightR.name = 'taillight_right';
-    taillightR.position.set(0.7, 0.55, 2.26);
-    root.add(taillightR);
-
-    // 8. Bumpers (Front & Rear)
-    const frontBumper = new THREE.Mesh(geos.bumper, mats.bumper);
-    frontBumper.name = 'front_bumper';
-    frontBumper.position.set(0, 0.3, -2.3);
-    root.add(frontBumper);
-
-    const rearBumper = new THREE.Mesh(geos.bumper, mats.bumper);
-    rearBumper.name = 'rear_bumper';
-    rearBumper.position.set(0, 0.3, 2.3);
-    root.add(rearBumper);
-
-    // 9. Rear License Plate
-    const plate = new THREE.Mesh(geos.licensePlate, mats.licensePlate);
-    plate.name = 'license_plate';
-    plate.position.set(0, 0.35, 2.31);
-    root.add(plate);
-
-    // 10. Chrome Exhaust Tip
-    const exhaust = new THREE.Mesh(geos.exhaust, mats.exhaust);
-    exhaust.name = 'exhaust_tip';
-    exhaust.position.set(-0.6, 0.22, 2.32);
-    root.add(exhaust);
-
-    // 11. Four Animated Wheels & Hubcaps
-    const wheelPivots = {
-        frontLeft: new THREE.Group(),
-        frontRight: new THREE.Group()
-    };
-    wheelPivots.frontLeft.name = 'wheel_pivot_fl';
-    wheelPivots.frontRight.name = 'wheel_pivot_fr';
-
-    const wheels = {
-        frontLeft: null,
-        frontRight: null,
-        rearLeft: null,
-        rearRight: null
-    };
-
-    const makeWheelRoller = (label) => {
-        const roller = new THREE.Group();
-        roller.name = `wheel_roller_${label}`;
-        const tire = new THREE.Mesh(geos.wheelTire, mats.wheelTire);
-        tire.name = `wheel_tire_${label}`;
-        const hub = new THREE.Mesh(geos.wheelHub, mats.wheelHub);
-        hub.name = `wheel_hubcap_${label}`;
-        roller.add(tire);
-        roller.add(hub);
-        return roller;
-    };
-
-    // Axle coordinates from 7e9eef5: [±1.0, 0.35, ±1.3]
-    const axleY = 0.35;
-    const axleFrontZ = -1.30;
-    const axleRearZ = 1.30;
-    const trackX = 1.00;
-
-    // Front Left
-    wheelPivots.frontLeft.position.set(-trackX, axleY, axleFrontZ);
-    wheels.frontLeft = makeWheelRoller('fl');
-    wheelPivots.frontLeft.add(wheels.frontLeft);
-    root.add(wheelPivots.frontLeft);
-
-    // Front Right
-    wheelPivots.frontRight.position.set(trackX, axleY, axleFrontZ);
-    wheels.frontRight = makeWheelRoller('fr');
-    wheelPivots.frontRight.add(wheels.frontRight);
-    root.add(wheelPivots.frontRight);
-
-    // Rear Left
-    const rlPivot = new THREE.Group();
-    rlPivot.name = 'wheel_pivot_rl';
-    rlPivot.position.set(-trackX, axleY, axleRearZ);
-    wheels.rearLeft = makeWheelRoller('rl');
-    rlPivot.add(wheels.rearLeft);
-    root.add(rlPivot);
-
-    // Rear Right
-    const rrPivot = new THREE.Group();
-    rrPivot.name = 'wheel_pivot_rr';
-    rrPivot.position.set(trackX, axleY, axleRearZ);
-    wheels.rearRight = makeWheelRoller('rr');
-    rrPivot.add(wheels.rearRight);
-    root.add(rrPivot);
-
-    // Driver Side Door Pivot (Left side at x = -1.08, hinged at front z = -1.05) for Carjacking Animation
-    const leftDoorPivot = new THREE.Group();
-    leftDoorPivot.name = 'driver_door_pivot';
-    leftDoorPivot.position.set(-1.08, 0.55, -1.05);
-    const doorGeo = new THREE.BoxGeometry(0.08, 0.62, 1.15);
-    const doorPanel = new THREE.Mesh(doorGeo, bodyMat);
-    doorPanel.name = 'driver_door_panel';
-    doorPanel.position.set(0, 0, 0.575);
-    leftDoorPivot.add(doorPanel);
-    root.add(leftDoorPivot);
-    root.userData.leftDoorPivot = leftDoorPivot;
-
-    root.traverse((child) => {
-        if (child.isMesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-        }
-    });
-
-    return { root, wheelPivots, wheels, leftDoorPivot };
+export function createOptimizedHondaCivic(color = 0x111111, id = 'civic', modelId = DEFAULT_CAR_MODEL) {
+    return buildCarMesh(modelId, color, id);
 }
 
-export const createHondaCivic = (color = 0x111111, id = 'civic') => createOptimizedHondaCivic(color, id).root;
+export const createHondaCivic = (color = 0x111111, id = 'civic', modelId = DEFAULT_CAR_MODEL) => createOptimizedHondaCivic(color, id, modelId).root;
+export const createCarMesh = createHondaCivic;
 
 export class Vehicle {
     /**
@@ -323,14 +94,19 @@ export class Vehicle {
      * @param {number} [yaw=0] Initial heading in radians (0 = facing -Z)
      * @param {number} [color=0x111111] Body color hex (defaults to Kaj Simulator black 0x111111)
      * @param {boolean} [isPlayer=false] Whether this vehicle is player-driven
+     * @param {string} [modelId='civic'] Car model (see carModels.js)
      */
-    constructor(id, x = 0, z = 0, yaw = 0, color = 0x111111, isPlayer = false) {
+    constructor(id, x = 0, z = 0, yaw = 0, color = 0x111111, isPlayer = false, modelId = DEFAULT_CAR_MODEL) {
+        const model = getCarModel(modelId);
         this.id = id;
         this.isPlayer = !!isPlayer;
-        this.isHondaCivic = true;
+        this.isHondaCivic = true; // every drivable car shares the Civic's interfaces (cockpit, windows, carjacking)
+        this.model = model;
+        this.modelId = model.id;
+        this.modelName = model.name;
         this.color = color;
         this.bodyColor = color;
-        
+
         // Pose
         this.position = new THREE.Vector3(x, 0, z);
         this.velocity = new THREE.Vector2(0, 0); // Horizontal world velocity [vx, vz]
@@ -338,30 +114,31 @@ export class Vehicle {
         this.speed = 0;                         // Signed longitudinal speed (m/s)
         this.steerAngle = 0;                    // Current front wheel steer angle (radians)
 
-        // Physical dimensions & limits (Authentic 7e9eef5 Honda Civic & CONFIG.VEHICLE)
-        this.length = (CONFIG.VEHICLE && CONFIG.VEHICLE.LENGTH) || 4.5;
-        this.width = (CONFIG.VEHICLE && CONFIG.VEHICLE.WIDTH) || 2.2;
-        this.height = (CONFIG.VEHICLE && CONFIG.VEHICLE.HEIGHT) || 1.4;
-        this.radius = (CONFIG.VEHICLE && CONFIG.VEHICLE.RADIUS) || 2.25;
-        this.wheelbase = 2.8;                   // Axle-to-axle kinematic wheelbase (m)
-        this.halfWheelbase = 1.4;               // CoM to axle distance (lf = lr = 1.4m)
-        this.circleRadius = 1.10;               // 3-circle decomposition radius
-        this.wheelRadius = 0.35;                // Honda Civic wheel cylinder radius
+        // Physical dimensions from the model (the Civic keeps CONFIG.VEHICLE's 4.5 x 2.2)
+        this.length = model.length;
+        this.width = model.width;
+        this.height = model.cabin.roof;
+        this.radius = Math.max(this.length, this.width) / 2;       // Bounding circle for broadphase
+        this.circleRadius = this.width / 2;                         // 3-circle decomposition radius
+        const circleOffset = this.length / 2 - this.circleRadius + 0.2;
+        this._circleOffsets = [circleOffset, 0.0, -circleOffset];   // Front, centre, rear along heading
+        this.wheelRadius = model.wheels.radius;
+        const civicChassis = model.id === DEFAULT_CAR_MODEL || model.base === DEFAULT_CAR_MODEL;
+        this.wheelbase = civicChassis ? 2.8 : (model.wheels.rear - model.wheels.front) + 0.2; // Axle-to-axle kinematic wheelbase (m)
+        this.halfWheelbase = this.wheelbase / 2;                    // CoM to axle distance (lf = lr)
 
-        // Dynamics constants
-        this.maxForwardSpeed = 28.0;            // Max forward velocity (m/s)
-        this.maxReverseSpeed = -9.0;            // Max reverse velocity (m/s)
-        this.baseAccel = 9.5;                   // Stall forward acceleration (m/s^2)
-        this.reverseAccel = 5.0;                // Reverse gear acceleration (m/s^2)
-        this.brakeDecel = 16.0;                 // Braking deceleration (m/s^2)
-        this.handbrakeDecel = 24.0;             // Handbrake deceleration (m/s^2)
-        this.rollingFriction = 0.6;             // Rolling resistance (m/s^2)
-        this.dragCoeff = 0.0035;                // Aerodynamic drag coefficient
-        this.normalGrip = 36.0;                 // High normal lateral tire grip so cars track road without drifting (s^-1)
-        this.handbrakeGrip = 2.5;               // Drifting lateral grip damping factor (s^-1)
-        this.maxSteerAngle = 0.55;              // Maximum wheel turn angle (~31.5 deg)
-        this.steerSpeed = 4.5;                  // Steering turn rate (rad/s)
-        this.steerCenterSpeed = 6.0;            // Steering auto-centering rate (rad/s)
+        // Dynamics constants (see BASE_PHYSICS)
+        Object.assign(this, BASE_PHYSICS, model.physics);
+
+        // Driver's eye in car space (cockpit camera) and the gearbox / engine
+        this.driverEye = Object.freeze(Object.assign({}, cabinShape(model).eye));
+        this.engineSpec = model.engine;
+        this.gear = 1;                          // -1 reverse, 0 neutral (engine off), 1..n drive
+        this.rpm = model.engine.idle;
+        this.throttleSmoothed = 0;
+        this.shiftCount = 0;
+        this._shiftTimer = 0;
+        this._rpmWobble = 0;
 
         // Defensive snapshot for NaN/Infinity corruption recovery
         this.lastSafePosition = new THREE.Vector3(x, 0, z);
@@ -391,16 +168,25 @@ export class Vehicle {
         ];
         this._syncCollisionCircles();
 
-        // 3D Optimized Honda Civic Mesh
-        const civicData = createOptimizedHondaCivic(color, id);
-        this.mesh = civicData.root;
+        // 3D car mesh
+        const carData = buildCarMesh(model.id, color, id);
+        this.mesh = carData.root;
         this.mesh.userData.vehicle = this;
-        this.wheelPivots = civicData.wheelPivots;
-        this.wheels = civicData.wheels;
-        this.leftDoorPivot = civicData.leftDoorPivot || null;
+        this.wheelPivots = carData.wheelPivots;
+        this.wheels = carData.wheels;
+        this.leftDoorPivot = carData.leftDoorPivot || null;
+        this.cabinAnchor = carData.cabinAnchor;
         this.doorOpenAngle = 0;
         this.wheelRoll = 0;
         this._updateMeshTransform(0);
+    }
+
+    /** Gear shown on the dash: 'P' with the engine off, 'R', 'N', or the gear number. */
+    get gearLabel() {
+        if (this.engineOn === false) return 'P';
+        if (this.gear < 0) return 'R';
+        if (this.gear === 0) return 'N';
+        return String(this.gear);
     }
 
     /**
@@ -413,6 +199,33 @@ export class Vehicle {
             // Positive Y rotation swings the front-hinged left door outward
             this.leftDoorPivot.rotation.y = -Math.abs(angle);
         }
+        this.setCabinSeeThrough(Math.abs(angle) > 0.01);
+    }
+
+    /**
+     * From outside, the cabin is a solid tinted block behind the glass. While a door is open
+     * (or the glass is shot out) it gives way to its pillars and roof edges so the interior shows.
+     * @param {boolean} see
+     */
+    setCabinSeeThrough(see) {
+        if (!this.mesh) return;
+        const cabin = this.mesh.getObjectByName('cabin_roof');
+        if (!cabin) return;
+        const permanent = !!(this.interior && this.interior.cabinExposed);
+        if (see || permanent) {
+            if (!this.cabinFrame) {
+                this.cabinFrame = buildCabinFrame(this.modelId);
+                this.cabinFrame.name = 'cabin_frame';
+                this.cabinFrame.castShadow = this.cabinFrame.receiveShadow = true;
+                this.mesh.add(this.cabinFrame);
+            }
+            this.cabinFrame.visible = true;
+            cabin.visible = false;
+        } else {
+            if (this.cabinFrame) this.cabinFrame.visible = false;
+            cabin.visible = true;
+        }
+        if (this.interior && typeof this.interior.updateVisibility === 'function') this.interior.updateVisibility();
     }
 
     /**
@@ -424,7 +237,7 @@ export class Vehicle {
         const fwdX = -sinYaw;
         const fwdZ = -cosYaw;
         for (let i = 0; i < 3; i++) {
-            const offset = _circleOffsets[i];
+            const offset = this._circleOffsets[i];
             const circle = this.collisionCircles[i];
             circle.x = this.position.x + offset * fwdX;
             circle.z = this.position.z + offset * fwdZ;
@@ -592,6 +405,9 @@ export class Vehicle {
         // Clamp to physical speed limits
         this.speed = Math.max(this.maxReverseSpeed, Math.min(speedCap, this.speed));
 
+        // Gearbox and engine revs follow the road speed
+        this._updateDrivetrain(dt);
+
         // 3. Extended Kinematic Bicycle model equations
         const tanDelta = Math.tan(this.steerAngle);
         const beta = Math.atan((this.halfWheelbase / this.wheelbase) * tanDelta);
@@ -657,6 +473,62 @@ export class Vehicle {
     }
 
     /**
+     * Automatic gearbox: picks a gear from road speed and throttle and sets the engine RPM. Purely
+     * for the gauges and the engine sound; it doesn't change the car's acceleration.
+     * @param {number} dt
+     */
+    _updateDrivetrain(dt) {
+        const e = this.engineSpec;
+        const idle = e.idle, red = e.redline;
+        this.throttleSmoothed += ((this.inputThrottle || 0) - this.throttleSmoothed) * Math.min(1, dt * 10);
+        if (this.engineOn === false) {
+            this.gear = 0;
+            this.rpm = Math.max(0, this.rpm - 2500 * dt);
+            return;
+        }
+        const t = this.throttleSmoothed;
+        const spd = this.speed;
+        const vTop = Math.max(1, this.maxForwardSpeed * 1.04);
+        const n = e.gears.length;
+        let target;
+        if (spd < -0.3 || (this.inputBrake > 0 && spd < 0.3)) {
+            this.gear = -1;
+            target = idle + (red - idle) * Math.min(1, -spd / (vTop * 0.28)) * 0.75 + this.inputBrake * 400;
+        } else {
+            if (this.gear < 1) this.gear = 1;
+            const rpmIn = (g) => red * Math.max(0, spd) / (e.gears[g - 1] * vTop);
+            if (this._shiftTimer > 0) {
+                this._shiftTimer -= dt;
+            } else {
+                // Short shifts when cruising, revs it out at full throttle; the downshift only
+                // happens when the lower gear wouldn't immediately shift back up
+                const up = idle + (red - idle) * (0.42 + 0.53 * t);
+                const down = idle + (red - idle) * (0.12 + 0.26 * t);
+                if (this.gear < n && rpmIn(this.gear) > up) {
+                    this.gear++;
+                    this.shiftCount++;
+                    this._shiftTimer = 0.35;
+                } else if (this.gear > 1 && rpmIn(this.gear) < down && rpmIn(this.gear - 1) < up * 0.9) {
+                    this.gear--;
+                    this._shiftTimer = 0.3;
+                }
+            }
+            target = Math.max(idle, rpmIn(this.gear));
+            // Torque converter slip pulling away
+            if (this.gear === 1) target = Math.max(target, idle + t * (red - idle) * 0.42);
+        }
+        if (this.inputHandbrake) target = idle + t * (red - idle) * 0.9; // clutch in: free revs
+        if (this.boostTimer > 0) {
+            this._rpmWobble += dt * 38;
+            target = red * (0.95 + 0.03 * Math.sin(this._rpmWobble));
+        }
+        target = Math.min(red * 1.01, target);
+        const rate = target > this.rpm ? 7 + 5 * t : 5;
+        this.rpm += (target - this.rpm) * Math.min(1, dt * rate);
+        if (!Number.isFinite(this.rpm)) this.rpm = idle;
+    }
+
+    /**
      * Resolves collisions using 3-circle decomposition against static AABBs and dynamic vehicles.
      * Guaranteed zero heap allocations.
      * 
@@ -670,7 +542,7 @@ export class Vehicle {
 
         // Update 3 collision circles along vehicle longitudinal centerline
         for (let i = 0; i < 3; i++) {
-            const offset = _circleOffsets[i];
+            const offset = this._circleOffsets[i];
             const circle = this.collisionCircles[i];
             circle.x = this.position.x + offset * fwdX;
             circle.z = this.position.z + offset * fwdZ;
@@ -980,7 +852,7 @@ export class Vehicle {
         if (this.mesh && this.mesh.parent) {
             this.mesh.parent.remove(this.mesh);
         }
-        // Geometries and materials are pooled globally in CivicGeometryPool / CivicMaterialPool
+        // Geometries and materials are shared per model (carModels.js)
     }
 }
 
@@ -1001,8 +873,8 @@ export function ensureCivicHUD(container = (typeof document !== 'undefined' ? do
         const ind = document.createElement('div');
         ind.id = 'car-indicator';
         ind.style.cssText = 'display:none;position:absolute;top:55%;left:50%;transform:translate(-50%,-50%);' +
-            'color:#7cff7c;font-family:Arial,sans-serif;font-size:18px;font-weight:bold;' +
-            'background:rgba(0,0,0,0.6);padding:8px 16px;border-radius:5px;z-index:140;pointer-events:none;';
+            'color:#fff;font-family:Arial,sans-serif;font-size:15px;' +
+            'background:rgba(0,0,0,0.55);padding:8px 12px;border-radius:6px;z-index:140;pointer-events:none;';
         ind.innerHTML = "<span class='key-hint'>(E) </span>Enter Car";
         container.appendChild(ind);
     }
@@ -1011,7 +883,7 @@ export function ensureCivicHUD(container = (typeof document !== 'undefined' ? do
         const hud = document.createElement('div');
         hud.id = 'car-speed-hud';
         hud.style.cssText = 'display:none;position:absolute;bottom:20px;left:50%;transform:translateX(-50%);' +
-            'color:white;background:rgba(0,0,0,0.7);padding:10px 20px;border-radius:5px;' +
+            'color:#fff;background:rgba(0,0,0,0.55);padding:8px 12px;border-radius:6px;' +
             'font-family:Arial,sans-serif;font-size:16px;z-index:100;pointer-events:none;';
         hud.innerHTML = 'Speed: <span id="car-speed-val">0</span> mph';
         container.appendChild(hud);
@@ -1042,6 +914,12 @@ export function updateCivicHUD(vehicle, isNear, isInCar) {
         if (hud) hud.style.display = 'none';
         if (ind) {
             ind.style.display = (isNear && vehicle) ? 'block' : 'none';
+            // Name the car the player is about to get into
+            const label = vehicle && vehicle.modelName && !vehicle.isPlane ? vehicle.modelName : 'Car';
+            if (isNear && vehicle && ind.dataset.carLabel !== label) {
+                ind.dataset.carLabel = label;
+                ind.innerHTML = `<span class='key-hint'>(E) </span>Enter ${label}`;
+            }
         }
     }
 }

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gun Range</title>
+<style>
+    html, body { margin: 0; height: 100%; background: #20242a; overflow: hidden; font-family: Arial, sans-serif; color: #eee; }
+    #icons { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; background: rgba(0,0,0,0.55); }
+    #icons div { width: 124px; text-align: center; font-size: 10px; }
+    #icons img { display: block; background: #15181c; border-radius: 4px; }
+</style>
+<script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="icons"></div>
+<script type="module">
+    // Dev gun range: every gun model in a rack, with their hotbar icons underneath
+    import * as THREE from 'three';
+    import { GUNS, GUN_IDS, buildGunModel, itemIcon } from '../js/game/guns.js';
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    document.body.appendChild(renderer.domElement);
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x2a2f36);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.4));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+    sun.position.set(2, 3, 4);
+    scene.add(sun);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const env = new THREE.Scene();
+    env.background = new THREE.Color(0x8899aa);
+    scene.environment = pmrem.fromScene(env).texture;
+
+    const cols = 6;
+    GUN_IDS.forEach((id, i) => {
+        const { group } = buildGunModel(id);
+        const col = i % cols, row = Math.floor(i / cols);
+        group.position.set((col - (cols - 1) / 2) * 0.75, 1.1 - row * 0.32, 0);
+        group.rotation.y = Math.PI / 2; // muzzle points right
+        scene.add(group);
+    });
+    const camera = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, 0.01, 50);
+    camera.position.set(0, 0.48, 6.4);
+    camera.lookAt(0, 0.48, 0);
+    renderer.render(scene, camera);
+
+    const icons = document.getElementById('icons');
+    for (const id of GUN_IDS) {
+        const d = document.createElement('div');
+        const img = document.createElement('img');
+        img.src = itemIcon(id, 120, 44);
+        d.append(img, GUNS[id].name);
+        icons.appendChild(d);
+    }
+    window.__ready = true;
+</script>
+</body>
+</html>

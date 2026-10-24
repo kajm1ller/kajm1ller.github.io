@@ -1239,6 +1239,7 @@ export class OSMRoadNetwork {
 
         if (config.cityNav && config.cityNav.roads && config.cityNav.roads.length > 0) {
             this.waypointStep = config.waypointStep || 10.0;
+            this.cityNav = config.cityNav;
             this._buildNetworkFromCityNav(config.cityNav);
         } else {
             this._buildNetworkFromOSM();
@@ -1271,7 +1272,12 @@ export class OSMRoadNetwork {
                 endNode,
                 endX: nav.roadNodeX[endNode],
                 endZ: nav.roadNodeZ[endNode],
-                endDegree: nav.roadNodeDegree[endNode]
+                endDegree: nav.roadNodeDegree[endNode],
+                startDegree: nav.roadNodeDegree[startNode],
+                roadIndex: road.id,
+                oneway: road.oneway,
+                halfWidth: road.halfWidth,
+                offset: 0 // distance of the lane centre right of the street centreline
             };
             if (!lanesFrom.has(startNode)) lanesFrom.set(startNode, []);
             lanesFrom.get(startNode).push(lane);
@@ -1337,10 +1343,12 @@ export class OSMRoadNetwork {
             const offset = road.oneway ? road.halfWidth - laneWidth * 0.5 : Math.max(1.2, road.halfWidth - laneWidth * 0.5);
 
             const fwd = makeLane(`lane_fwd_${road.id}`, road, road.a, road.b);
+            fwd.offset = offset;
             buildWaypoints(fwd, road.pts, false, offset);
             const created = [fwd];
             if (!road.oneway) {
                 const rev = makeLane(`lane_rev_${road.id}`, road, road.b, road.a);
+                rev.offset = offset;
                 buildWaypoints(rev, road.pts, true, offset);
                 created.push(rev);
             }

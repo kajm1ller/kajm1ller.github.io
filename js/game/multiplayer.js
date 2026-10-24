@@ -231,7 +231,7 @@ export class RemotePlayers {
         }
         let visual;
         if (entry.state === 'car') {
-            visual = createHondaCivic(entry.color, `remote_${entry.id}`);
+            visual = createHondaCivic(entry.color, `remote_${entry.id}`, entry.model);
         } else if (entry.state === 'plane') {
             visual = createPlaneMesh(entry.color, `remote_${entry.id}`).root;
         } else {
@@ -252,6 +252,7 @@ export class RemotePlayers {
             name: p.name,
             state: p.state || 'foot',
             color: p.color,
+            model: p.model,
             root,
             visual: null,
             visualState: null,
@@ -299,9 +300,10 @@ export class RemotePlayers {
             e.targetPitch = p.pitch || 0;
             e.targetRoll = p.roll || 0;
             const state = p.state || 'foot';
-            if (state !== e.state || p.color !== e.color) {
+            if (state !== e.state || p.color !== e.color || p.model !== e.model) {
                 e.state = state;
                 e.color = p.color;
+                e.model = p.model;
                 this._makeVisual(e);
             }
         }

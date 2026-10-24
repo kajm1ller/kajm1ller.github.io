@@ -1,39 +1,57 @@
 /**
  * js/game/instancedFleet.js
- * 
- * High-Performance InstancedMesh Rendering Architecture for 50+ Vehicles
- * in Kaj Simulator (Honda Civic System Basis from commit 7e9eef5).
- * 
+ *
+ * High-Performance InstancedMesh Rendering Architecture for 50+ Vehicles in Kaj Simulator.
+ *
  * Features:
- * - Replaces 50+ individual THREE.Group hierarchies with 7 optimized THREE.InstancedMesh batches.
- * - Exact recreation of the Kaj Simulator Honda Civic (7e9eef5):
- *     1. Sedan body (BoxGeometry 2.2 x 0.7 x 4.5, per-instance dynamic coloring)
- *     2. Cabin / roof (BoxGeometry 1.9 x 0.6 x 2.2, dark grey 0x1a1a1a)
- *     3. Transparent glass (Windshield -0.2 rad, Rear window +0.2 rad, 2 Side windows)
- *     4. Headlights (dual basic 0xffffcc)
- *     5. Taillights (dual basic 0xff2222)
- *     6. Bumpers & license plate (front bumper, rear bumper, license plate)
- *     7. 4 Wheels & hubcaps (200+ wheel instances in 1 single draw call with Ackermann steering & roll)
+ * - Every car model (carModels.js) is one InstancedMesh: a single vertex-coloured geometry where
+ *   body-paint vertices take the per-instance colour and lamp vertices glow (one draw call per
+ *   model). Tyres and rims of all models share two more batches, scaled per instance to each
+ *   model's wheel size, with per-instance rim colours.
+ * - Models are drawn from the same geometry as the individual car meshes, so a car looks the same
+ *   whether the fleet draws it or it is mounted on its own (player car, carjacking, shot windows).
+ * - Ackermann-style front wheel steering & wheel roll for 200+ wheels in two draw calls.
  * - Zero GC heap allocation during active 60Hz frame updates (pre-allocated scratch math objects).
  */
 
 import * as THREE from 'three';
+import { CAR_MODEL_IDS, getCarModel, getFleetGeometry, getModelGeometry, getUnitWheelGeometry } from './carModels.js';
 
 const _scratchMat4 = new THREE.Matrix4();
 const _scratchPos = new THREE.Vector3();
 const _scratchQuat = new THREE.Quaternion();
 const _scratchEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 const _scratchScale = new THREE.Vector3(1, 1, 1);
+const _wheelScale = new THREE.Vector3(1, 1, 1);
 const _zeroScale = new THREE.Vector3(0, 0, 0);
 const _scratchColor = new THREE.Color();
 
-// Wheel offsets relative to vehicle center of mass (Three.js: yaw=0 faces -Z)
-const WHEEL_OFFSETS = [
-    [-1.0, 0.35, -1.3], // 0: Front-Left  (Steerable)
-    [ 1.0, 0.35, -1.3], // 1: Front-Right (Steerable)
-    [-1.0, 0.35,  1.3], // 2: Rear-Left   (Fixed heading)
-    [ 1.0, 0.35,  1.3]  // 3: Rear-Right  (Fixed heading)
-];
+/**
+ * Car material for the fleet: vertex colours, except where `paintMask` is 1 (the per-instance paint
+ * colour), and self-lit where `glow` is 1 (head / tail lights).
+ */
+function createFleetBodyMaterial() {
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.34, metalness: 0.4, envMapIntensity: 1.1 });
+    mat.onBeforeCompile = (shader) => {
+        shader.vertexShader = shader.vertexShader
+            .replace('#include <common>', '#include <common>\nattribute float paintMask;\nattribute float glow;\nvarying float vGlow;')
+            .replace('#include <color_vertex>', [
+                'vColor = vec3( 1.0 );',
+                '#ifdef USE_COLOR',
+                '    vColor *= color;',
+                '#endif',
+                '#ifdef USE_INSTANCING_COLOR',
+                '    vColor = mix( vColor, vColor * instanceColor.xyz, paintMask );',
+                '#endif',
+                'vGlow = glow;'
+            ].join('\n'));
+        shader.fragmentShader = shader.fragmentShader
+            .replace('#include <common>', '#include <common>\nvarying float vGlow;')
+            .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vColor * vGlow;');
+    };
+    mat.customProgramCacheKey = () => 'kaj_fleet_body';
+    return mat;
+}
 
 export function mergeBufferGeometries(geometries) {
     let totalPositions = 0;
@@ -90,141 +108,72 @@ export class InstancedVehicleFleet {
     constructor(options = {}) {
         this.maxCapacity = options.maxCapacity || 64;
         this.enableShadows = options.enableShadows !== false;
+        this.modelIds = options.models || CAR_MODEL_IDS;
 
         this.scene = null;
         this.activeCount = 0;
 
-        this.geometries = {
-            body: null,
-            cabin: null,
-            glass: null,
-            headlights: null,
-            taillights: null,
-            bumpers: null,
-            wheel: null
-        };
-
+        // Physically based paint so the traffic fleet reflects the sky like the player's car
         this.materials = {
-            body: null,
-            cabin: null,
-            glass: null,
-            headlights: null,
-            taillights: null,
-            bumpers: null,
-            wheel: null
+            body: createFleetBodyMaterial(),
+            tire: new THREE.MeshStandardMaterial({ color: 0x1b1b1b, roughness: 0.92, metalness: 0.0 }),
+            rim: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.85, envMapIntensity: 1.2 })
         };
 
-        this.meshes = {
-            body: null,
-            cabin: null,
-            glass: null,
-            headlights: null,
-            taillights: null,
-            bumpers: null,
-            wheels: null
-        };
+        // model id -> { mesh, count, model, wheels }
+        this.batches = new Map();
+        this.meshes = { tires: null, rims: null };
 
         this.metrics = {
             vehicleCount: 0,
             wheelCount: 0,
-            drawCalls: 7,
+            drawCalls: 0,
             lastUpdateDurationMs: 0,
             updateCount: 0,
             avgUpdateDurationMs: 0
         };
 
         this._totalUpdateDuration = 0;
-        this._initGeometries();
-        this._initMaterials();
-    }
-
-    _initGeometries() {
-        const body = new THREE.BoxGeometry(2.2, 0.7, 4.5);
-        body.translate(0, 0.55, 0);
-        this.geometries.body = body;
-
-        const cabin = new THREE.BoxGeometry(1.9, 0.6, 2.2);
-        cabin.translate(0, 1.1, -0.3);
-        this.geometries.cabin = cabin;
-
-        // Glass sits flush in the cabin faces (same layout as the individual Civic mesh)
-        const windshield = new THREE.BoxGeometry(1.78, 0.5, 0.012);
-        windshield.translate(0, 1.1, -1.406);
-
-        const rearGlass = new THREE.BoxGeometry(1.72, 0.44, 0.012);
-        rearGlass.translate(0, 1.11, 0.806);
-
-        const leftWindow = new THREE.BoxGeometry(0.012, 0.42, 1.98);
-        leftWindow.translate(-0.956, 1.1, -0.3);
-
-        const rightWindow = new THREE.BoxGeometry(0.012, 0.42, 1.98);
-        rightWindow.translate(0.956, 1.1, -0.3);
-
-        this.geometries.glass = mergeBufferGeometries([windshield, rearGlass, leftWindow, rightWindow]);
-
-        const hlL = new THREE.BoxGeometry(0.35, 0.2, 0.05);
-        hlL.translate(-0.7, 0.55, -2.26);
-        const hlR = new THREE.BoxGeometry(0.35, 0.2, 0.05);
-        hlR.translate(0.7, 0.55, -2.26);
-        this.geometries.headlights = mergeBufferGeometries([hlL, hlR]);
-
-        const tlL = new THREE.BoxGeometry(0.3, 0.15, 0.05);
-        tlL.translate(-0.7, 0.55, 2.26);
-        const tlR = new THREE.BoxGeometry(0.3, 0.15, 0.05);
-        tlR.translate(0.7, 0.55, 2.26);
-        this.geometries.taillights = mergeBufferGeometries([tlL, tlR]);
-
-        const fBump = new THREE.BoxGeometry(2.0, 0.15, 0.15);
-        fBump.translate(0, 0.3, -2.3);
-        const rBump = new THREE.BoxGeometry(2.0, 0.15, 0.15);
-        rBump.translate(0, 0.3, 2.3);
-        const plate = new THREE.BoxGeometry(0.6, 0.2, 0.02);
-        plate.translate(0, 0.35, 2.31);
-        this.geometries.bumpers = mergeBufferGeometries([fBump, rBump, plate]);
-
-        const tire = new THREE.CylinderGeometry(0.35, 0.35, 0.25, 12);
-        tire.rotateZ(Math.PI / 2);
-        const hub = new THREE.CylinderGeometry(0.15, 0.15, 0.26, 8);
-        hub.rotateZ(Math.PI / 2);
-        this.geometries.wheel = mergeBufferGeometries([tire, hub]);
-    }
-
-    _initMaterials() {
-        // Physically based paint / glass so the traffic fleet reflects the sky like the player's car
-        this.materials.body = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.45, envMapIntensity: 1.1 });
-        this.materials.cabin = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.6, metalness: 0.1 });
-        this.materials.glass = new THREE.MeshStandardMaterial({ color: 0x6fa4c4, transparent: true, opacity: 0.55, depthWrite: false, roughness: 0.05, metalness: 0.3, envMapIntensity: 1.3 });
-        this.materials.headlights = new THREE.MeshBasicMaterial({ color: 0xffffcc });
-        this.materials.taillights = new THREE.MeshBasicMaterial({ color: 0xff2222 });
-        this.materials.bumpers = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.55, metalness: 0.2 });
-        this.materials.wheel = new THREE.MeshStandardMaterial({ color: 0x1e1e1e, roughness: 0.85, metalness: 0.1 });
     }
 
     init(scene) {
         this.scene = scene;
         const max = this.maxCapacity;
+        const meshes = [];
 
-        this.meshes.body = new THREE.InstancedMesh(this.geometries.body, this.materials.body, max);
-        this.meshes.cabin = new THREE.InstancedMesh(this.geometries.cabin, this.materials.cabin, max);
-        this.meshes.glass = new THREE.InstancedMesh(this.geometries.glass, this.materials.glass, max);
-        this.meshes.headlights = new THREE.InstancedMesh(this.geometries.headlights, this.materials.headlights, max);
-        this.meshes.taillights = new THREE.InstancedMesh(this.geometries.taillights, this.materials.taillights, max);
-        this.meshes.bumpers = new THREE.InstancedMesh(this.geometries.bumpers, this.materials.bumpers, max);
-        this.meshes.wheels = new THREE.InstancedMesh(this.geometries.wheel, this.materials.wheel, max * 4);
-
-        this.meshes.body.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3);
-
-        for (const key in this.meshes) {
-            const mesh = this.meshes[key];
-            mesh.name = `instanced_civic_${key}`;
-            mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-            mesh.frustumCulled = false;
-            if (this.enableShadows && key !== 'glass') {
+        for (const id of this.modelIds) {
+            const mesh = new THREE.InstancedMesh(getFleetGeometry(id).body, this.materials.body, max);
+            mesh.name = `instanced_${id}`;
+            mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3);
+            if (this.enableShadows) {
                 mesh.castShadow = true;
                 mesh.receiveShadow = true;
             }
+            meshes.push(mesh);
+            this.batches.set(id, { mesh, count: 0, model: getCarModel(id), wheels: getModelGeometry(id).wheels });
+        }
+
+        const wheelGeo = getUnitWheelGeometry();
+        this.meshes.tires = new THREE.InstancedMesh(wheelGeo.tire, this.materials.tire, max * 4);
+        this.meshes.tires.name = 'instanced_wheel_tires';
+        this.meshes.rims = new THREE.InstancedMesh(wheelGeo.rim, this.materials.rim, max * 4);
+        this.meshes.rims.name = 'instanced_wheel_rims';
+        this.meshes.rims.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(max * 4 * 3), 3);
+        for (const m of [this.meshes.tires, this.meshes.rims]) {
+            if (this.enableShadows) {
+                m.castShadow = true;
+                m.receiveShadow = true;
+            }
+            meshes.push(m);
+        }
+
+        for (const mesh of meshes) {
+            mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+            mesh.frustumCulled = false;
+            mesh.count = 0;
             if (scene) scene.add(mesh);
         }
+        this._allMeshes = meshes;
 
         this.setCount(0);
         return this;
@@ -235,30 +184,30 @@ export class InstancedVehicleFleet {
         this.activeCount = clamped;
         this.metrics.vehicleCount = clamped;
         this.metrics.wheelCount = clamped * 4;
+        if (clamped === 0 && this._allMeshes) {
+            for (const m of this._allMeshes) m.count = 0;
+        }
+    }
 
-        if (!this.meshes.body) return;
-        this.meshes.body.count = clamped;
-        this.meshes.cabin.count = clamped;
-        this.meshes.glass.count = clamped;
-        this.meshes.headlights.count = clamped;
-        this.meshes.taillights.count = clamped;
-        this.meshes.bumpers.count = clamped;
-        this.meshes.wheels.count = clamped * 4;
+    _batchFor(v) {
+        return this.batches.get(v.modelId) || this.batches.get(this.modelIds[0]);
     }
 
     update(vehicles, dt = 1 / 60) {
-        if (!this.meshes.body) return;
+        if (!this.meshes.tires) return;
         const t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
         const count = Math.min(this.maxCapacity, vehicles.length);
         if (this.activeCount !== count) {
             this.setCount(count);
         }
-        if (count === 0) return;
 
+        for (const batch of this.batches.values()) batch.count = 0;
         let wheelIndex = 0;
 
         for (let i = 0; i < count; i++) {
             const v = vehicles[i];
+            const batch = this._batchFor(v);
+            const slot = batch.count++;
             const px = v.position.x;
             const py = v.position.y || 0;
             const pz = v.position.z;
@@ -273,28 +222,24 @@ export class InstancedVehicleFleet {
             _scratchQuat.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, yaw);
             _scratchMat4.compose(_scratchPos, _scratchQuat, scaleVec);
 
-            this.meshes.body.setMatrixAt(i, _scratchMat4);
-            this.meshes.cabin.setMatrixAt(i, _scratchMat4);
-            this.meshes.glass.setMatrixAt(i, _scratchMat4);
-            this.meshes.headlights.setMatrixAt(i, _scratchMat4);
-            this.meshes.taillights.setMatrixAt(i, _scratchMat4);
-            this.meshes.bumpers.setMatrixAt(i, _scratchMat4);
-
+            batch.mesh.setMatrixAt(slot, _scratchMat4);
             const colorHex = v.color !== undefined ? v.color : (v.bodyColor || 0x111111);
             _scratchColor.setHex(colorHex);
-            this.meshes.body.setColorAt(i, _scratchColor);
+            batch.mesh.setColorAt(slot, _scratchColor);
 
             const cosYaw = Math.cos(yaw);
             const sinYaw = Math.sin(yaw);
             const roll = v.wheelRoll || 0;
+            const W = batch.model.wheels;
+            if (isMountedIndividually) _wheelScale.set(0, 0, 0);
+            else _wheelScale.set(W.width, W.radius, W.radius);
+            _scratchColor.setHex(W.rim);
 
-            for (let w = 0; w < 4; w++) {
-                const isFront = w < 2;
-                const wheelYaw = isFront ? (yaw + steer) : yaw;
-                const offset = WHEEL_OFFSETS[w];
-                const lx = offset[0];
-                const ly = offset[1];
-                const lz = offset[2];
+            const wheels = batch.wheels;
+            for (let w = 0; w < wheels.length; w++) {
+                const wh = wheels[w];
+                const wheelYaw = wh.steer ? (yaw + steer) : yaw;
+                const lx = wh.x, ly = wh.y, lz = wh.z;
 
                 const wx = px + (lx * cosYaw + lz * sinYaw);
                 const wy = py + ly;
@@ -303,20 +248,37 @@ export class InstancedVehicleFleet {
                 _scratchPos.set(wx, wy, wz);
                 _scratchEuler.set(-roll, wheelYaw, 0);
                 _scratchQuat.setFromEuler(_scratchEuler);
-                _scratchMat4.compose(_scratchPos, _scratchQuat, scaleVec);
+                _scratchMat4.compose(_scratchPos, _scratchQuat, _wheelScale);
 
-                this.meshes.wheels.setMatrixAt(wheelIndex++, _scratchMat4);
+                this.meshes.tires.setMatrixAt(wheelIndex, _scratchMat4);
+                this.meshes.rims.setMatrixAt(wheelIndex, _scratchMat4);
+                this.meshes.rims.setColorAt(wheelIndex, _scratchColor);
+                wheelIndex++;
             }
         }
 
-        this.meshes.body.instanceMatrix.needsUpdate = true;
-        this.meshes.body.instanceColor.needsUpdate = true;
-        this.meshes.cabin.instanceMatrix.needsUpdate = true;
-        this.meshes.glass.instanceMatrix.needsUpdate = true;
-        this.meshes.headlights.instanceMatrix.needsUpdate = true;
-        this.meshes.taillights.instanceMatrix.needsUpdate = true;
-        this.meshes.bumpers.instanceMatrix.needsUpdate = true;
-        this.meshes.wheels.instanceMatrix.needsUpdate = true;
+        let drawCalls = 0;
+        // Models with no cars on the road are skipped entirely
+        for (const batch of this.batches.values()) {
+            const mesh = batch.mesh;
+            mesh.count = batch.count;
+            mesh.visible = batch.count > 0;
+            if (batch.count > 0) {
+                mesh.instanceMatrix.needsUpdate = true;
+                mesh.instanceColor.needsUpdate = true;
+                drawCalls++;
+            }
+        }
+        this.meshes.tires.count = wheelIndex;
+        this.meshes.rims.count = wheelIndex;
+        this.meshes.tires.visible = this.meshes.rims.visible = wheelIndex > 0;
+        if (wheelIndex > 0) {
+            this.meshes.tires.instanceMatrix.needsUpdate = true;
+            this.meshes.rims.instanceMatrix.needsUpdate = true;
+            this.meshes.rims.instanceColor.needsUpdate = true;
+            drawCalls += 2;
+        }
+        this.metrics.drawCalls = drawCalls;
 
         if (t0 > 0) {
             const dur = performance.now() - t0;
@@ -334,18 +296,18 @@ export class InstancedVehicleFleet {
             drawCalls: this.metrics.drawCalls,
             lastUpdateDurationMs: this.metrics.lastUpdateDurationMs,
             avgUpdateDurationMs: this.metrics.avgUpdateDurationMs,
-            instancedMeshNodes: 7
+            instancedMeshNodes: this._allMeshes ? this._allMeshes.length : 0,
+            models: this.batches.size
         };
     }
 
     dispose() {
-        if (this.scene) {
-            for (const key in this.meshes) {
-                const mesh = this.meshes[key];
-                if (mesh) {
-                    this.scene.remove(mesh);
-                    mesh.geometry.dispose();
-                }
+        if (this.scene && this._allMeshes) {
+            // Geometries are shared with the individual car meshes (carModels.js), so only the
+            // instance buffers go
+            for (const mesh of this._allMeshes) {
+                this.scene.remove(mesh);
+                if (typeof mesh.dispose === 'function') mesh.dispose();
             }
         }
         for (const key in this.materials) {

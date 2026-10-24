@@ -1,24 +1,25 @@
 /**
  * js/game/traffic.js
  * 
- * Autonomous AI Traffic Fleet Management, Pure Pursuit Steering,
- * Intelligent Driver Model (IDM) Car-Following, Anti-Deadlock Watchdog,
- * and Anti-Overlap Enforcement for Kaj Simulator.
- * 
+ * Autonomous AI traffic for Kaj Simulator.
+ *
  * Features:
- * - Pure Pursuit Steering with speed-adaptive lookahead L_d = clamp(0.4 * v, 4.0, 16.0)m
- * - Intelligent Driver Model (IDM) longitudinal car-following
- * - Forward corridor SpatialGrid sensing & oncoming traffic disambiguation
- * - Intersection yellow-box yielding & anti-deadlock watchdog
- * - Multi-pass pairwise & SpatialGrid anti-overlap solver guaranteeing d >= 2.25m (0 overlaps < 2.0m)
+ * - Cars drive kinematically along their lanes and through smooth junction turn paths
+ *   (trafficNet.js), so they never slide or drift off the road
+ * - Intelligent Driver Model (IDM) car-following along the route, slowing for bends ahead
+ * - Right of way at junctions: OSM traffic signals and stop signs, minor streets giving way to
+ *   major ones, turns across oncoming traffic yielding, crossing paths reserved, and no entering
+ *   a junction without room on the far side
+ * - Going around cars stalled in the lane (dead drivers, parked cars)
  * - Optional GPU InstancedVehicleFleet integration (7 draw calls for 50+ Honda Civics)
- * - Strictly ZERO heap allocations during 60Hz update() stepping
  */
 
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { Vehicle } from './vehicle.js';
+import { pickCarModel, pickCarColor } from './carModels.js';
 import { InstancedVehicleFleet } from './instancedFleet.js';
+import { TrafficNet, NET_CONFIG, LIGHT } from './trafficNet.js';
 
 export const TRAFFIC_CONFIG = Object.freeze({
     DEFAULT_FLEET_SIZE: 50,
@@ -189,493 +190,595 @@ export class IDMController {
     }
 }
 
+const CAR_LEN = NET_CONFIG.CAR_LENGTH;
+const HALF_LEN = CAR_LEN * 0.5;
+const _fr = { x: 0, z: 0, dx: 0, dz: -1 };
+const _rr = { x: 0, z: 0, dx: 0, dz: -1 };
+const _c1 = { x: 0, z: 0, dx: 0, dz: -1 };
+const _c2 = { x: 0, z: 0, dx: 0, dz: -1 };
+const _route = [null, null, null, null];
+const _obstacle = { gap: Infinity, speed: 0, id: null, dLong: 0 };
+// IDM always keeps its jam distance to whatever it follows; a stop line isn't a car, so the gap
+// to it is padded to bring the front bumper to rest just short of the line
+const LINE_PAD = TRAFFIC_CONFIG.IDM_MIN_GAP - 0.5;
+
+function wrapAngle(a) {
+    while (a > Math.PI) a -= Math.PI * 2;
+    while (a < -Math.PI) a += Math.PI * 2;
+    return a;
+}
+
+function removeFrom(list, item) {
+    const i = list.indexOf(item);
+    if (i >= 0) list.splice(i, 1);
+}
+
+/**
+ * One AI car. It drives kinematically along its route (lane drive paths joined by junction turn
+ * paths): speed comes from the IDM car-following model, the pose straight from the path, so it
+ * never slides. Before each junction it asks for right of way (signals, stop signs, giving way,
+ * crossing paths, room on the far side) and holds at the stop line until it gets it.
+ */
 export class TrafficAgent {
     constructor(vehicle, laneId, waypointIndex, desiredSpeed = TRAFFIC_CONFIG.IDM_DESIRED_SPEED) {
         this.vehicle = vehicle;
+        vehicle._trafficAgent = this;
         this.laneId = laneId;
         this.waypointIndex = waypointIndex;
         this.desiredSpeed = desiredSpeed;
-        this._idHash = Math.abs(this._hashId(vehicle.id));
 
-        this.stationaryTimer = 0;
-        this.stuckTime = 0;              // seconds spent crawling (< 1 m/s); used to recycle gridlocked cars
-        this.heldJunction = null;        // road graph node this car has reserved
-        this.heldJunctionX = 0;
-        this.heldJunctionZ = 0;
-        this.heldJunctionFx = 0;
-        this.heldJunctionFz = 0;
-        this.heldJunctionTime = 0;
-        this.heldJunctionStraight = true;
-        // Gridlock breaker: after crawling a while, briefly ignore stopped cars so the jam can untangle
-        this.ghostTimer = 0;
-        this.ghostCooldown = 0;
-        this.inIntersection = false;
-        this.reservedIntersectionId = null;
+        this.net = null;
+        this.piece = null;      // lane drive path or junction connector the car is on
+        this.prevPiece = null;
+        this.s = 0;             // arc length of the car's centre along `piece`
+        this.plan = [];         // upcoming lane ids after the lane the car is on / turning into
 
-        // Lane picked for the next junction; chosen at random so cars roam the whole city
-        this.nextLaneId = null;
+        this.committed = null;  // junction the car has right of way through
+        this.conn = null;       // connector it is committed to
+        this.stopDone = null;   // junction whose stop sign it has already stopped for
+        this.stopTimer = 0;
+        this.waitTime = 0;      // seconds held at the current stop line
 
-        this.lookaheadTarget = { x: 0, z: 0, yaw: 0, laneId: '', index: 0 };
+        this.passOffset = 0;    // sideways shift to the left while going around a stalled car
+        this.passTarget = 0;
+        this.passUntil = 0;
+        this.passIgnore = null;
+        this.blockedTime = 0;
+
+        this.blendX = 0;        // shove from a collision, eased back out
+        this.blendZ = 0;
+        this.lastX = NaN;
+        this.lastZ = NaN;
+        this.lastYaw = vehicle.yaw || 0;
+
+        this.stuckTime = 0;     // seconds spent crawling (< 1 m/s); used to recycle gridlocked cars
+        this.retired = false;   // the player took the car (or got out of it): no longer AI driven
+
         this.detectedLeadGap = Infinity;
         this.detectedLeadSpeed = 0;
         this.commandedAccel = 0;
     }
 
-    updateLaneProgress(roadNetwork) {
-        let lane = roadNetwork.getLane(this.laneId);
-        if (!lane || lane.waypoints.length === 0) {
-            const nearest = roadNetwork.getNearestWaypoint(this.vehicle.position.x, this.vehicle.position.z);
-            this.laneId = nearest.laneId;
-            this.waypointIndex = nearest.index;
-            lane = roadNetwork.getLane(this.laneId);
-            if (!lane) return;
+    /** Puts the car on lane `laneId` at the lane's waypoint `index`. */
+    place(net, laneId, index) {
+        this.net = net;
+        this._leaveJunction();
+        let piece = net.lanePiece(laneId);
+        if (!piece) {
+            const v = this.vehicle;
+            const wp = net.roadNetwork.getNearestWaypoint(v.position.x, v.position.z);
+            piece = wp ? net.lanePiece(wp.laneId) : null;
+            index = wp ? wp.index : 0;
         }
-
-        const waypoints = lane.waypoints;
-        const totalWps = waypoints.length;
-        const px = this.vehicle.position.x;
-        const pz = this.vehicle.position.z;
-
-        let currIdx = Math.max(0, Math.min(totalWps - 2, this.waypointIndex));
-
-        while (currIdx < totalWps - 1) {
-            const p1 = waypoints[currIdx];
-            const p2 = waypoints[currIdx + 1];
-
-            const dx = p2.x - p1.x;
-            const dz = p2.z - p1.z;
-            const segLenSq = dx * dx + dz * dz;
-
-            if (segLenSq > 1e-4) {
-                const t = ((px - p1.x) * dx + (pz - p1.z) * dz) / segLenSq;
-                if (t >= 1.0) {
-                    currIdx++;
-                    this.waypointIndex = currIdx;
-                } else {
-                    this.waypointIndex = currIdx;
-                    break;
-                }
-            } else {
-                currIdx++;
-                this.waypointIndex = currIdx;
-            }
-        }
-
-        if (this.waypointIndex >= totalWps - 1) {
-            if (lane.nextLanes && lane.nextLanes.length > 0) {
-                this.laneId = this._plannedNextLane(lane);
-                this.waypointIndex = 0;
-                const newLane = roadNetwork.getLane(this.laneId);
-                this.nextLaneId = newLane ? this._chooseNextLane(newLane) : null;
-            } else {
-                const nearest = roadNetwork.getNearestWaypoint(px, pz);
-                this.laneId = nearest.laneId;
-                this.waypointIndex = nearest.index;
-            }
-        }
+        this.piece = piece;
+        this.prevPiece = null;
+        this.s = piece ? net.driveS(piece, index) : 0;
+        this.plan.length = 0;
+        this.stopDone = null;
+        this.stopTimer = 0;
+        this.waitTime = 0;
+        this.passOffset = this.passTarget = 0;
+        this.passIgnore = null;
+        this.blockedTime = 0;
+        this.blendX = this.blendZ = 0;
+        this.stuckTime = 0;
+        this.lastX = NaN;
+        if (piece) this._applyPose(0);
     }
 
-    getLookaheadTarget(roadNetwork, lookaheadDist) {
-        let lane = roadNetwork.getLane(this.laneId);
-        if (!lane || lane.waypoints.length === 0) {
-            return roadNetwork.getNearestWaypoint(this.vehicle.position.x, this.vehicle.position.z);
-        }
+    // ---- Route ----------------------------------------------------------------------------------
 
-        let currIdx = Math.max(0, Math.min(lane.waypoints.length - 1, this.waypointIndex));
-        let accumulated = 0;
-        let safetyCounter = 0;
-
-        while (accumulated < lookaheadDist && safetyCounter++ < 40) {
-            if (currIdx + 1 < lane.waypoints.length) {
-                const p1 = lane.waypoints[currIdx];
-                const p2 = lane.waypoints[currIdx + 1];
-                const segDist = Math.hypot(p2.x - p1.x, p2.z - p1.z);
-
-                if (accumulated + segDist >= lookaheadDist) {
-                    const remain = lookaheadDist - accumulated;
-                    const alpha = segDist > 0 ? (remain / segDist) : 0;
-                    this.lookaheadTarget.x = p1.x + alpha * (p2.x - p1.x);
-                    this.lookaheadTarget.z = p1.z + alpha * (p2.z - p1.z);
-                    this.lookaheadTarget.yaw = p2.yaw;
-                    this.lookaheadTarget.laneId = lane.id;
-                    this.lookaheadTarget.index = currIdx + 1;
-                    return this.lookaheadTarget;
-                }
-
-                accumulated += segDist;
-                currIdx++;
-            } else {
-                if (!lane.nextLanes || lane.nextLanes.length === 0) {
-                    const lastWp = lane.waypoints[lane.waypoints.length - 1];
-                    this.lookaheadTarget.x = lastWp.x;
-                    this.lookaheadTarget.z = lastWp.z;
-                    this.lookaheadTarget.yaw = lastWp.yaw;
-                    this.lookaheadTarget.laneId = lane.id;
-                    this.lookaheadTarget.index = currIdx;
-                    return this.lookaheadTarget;
-                }
-
-                const nextId = lane.id === this.laneId
-                    ? this._plannedNextLane(lane)
-                    : lane.nextLanes[this._idHash % lane.nextLanes.length];
-                const nextLane = roadNetwork.getLane(nextId);
-                if (!nextLane || nextLane.waypoints.length === 0) {
-                    const lastWp = lane.waypoints[lane.waypoints.length - 1];
-                    this.lookaheadTarget.x = lastWp.x;
-                    this.lookaheadTarget.z = lastWp.z;
-                    this.lookaheadTarget.yaw = lastWp.yaw;
-                    this.lookaheadTarget.laneId = lane.id;
-                    this.lookaheadTarget.index = currIdx;
-                    return this.lookaheadTarget;
-                }
-
-                lane = nextLane;
-                currIdx = 0;
-            }
-        }
-
-        const wp = lane.waypoints[currIdx];
-        this.lookaheadTarget.x = wp.x;
-        this.lookaheadTarget.z = wp.z;
-        this.lookaheadTarget.yaw = wp.yaw;
-        this.lookaheadTarget.laneId = lane.id;
-        this.lookaheadTarget.index = currIdx;
-        return this.lookaheadTarget;
+    _baseLane() {
+        return this.piece.kind === 'lane' ? this.piece : this.piece.to;
     }
 
-    _chooseNextLane(lane) {
-        const next = lane.nextLanes;
+    _validNext(lanePiece, id) {
+        return id && lanePiece.lane.nextLanes.includes(id) && this.net.lanePiece(id);
+    }
+
+    _pickNext(lanePiece) {
+        const next = lanePiece.lane.nextLanes;
         if (!next || next.length === 0) return null;
-        return next[(Math.random() * next.length) | 0];
+        for (let tries = 0; tries < 4; tries++) {
+            const id = next[(Math.random() * next.length) | 0];
+            if (this.net.lanePiece(id)) return id;
+        }
+        for (const id of next) if (this.net.lanePiece(id)) return id;
+        return null;
     }
 
-    /** The lane this agent will take when it leaves `lane` (its current lane). */
-    _plannedNextLane(lane) {
-        if (!this.nextLaneId || !lane.nextLanes.includes(this.nextLaneId)) {
-            this.nextLaneId = this._chooseNextLane(lane);
-        }
-        return this.nextLaneId;
-    }
-
-    /** Drops this agent's junction reservation once it has driven clear of the junction. */
-    _releaseJunction(intersectionLocks, force = false) {
-        if (this.heldJunction === null) return;
-        const v = this.vehicle;
-        const dx = v.position.x - this.heldJunctionX;
-        const dz = v.position.z - this.heldJunctionZ;
-        const clear = Math.hypot(dx, dz) > TRAFFIC_CONFIG.JUNCTION_BOX_RADIUS + 2.0 &&
-            (dx * -Math.sin(v.yaw) + dz * -Math.cos(v.yaw)) > 0;
-        this.heldJunctionTime += 1 / 60;
-        if (!force && !clear && this.heldJunctionTime < TRAFFIC_CONFIG.JUNCTION_HOLD_TIMEOUT) return;
-        const holders = intersectionLocks.get(this.heldJunction);
-        if (holders) {
-            const i = holders.indexOf(this);
-            if (i >= 0) holders.splice(i, 1);
-            if (holders.length === 0) intersectionLocks.delete(this.heldJunction);
-        }
-        this.heldJunction = null;
-    }
-
-    /**
-     * Junction reservations: before entering a junction box a car reserves it. Cars approaching
-     * along the same or the opposite heading may share the junction; crossing traffic waits.
-     * A car also won't enter while its way out is blocked. Returns the gap to the stop line
-     * while it has to wait, or Infinity once it may go.
-     */
-    junctionGap(lane, intersectionLocks, sensing, roadNetwork = null) {
-        if (!lane || !(lane.endDegree >= 3) || lane.endX === undefined || !intersectionLocks) return Infinity;
-        const v = this.vehicle;
-        const dx = lane.endX - v.position.x;
-        const dz = lane.endZ - v.position.z;
-        const distToCentre = Math.hypot(dx, dz);
-        const box = TRAFFIC_CONFIG.JUNCTION_BOX_RADIUS;
-        if (distToCentre > TRAFFIC_CONFIG.JUNCTION_LOOKAHEAD) return Infinity;
-        if (this.heldJunction === lane.endNode) return Infinity;
-        // Already rolling through the box without a reservation (e.g. just spawned): keep going
-        if (distToCentre <= box * 0.6) return Infinity;
-
-        const wps = lane.waypoints;
-        const a = wps[Math.max(0, wps.length - 2)], b = wps[wps.length - 1];
-        const ax = b.x - a.x, az = b.z - a.z;
-        const al = Math.hypot(ax, az) || 1;
-        const fx = ax / al, fz = az / al;
-        // Going straight on, or turning?
-        let straight = true;
-        const next = roadNetwork && lane.nextLanes.length ? roadNetwork.getLane(this._plannedNextLane(lane)) : null;
-        if (next && next.waypoints.length >= 2) {
-            const n0 = next.waypoints[0], n1 = next.waypoints[1];
-            const nl = Math.hypot(n1.x - n0.x, n1.z - n0.z) || 1;
-            straight = (fx * (n1.x - n0.x) + fz * (n1.z - n0.z)) / nl > 0.8;
-        }
-
-        const stopGap = Math.max(0.1, distToCentre - box - 1.0);
-        // Don't block the box: wait while the car ahead is stopped just beyond the junction
-        if (sensing && sensing.leadSpeed < 1.0 && sensing.minGap < distToCentre + box + 2.0) return stopGap;
-
-        let holders = intersectionLocks.get(lane.endNode);
-        if (holders) {
-            for (let i = holders.length - 1; i >= 0; i--) {
-                const h = holders[i];
-                if (h.heldJunction !== lane.endNode || h.vehicle.isPlayer || h.vehicle.driverDead) {
-                    holders.splice(i, 1);
-                    continue;
-                }
-                // Following the same way is fine; oncoming traffic may share the box only if both go straight
-                const dot = fx * h.heldJunctionFx + fz * h.heldJunctionFz;
-                if (dot > 0.7) continue;
-                if (dot < -0.7 && straight && h.heldJunctionStraight) continue;
-                return stopGap;
+    /** Makes sure the next two lanes after the base lane are chosen and still valid. */
+    _ensurePlan() {
+        let from = this._baseLane();
+        for (let i = 0; i < 2; i++) {
+            if (!this._validNext(from, this.plan[i])) {
+                this.plan.length = i;
+                const id = this._pickNext(from);
+                if (!id) return;
+                this.plan.push(id);
             }
+            from = this.net.lanePiece(this.plan[i]);
+        }
+    }
+
+    /** Fills `out` with the current piece and the next three along the route (null past a dead end). */
+    _routeAhead(out) {
+        const net = this.net;
+        this._ensurePlan();
+        const p0 = this.plan[0] ? net.lanePiece(this.plan[0]) : null;
+        const p1 = this.plan[1] ? net.lanePiece(this.plan[1]) : null;
+        out[0] = this.piece;
+        if (this.piece.kind === 'lane') {
+            out[1] = p0 ? net.connector(this.piece, p0) : null;
+            out[2] = p0;
+            out[3] = p0 && p1 ? net.connector(p0, p1) : null;
         } else {
-            holders = [];
-            intersectionLocks.set(lane.endNode, holders);
+            const lane = this.piece.to;
+            out[1] = lane;
+            out[2] = p0 ? net.connector(lane, p0) : null;
+            out[3] = p0;
         }
-        if (this.heldJunction !== null) this._releaseJunction(intersectionLocks, true);
-        holders.push(this);
-        this.heldJunction = lane.endNode;
-        this.heldJunctionX = lane.endX;
-        this.heldJunctionZ = lane.endZ;
-        this.heldJunctionFx = fx;
-        this.heldJunctionFz = fz;
-        this.heldJunctionStraight = straight;
-        this.heldJunctionTime = 0;
-        return Infinity;
-    }
-
-    senseForwardCorridor(spatialGrid, out = _sensingResult, pedestrians = null, playerVehicle = null) {
-        const v = this.vehicle;
-        const egoSpeed = Math.max(0, v.speed);
-        const senseRadius = Math.max(
-            TRAFFIC_CONFIG.SENSING_RANGE_MIN,
-            egoSpeed * TRAFFIC_CONFIG.SENSING_RANGE_KV
-        );
-
-        const sinYaw = Math.sin(v.yaw);
-        const cosYaw = Math.cos(v.yaw);
-        const fwdX = -sinYaw;
-        const fwdZ = -cosYaw;
-        const rightX = cosYaw;
-        const rightZ = -sinYaw;
-
-        // Query DYNAMIC vehicles only so adjacent building AABBs along streets don't cause false stops
-        spatialGrid.queryRadius(v.position.x, v.position.z, senseRadius, _scratchSpatialResults, 'DYNAMIC');
-
-        let minGap = Infinity;
-        let leadSpeed = 0;
-        let leadId = null;
-
-        const corridorHalfWidth = TRAFFIC_CONFIG.CORRIDOR_HALF_WIDTH;
-        const egoRadius = v.radius || TRAFFIC_CONFIG.VEHICLE_RADIUS;
-
-        for (let i = 0, len = _scratchSpatialResults.length; i < len; i++) {
-            const item = _scratchSpatialResults[i];
-            if (item.id === v.id || item.entityRef === v) continue;
-
-            const other = item.entityRef;
-            if (!other || !other.position) continue;
-
-            const itemX = other.position.x;
-            const itemZ = other.position.z;
-            const itemRadius = other.radius || TRAFFIC_CONFIG.VEHICLE_RADIUS;
-            const itemSpeed = typeof other.getSpeed === 'function' ? Math.max(0, other.getSpeed()) : 0;
-            if (this.ghostTimer > 0 && itemSpeed < 0.5 && other !== playerVehicle) continue;
-
-            if (typeof other.getYaw === 'function') {
-                const otherYaw = other.getYaw();
-                const dotHeading = (-Math.sin(otherYaw)) * fwdX + (-Math.cos(otherYaw)) * fwdZ;
-                if (dotHeading < 0.2) {
-                    // Oncoming or perpendicular cross-traffic: only treat as obstacle if directly in front and very close
-                    const dxO = itemX - v.position.x;
-                    const dzO = itemZ - v.position.z;
-                    const latOffsetO = Math.abs(dxO * rightX + dzO * rightZ);
-                    if (latOffsetO > 1.35) {
-                        continue;
-                    }
-                }
-            }
-
-            const dx = itemX - v.position.x;
-            const dz = itemZ - v.position.z;
-
-            const dLong = dx * fwdX + dz * fwdZ;
-            const dLat = dx * rightX + dz * rightZ;
-
-            if (dLong > 0.5 && dLong < senseRadius && Math.abs(dLat) <= corridorHalfWidth) {
-                const netGap = Math.max(0.1, dLong - (egoRadius + itemRadius));
-                if (netGap < minGap) {
-                    minGap = netGap;
-                    leadSpeed = itemSpeed;
-                    leadId = item.id;
-                }
-            }
-        }
-
-        // Pedestrians on a crosswalk ahead of us
-        if (pedestrians && pedestrians.length > 0) {
-            const pad = TRAFFIC_CONFIG.PEDESTRIAN_CORRIDOR_PAD;
-            for (let i = 0, len = pedestrians.length; i < len; i++) {
-                const p = pedestrians[i];
-                const dx = p.x - v.position.x;
-                const dz = p.z - v.position.z;
-                const dLong = dx * fwdX + dz * fwdZ;
-                if (dLong < 0.5 || dLong > senseRadius) continue;
-                const dLat = dx * rightX + dz * rightZ;
-                if (Math.abs(dLat) > corridorHalfWidth + pad) continue;
-                const netGap = Math.max(0.1, dLong - egoRadius - pad);
-                if (netGap < minGap) {
-                    minGap = netGap;
-                    leadSpeed = 0;
-                    leadId = 'pedestrian';
-                }
-            }
-        }
-
-        this.detectedLeadGap = minGap;
-        this.detectedLeadSpeed = leadSpeed;
-
-        out.minGap = minGap;
-        out.leadSpeed = leadSpeed;
-        out.leadId = leadId;
         return out;
     }
 
-    update(dt, spatialGrid, roadNetwork, intersectionLocks, playerVehicle = null, pedestrians = null) {
-        if (this.vehicle.driverDead) {
-            this.vehicle.setInputs(0, 0, 0.9, false);
-            this.vehicle.update(dt, null);
+    /** Point on the route `ds` metres ahead of (or behind) the car's centre. */
+    _sampleRoute(ds, route, out) {
+        let t = this.s + ds;
+        if (t < 0 && this.prevPiece) return this.prevPiece.path.sample(this.prevPiece.len + t, out);
+        let k = 0;
+        while (t > route[k].len && k < 3 && route[k + 1]) {
+            t -= route[k].len;
+            k++;
+        }
+        return route[k].path.sample(t, out);
+    }
+
+    /** The connector this car will take out of lane piece `lp` (its current lane or the next one). */
+    plannedConnector(lp) {
+        this._ensurePlan();
+        if (this.piece.kind === 'conn') return this.piece;
+        if (lp === this.piece && this.plan[0]) {
+            const next = this.net.lanePiece(this.plan[0]);
+            return next ? this.net.connector(lp, next) : null;
+        }
+        return null;
+    }
+
+    // ---- Junctions -----------------------------------------------------------------------------
+
+    _commit(j, conn) {
+        if (this.committed === j && this.conn === conn) return;
+        this._leaveJunction();
+        this.committed = j;
+        this.conn = conn;
+        j.occupants.push(this);
+        removeFrom(j.queue, this);
+        this.waitTime = 0;
+    }
+
+    _leaveJunction() {
+        if (this.committed) {
+            removeFrom(this.committed.occupants, this);
+            removeFrom(this.committed.queue, this);
+        }
+        if (this.stopDone && this.stopDone !== this.committed) removeFrom(this.stopDone.queue, this);
+        this.committed = null;
+        this.conn = null;
+    }
+
+    /** Whether the far side of `conn` has room for this car (don't block the box). */
+    _exitClear(conn, j) {
+        const T = conn.to;
+        let need = Math.min(CAR_LEN + 1.5, T.len);
+        let rear = Infinity, rearSpeed = 0;
+        for (let i = 0; i < T.occ.length; i++) {
+            const o = T.occ[i];
+            if (o === this) continue;
+            const r = o.s - HALF_LEN;
+            if (r < rear) {
+                rear = r;
+                rearSpeed = o.vehicle.speed;
+            }
+        }
+        for (let i = 0; i < j.occupants.length; i++) {
+            const o = j.occupants[i];
+            if (o !== this && o.conn && o.conn.to === T) need += CAR_LEN + 1;
+        }
+        return rear >= need || (rear > HALF_LEN && rearSpeed > 3.0);
+    }
+
+    /** Right of way into junction `j` along connector `conn`; the car is `frontGap` from the line. */
+    _mayEnter(j, conn, frontGap) {
+        const net = this.net;
+        const P = this.piece;
+        const v = this.vehicle.speed;
+
+        if (P.signalGroup >= 0 && j.signal) {
+            const light = net.lightState(j.signal, P.signalGroup);
+            if (light === LIGHT.RED) return false;
+            // Amber: stop if that can be done comfortably
+            if (light === LIGHT.YELLOW && frontGap > (v * v) / 8 + 0.5) return false;
+        }
+        if (P.stopSign && this.stopDone !== j) return false;
+
+        const patient = this.waitTime < 40;
+        // All-way stop: first to stop goes first
+        if (P.stopSign && j.control === 'allway' && patient) {
+            for (let i = 0; i < j.queue.length; i++) {
+                const q = j.queue[i];
+                if (q === this) break;
+                if (q.committed || q.retired || q.vehicle.driverDead) continue;
+                const qc = q.plannedConnector(q.piece);
+                if (qc && net.conflicts(qc, conn)) return false;
+            }
+        }
+
+        // Give way to approaching traffic: minor streets to major ones, turns across oncoming traffic
+        const minor = P.yieldMinor || (P.stopSign && j.control !== 'allway');
+        const crossing = conn.turn === 'left' || conn.turn === 'uturn';
+        if (patient && (minor || crossing)) {
+            P.path.sample(P.len, _c1);
+            for (let i = 0; i < j.inLanes.length; i++) {
+                const LP = net.lanePiece(j.inLanes[i].id);
+                if (!LP || LP === P || LP.junction !== j || LP.occ.length === 0) continue;
+                if (minor) {
+                    if (LP.stopSign || LP.yieldMinor) continue;
+                } else {
+                    LP.path.sample(LP.len, _c2);
+                    if (_c1.dx * _c2.dx + _c1.dz * _c2.dz > -0.7) continue; // only oncoming traffic
+                }
+                if (LP.signalGroup >= 0 && j.signal && net.lightState(j.signal, LP.signalGroup) === LIGHT.RED) continue;
+                for (let k = 0; k < LP.occ.length; k++) {
+                    const o = LP.occ[k];
+                    if (o.committed === j || o.vehicle.driverDead) continue;
+                    const rem = LP.len - o.s - HALF_LEN;
+                    if (rem > 40) continue;
+                    const os = o.vehicle.speed;
+                    if (os < 0.5 && rem > 2) continue;               // held up further back
+                    if (rem / Math.max(os, 0.5) > 5.5) continue;      // too far off to matter
+                    const oc = o.plannedConnector(LP);
+                    if (!oc || (crossing && !minor && oc.turn === 'left')) continue;
+                    if (net.conflicts(oc, conn)) return false;
+                }
+            }
+        }
+
+        // Nothing already crossing our path
+        for (let i = 0; i < j.occupants.length; i++) {
+            const o = j.occupants[i];
+            if (o === this || o.vehicle.driverDead || o.retired) continue;
+            if (o.conn && net.conflicts(o.conn, conn)) return false;
+        }
+        return !patient || this._exitClear(conn, j);
+    }
+
+    // ---- Sensing --------------------------------------------------------------------------------
+
+    /** Nearest non-traffic obstacle (player, police, parked cars, pedestrians) straight ahead. */
+    _senseObstacles(spatialGrid, pedestrians, out) {
+        const v = this.vehicle;
+        out.gap = Infinity;
+        out.speed = 0;
+        out.id = null;
+        out.dLong = 0;
+        if (!spatialGrid) return out;
+        const range = Math.max(TRAFFIC_CONFIG.SENSING_RANGE_MIN, v.speed * TRAFFIC_CONFIG.SENSING_RANGE_KV);
+        const fwdX = -Math.sin(v.yaw), fwdZ = -Math.cos(v.yaw);
+        const rightX = -fwdZ, rightZ = fwdX;
+        const half = TRAFFIC_CONFIG.CORRIDOR_HALF_WIDTH;
+        spatialGrid.queryRadius(v.position.x, v.position.z, range, _scratchSpatialResults, 'DYNAMIC');
+        for (let i = 0, len = _scratchSpatialResults.length; i < len; i++) {
+            const item = _scratchSpatialResults[i];
+            const other = item.entityRef;
+            if (!other || other === v || !other.position) continue;
+            if (other._trafficAgent && !other._trafficAgent.retired) continue; // handled along the route
+            if (this.passIgnore === item.id) continue;
+            if (other.isPlane && other.position.y > 3) continue;
+            const dx = other.position.x - v.position.x, dz = other.position.z - v.position.z;
+            const dLong = dx * fwdX + dz * fwdZ;
+            if (dLong < 0.5 || dLong > range) continue;
+            const r = other.radius || TRAFFIC_CONFIG.VEHICLE_RADIUS;
+            const dLat = Math.abs(dx * rightX + dz * rightZ);
+            if (dLat > half + 0.3) continue;
+            // Oncoming or crossing cars only count when squarely in front
+            if (typeof other.getYaw === 'function' && dLat > 1.35) {
+                const oy = other.getYaw();
+                if (-Math.sin(oy) * fwdX - Math.cos(oy) * fwdZ < 0.2) continue;
+            }
+            const gap = Math.max(0.1, dLong - HALF_LEN - Math.min(r, HALF_LEN));
+            if (gap < out.gap) {
+                out.gap = gap;
+                out.speed = typeof other.getSpeed === 'function' ? Math.max(0, other.getSpeed()) : 0;
+                out.id = item.id;
+                out.dLong = dLong;
+            }
+        }
+        if (pedestrians) {
+            const pad = TRAFFIC_CONFIG.PEDESTRIAN_CORRIDOR_PAD;
+            for (let i = 0, len = pedestrians.length; i < len; i++) {
+                const p = pedestrians[i];
+                const dx = p.x - v.position.x, dz = p.z - v.position.z;
+                const dLong = dx * fwdX + dz * fwdZ;
+                if (dLong < 0.5 || dLong > range) continue;
+                if (Math.abs(dx * rightX + dz * rightZ) > half + pad) continue;
+                const gap = Math.max(0.1, dLong - HALF_LEN - pad);
+                if (gap < out.gap) {
+                    out.gap = gap;
+                    out.speed = 0;
+                    out.id = 'pedestrian';
+                    out.dLong = dLong;
+                }
+            }
+        }
+        return out;
+    }
+
+    // ---- Step -----------------------------------------------------------------------------------
+
+    update(dt, manager) {
+        const v = this.vehicle;
+        if (this.retired) return;
+        if (v.isPlayer || v.driverGone) {
+            this.retire();
+            return;
+        }
+        if (!this.piece) return;
+
+        // A collision (the player's car, a police car) shoved us: keep the shove and ease it out
+        if (!Number.isNaN(this.lastX)) {
+            const ex = v.position.x - this.lastX, ez = v.position.z - this.lastZ;
+            const e2 = ex * ex + ez * ez;
+            if (e2 > 64) {
+                // Moved far away (teleported): pick the road up again from where it now is
+                const wp = this.net.roadNetwork.getNearestWaypoint(v.position.x, v.position.z);
+                if (wp) {
+                    this.place(this.net, wp.laneId, wp.index);
+                    return;
+                }
+            } else if (e2 > 1e-4) {
+                this.blendX += ex;
+                this.blendZ += ez;
+                if (e2 > 0.04) v.speed *= 0.7;
+            }
+        }
+        const decay = Math.exp(-1.3 * dt);
+        this.blendX *= decay;
+        this.blendZ *= decay;
+
+        const route = this._routeAhead(_route);
+        let speed = Math.max(0, v.speed);
+
+        if (v.driverDead) {
+            // Dead driver: the car rolls to a stop and never moves again
+            speed = Math.max(0, speed - 7 * dt);
+            this._advance(speed * dt, route);
+            v.speed = speed;
+            this._applyPose(dt);
             return;
         }
 
-        this.updateLaneProgress(roadNetwork);
-
-        const lookaheadDist = PurePursuitController.getLookaheadDistance(this.vehicle.speed);
-        const target = this.getLookaheadTarget(roadNetwork, lookaheadDist);
-
-        _poseScratch.x = this.vehicle.position.x;
-        _poseScratch.z = this.vehicle.position.z;
-        _poseScratch.yaw = this.vehicle.yaw;
-
-        const steering = PurePursuitController.calculateSteering(
-            _poseScratch,
-            target,
-            this.vehicle.speed,
-            this.vehicle.maxSteerAngle || 0.55,
-            _steeringResult
-        );
-
-        if (this.ghostTimer > 0) this.ghostTimer -= dt;
-        else if (this.ghostCooldown > 0) this.ghostCooldown -= dt;
-        else if (this.stuckTime > 6.0) {
-            this.ghostTimer = 3.0;
-            this.ghostCooldown = 6.0;
-        }
-
-        const sensing = this.senseForwardCorridor(spatialGrid, _sensingResult, pedestrians, playerVehicle);
-        let effectiveGap = sensing.minGap;
-        const currentLane = roadNetwork.getLane(this.laneId);
-        this._releaseJunction(intersectionLocks);
-        const junctionGap = this.ghostTimer > 0 ? Infinity : this.junctionGap(currentLane, intersectionLocks, sensing, roadNetwork);
-        if (junctionGap < effectiveGap) {
-            effectiveGap = junctionGap;
-            sensing.leadSpeed = 0;
-        }
-
-        let targetSpeed = this.desiredSpeed;
-        if (currentLane && currentLane.speedLimit) {
-            targetSpeed = Math.min(this.desiredSpeed, currentLane.speedLimit);
-        }
-
-        // Slow down smoothly for turns and intersections so cars don't drift wide
-        const absAlpha = Math.abs(steering.alpha);
-        if (absAlpha > 0.15) {
-            targetSpeed *= Math.max(0.45, 1.0 - absAlpha * 0.75);
-        }
-
-        const deltaV = this.vehicle.speed - sensing.leadSpeed;
-        const aCmd = IDMController.computeAcceleration(
-            this.vehicle.speed,
-            targetSpeed,
-            effectiveGap,
-            deltaV
-        );
-        this.commandedAccel = aCmd;
-
-        const inputs = IDMController.mapToInputs(aCmd, this.vehicle.speed, effectiveGap, _idmInputsResult);
-
-        this.stuckTime = Math.abs(this.vehicle.speed) < 1.0 ? this.stuckTime + dt : 0;
-
-        // Anti-deadlock stationary watchdog
-        if (Math.abs(this.vehicle.speed) < 0.25 && junctionGap === Infinity) {
-            this.stationaryTimer += dt;
-            if (this.stationaryTimer > TRAFFIC_CONFIG.WATCHDOG_NUDGE_TIME) {
-                inputs.throttle = 0.75;
-                inputs.brake = 0;
+        // Free-road speed: street limit, then slow for bends coming up
+        const base = this._baseLane();
+        let v0 = Math.min(this.desiredSpeed, base.lane.speedLimit || this.desiredSpeed);
+        for (let d = 0; d <= 36; d += 6) {
+            this._sampleRoute(d, route, _c1);
+            const h1x = _c1.dx, h1z = _c1.dz;
+            this._sampleRoute(d + 5, route, _c2);
+            const ang = Math.abs(Math.atan2(h1x * _c2.dz - h1z * _c2.dx, h1x * _c2.dx + h1z * _c2.dz));
+            const k = ang / 5;
+            if (k > 1e-3) {
+                const vc = Math.sqrt(2.6 / k);
+                v0 = Math.min(v0, Math.sqrt(vc * vc + 2 * 2.2 * d));
             }
-        } else {
-            this.stationaryTimer = 0;
         }
 
-        // Braking at a standstill would engage reverse in the vehicle model; AI cars just hold still
-        if (inputs.brake > 0 && this.vehicle.speed <= 0.35) {
-            inputs.brake = 0;
-            inputs.throttle = 0;
-        }
-
-        this.vehicle.setInputs(inputs.throttle, steering.normalizedSteer, inputs.brake, false);
-        // Step vehicle kinematics without static building collision check for on-road AI agents,
-        // then resolve dynamic separation in TrafficManager
-        this.vehicle.update(dt, null);
-        if (this.vehicle.speed < 0) {
-            this.vehicle.speed = 0;
-            this.vehicle.velocity.set(0, 0);
-        }
-
-        // Keep AI traffic strictly centered on their road lane (zero off-road drifting)
-        const activeLane = roadNetwork.getLane(this.laneId);
-        if (activeLane && activeLane.waypoints && activeLane.waypoints.length >= 2) {
-            const wps = activeLane.waypoints;
-            const idx = Math.max(0, Math.min(wps.length - 2, this.waypointIndex));
-            const wpA = wps[idx];
-            const wpB = wps[idx + 1];
-            const sdx = wpB.x - wpA.x;
-            const sdz = wpB.z - wpA.z;
-            const sLenSq = sdx * sdx + sdz * sdz;
-            if (sLenSq > 1e-4) {
-                const vx = this.vehicle.position.x;
-                const vz = this.vehicle.position.z;
-                let tProj = ((vx - wpA.x) * sdx + (vz - wpA.z) * sdz) / sLenSq;
-                tProj = Math.max(0, Math.min(1, tProj));
-                const projX = wpA.x + tProj * sdx;
-                const projZ = wpA.z + tProj * sdz;
-
-                // Pull lateral cross-track deviation back onto lane centerline
-                const errX = projX - vx;
-                const errZ = projZ - vz;
-                const errDist = Math.hypot(errX, errZ);
-                if (errDist > 0.01) {
-                    const pullRate = errDist > 1.2 ? 0.35 : Math.min(1.0, 5.0 * dt);
-                    this.vehicle.position.x += errX * pullRate;
-                    this.vehicle.position.z += errZ * pullRate;
+        // Car ahead along the route
+        let gap = Infinity, leadSpeed = 0, lead = null;
+        {
+            let dist = -this.s;
+            const range = Math.max(40, speed * 4);
+            for (let k = 0; k < 4 && route[k] && dist < range; k++) {
+                const P = route[k];
+                let best = Infinity, bestAgent = null;
+                for (let i = 0; i < P.occ.length; i++) {
+                    const o = P.occ[i];
+                    if (o === this || o === this.passIgnore) continue;
+                    if (k === 0 && (o.s < this.s || (o.s === this.s && o.vehicle.id < v.id))) continue;
+                    const d = dist + o.s;
+                    if (d < best) {
+                        best = d;
+                        bestAgent = o;
+                    }
                 }
-
-                // Align velocity vector with vehicle heading so AI cars never slide sideways
-                const spd = Math.abs(this.vehicle.speed);
-                const fwdX = -Math.sin(this.vehicle.yaw);
-                const fwdZ = -Math.cos(this.vehicle.yaw);
-                this.vehicle.velocity.x = fwdX * spd;
-                this.vehicle.velocity.y = fwdZ * spd;
+                if (bestAgent) {
+                    // Bumper to bumper: half of each car's own length
+                    gap = Math.max(0.05, best - ((v.length || CAR_LEN) + (bestAgent.vehicle.length || CAR_LEN)) / 2);
+                    leadSpeed = Math.max(0, bestAgent.vehicle.speed);
+                    lead = bestAgent;
+                    break;
+                }
+                dist += P.len;
             }
+        }
+        // Dead end: stop at the end of the lane
+        if (!route[1]) {
+            const g = Math.max(0.05, this.piece.len - this.s - HALF_LEN + LINE_PAD);
+            if (g < gap) { gap = g; leadSpeed = 0; lead = null; }
+        }
+        const obs = this._senseObstacles(manager.spatialGrid, manager.pedestrianObstacles, _obstacle);
+        let obstacleLead = false;
+        if (obs.gap < gap) {
+            gap = obs.gap;
+            leadSpeed = obs.speed;
+            lead = null;
+            obstacleLead = true;
+        }
+
+        // Right of way at the junction ahead
+        const P = this.piece;
+        if (P.kind === 'lane' && P.junction && route[1] && this.committed !== P.junction) {
+            const j = P.junction;
+            const conn = route[1];
+            const frontGap = P.len - this.s - HALF_LEN;
+            if (frontGap < Math.max(35, (speed * speed) / 3 + 10)) {
+                // Stop sign: come to a full stop at the line first
+                if (P.stopSign && this.stopDone !== j) {
+                    if (frontGap < 1.5 && speed < 0.3) {
+                        this.stopTimer += dt;
+                        if (this.stopTimer > 1.0) {
+                            this.stopDone = j;
+                            this.stopTimer = 0;
+                            if (!j.queue.includes(this)) j.queue.push(this);
+                        }
+                    } else {
+                        this.stopTimer = 0;
+                    }
+                }
+                const go = this._mayEnter(j, conn, frontGap);
+                if (go && frontGap < (speed * speed) / 5 + 3) {
+                    this._commit(j, conn);
+                } else if (!go) {
+                    const g = Math.max(0.05, frontGap + LINE_PAD);
+                    if (g < gap) {
+                        gap = g;
+                        leadSpeed = 0;
+                        lead = null;
+                        obstacleLead = false;
+                    }
+                    if (frontGap < 4 && speed < 0.3) this.waitTime += dt;
+                }
+            }
+        }
+
+        // Go around a car stalled in the lane (a dead driver, a parked car)
+        const stalled = gap < 9 && speed < 0.3 && leadSpeed < 0.2 &&
+            ((lead && lead.vehicle.driverDead) || (obstacleLead && obs.id !== 'pedestrian'));
+        if (stalled && P.kind === 'lane' && this.passTarget === 0) {
+            this.blockedTime += dt;
+            const leadS = lead ? (lead.piece === P ? lead.s : Infinity) : this.s + obs.dLong;
+            if (this.blockedTime > 2.5 && leadS + CAR_LEN + 8 < P.len) {
+                this.passIgnore = lead || obs.id;
+                this.passUntil = leadS + CAR_LEN + 2;
+                this.passTarget = Math.max(2.8, Math.min(3.6, (P.lane.offset || 1.8) * 2));
+                this.blockedTime = 0;
+            }
+        } else if (!stalled) {
+            this.blockedTime = 0;
+        }
+        if (this.passTarget > 0 && (P.kind !== 'lane' || this.s > this.passUntil)) this.passTarget = 0;
+        const passStep = 1.6 * dt;
+        this.passOffset += Math.max(-passStep, Math.min(passStep, this.passTarget - this.passOffset));
+        if (this.passTarget === 0 && this.passOffset < 0.02) {
+            this.passOffset = 0;
+            this.passIgnore = null;
+        }
+
+        // IDM longitudinal control
+        let a = IDMController.computeAcceleration(speed, v0, gap, speed - leadSpeed);
+        a = Math.max(-9, Math.min(TRAFFIC_CONFIG.IDM_MAX_ACCEL, a));
+        this.commandedAccel = a;
+        speed = Math.max(0, speed + a * dt);
+        if (gap < 0.2) speed = Math.min(speed, leadSpeed);
+        this.detectedLeadGap = gap;
+        this.detectedLeadSpeed = leadSpeed;
+        this.stuckTime = speed < 1.0 ? this.stuckTime + dt : 0;
+
+        this._advance(speed * dt, route);
+        v.speed = speed;
+
+        // Clear of the junction once fully onto the next street
+        if (this.committed && this.piece.kind === 'lane' && this.piece === this.conn.to && this.s > CAR_LEN) {
+            this._leaveJunction();
+            this.stopDone = null;
+        }
+        this._applyPose(dt);
+    }
+
+    _advance(ds, route) {
+        this.s += ds;
+        while (this.s > this.piece.len) {
+            const next = route[1];
+            if (!next) {
+                this.s = this.piece.len;
+                this.vehicle.speed = 0;
+                return;
+            }
+            if (this.piece.kind === 'lane') {
+                // Rolling into the junction: claim it if it wasn't already
+                if (next.junction && this.committed !== next.junction) this._commit(next.junction, next);
+                this.plan.shift();
+            }
+            this.s -= this.piece.len;
+            this.prevPiece = this.piece;
+            this.piece = next;
+            this._routeAhead(route);
         }
     }
 
-    _hashId(str) {
-        let hash = 0;
-        const s = String(str);
-        for (let i = 0; i < s.length; i++) {
-            hash = (hash << 5) - hash + s.charCodeAt(i);
-            hash |= 0;
+    _applyPose(dt) {
+        const v = this.vehicle;
+        const route = this._routeAhead(_route);
+        this._sampleRoute(1.35, route, _fr);
+        this._sampleRoute(-1.35, route, _rr);
+        let dx = _fr.x - _rr.x, dz = _fr.z - _rr.z;
+        const dl = Math.hypot(dx, dz);
+        if (dl > 1e-4) {
+            dx /= dl;
+            dz /= dl;
+        } else {
+            dx = _fr.dx;
+            dz = _fr.dz;
         }
-        return hash;
+        const yaw = Math.atan2(-dx, -dz);
+        // Left of travel is (dz, -dx)
+        const x = (_fr.x + _rr.x) * 0.5 + dz * this.passOffset + this.blendX;
+        const z = (_fr.z + _rr.z) * 0.5 - dx * this.passOffset + this.blendZ;
+        v.position.set(x, v.position.y || 0, z);
+        v.yaw = yaw;
+        const speed = Math.max(0, v.speed);
+        v.velocity.set(-Math.sin(yaw) * speed, -Math.cos(yaw) * speed);
+        // Front wheels: steer angle for the path's curvature
+        if (dt > 0) {
+            const dyaw = wrapAngle(yaw - this.lastYaw);
+            const k = speed > 0.2 ? dyaw / (speed * dt) : 0;
+            const target = Math.max(-0.6, Math.min(0.6, Math.atan(TRAFFIC_CONFIG.WHEELBASE * k)));
+            v.steerAngle += (target - v.steerAngle) * Math.min(1, dt * 8);
+        }
+        this.lastYaw = yaw;
+        const lane = this._baseLane();
+        v.laneId = this.laneId = lane.key;
+        if (v.lastSafePosition) v.lastSafePosition.set(x, 0, z);
+        v.lastSafeYaw = yaw;
+        v._syncCollisionCircles();
+        v._updateMeshTransform(dt);
+        this.lastX = v.position.x;
+        this.lastZ = v.position.z;
+    }
+
+    /** The player took this car: AI lets go of it for good. */
+    retire() {
+        this._leaveJunction();
+        this.retired = true;
     }
 }
 
@@ -685,12 +788,13 @@ export class TrafficManager {
         this.spatialGrid = spatialGrid;
         this.config = Object.assign({}, TRAFFIC_CONFIG, options);
         this.useInstancing = options.useInstancing !== false;
+        this.net = new TrafficNet(roadNetwork);
 
         this.agents = [];
         this.vehicles = [];
-        this.intersectionLocks = new Map();
         this.scene = null;
         this.instancedFleet = null;
+        this._occupied = [];
 
         // Positions of pedestrians currently on a crosswalk ({x, z}); cars stop for them
         this.pedestrianObstacles = [];
@@ -757,36 +861,23 @@ export class TrafficManager {
 
         for (let i = 0; i < spawnPoints.length; i++) {
             const sp = spawnPoints[i];
-            const color = TRAFFIC_PALETTE[i % TRAFFIC_PALETTE.length];
-
-            const vehicle = new Vehicle(
-                `traffic_${i}`,
-                sp.x,
-                sp.z,
-                sp.yaw,
-                color,
-                false
-            );
-            vehicle.laneId = sp.laneId;
-            vehicle.waypointIndex = sp.index;
-
-            vehicle.speed = TRAFFIC_CONFIG.INITIAL_SPEED;
-            const fwdX = -Math.sin(sp.yaw);
-            const fwdZ = -Math.cos(sp.yaw);
-            vehicle.velocity.set(fwdX * vehicle.speed, fwdZ * vehicle.speed);
+            // A mix of car models in their own colours (golden-ratio steps spread the picks evenly)
+            const modelId = pickCarModel((i * 0.6180339887 + 0.137) % 1);
+            const color = pickCarColor(modelId, (i * 0.3819660113 + 0.29) % 1);
+            const vehicle = new Vehicle(`traffic_${i}`, sp.x, sp.z, sp.yaw, color, false, modelId);
 
             // Only mount individual THREE.Group if instancing is disabled
             if (this.scene && !this.useInstancing) {
                 vehicle.initMesh(this.scene);
             }
 
-            this.spatialGrid.insertDynamic(vehicle.id, sp.x, sp.z, vehicle.radius, vehicle);
-
             const speedRange = TRAFFIC_CONFIG.IDM_DESIRED_SPEED_MAX - TRAFFIC_CONFIG.IDM_DESIRED_SPEED_MIN;
             const speedVariance = ((i * 7) % 10) / 10.0;
             const desiredSpeed = TRAFFIC_CONFIG.IDM_DESIRED_SPEED_MIN + speedVariance * speedRange;
-
             const agent = new TrafficAgent(vehicle, sp.laneId, sp.index, desiredSpeed);
+            vehicle.speed = TRAFFIC_CONFIG.INITIAL_SPEED;
+            agent.place(this.net, sp.laneId, sp.index);
+            this.spatialGrid.insertDynamic(vehicle.id, vehicle.position.x, vehicle.position.z, vehicle.radius, vehicle);
 
             this.agents.push(agent);
             this.vehicles.push(vehicle);
@@ -802,146 +893,44 @@ export class TrafficManager {
 
     /**
      * Executes one complete fixed-timestep update across the entire traffic fleet.
-     * Guaranteed ZERO garbage collection allocations during active simulation.
-     * 
+     *
      * @param {number} dt Constant timestep in seconds (1/60)
      * @param {Vehicle} [playerVehicle=null] Active player vehicle reference
      */
     update(dt, playerVehicle = null) {
         const len = this.agents.length;
         if (!dt || dt <= 0 || len === 0) return;
+        this.net.update(dt);
+
+        // Who is on which piece of road this frame
+        const occupied = this._occupied;
+        for (let i = 0; i < occupied.length; i++) occupied[i].occ.length = 0;
+        occupied.length = 0;
+        for (let i = 0; i < len; i++) {
+            const a = this.agents[i];
+            if (a.retired || !a.piece) continue;
+            if (a.piece.occ.length === 0) occupied.push(a.piece);
+            a.piece.occ.push(a);
+        }
 
         let totalSpeed = 0;
         let stoppedCount = 0;
-
-        // 1. Update individual vehicle AI agents (Pure Pursuit, IDM, Kinematics)
         for (let i = 0; i < len; i++) {
             const agent = this.agents[i];
-            const v = agent.vehicle;
-
-            // If player has hijacked/entered a traffic vehicle, skip AI control for it
-            if (v.isPlayer) {
-                continue;
-            }
-
-            agent.update(dt, this.spatialGrid, this.roadNetwork, this.intersectionLocks, playerVehicle, this.pedestrianObstacles);
-
-            const spd = Math.abs(v.speed);
+            if (agent.retired) continue;
+            agent.update(dt, this);
+            const spd = Math.abs(agent.vehicle.speed);
             totalSpeed += spd;
             if (spd < 0.3) stoppedCount++;
         }
 
-        // 2. Enforce strict non-overlapping separation (guaranteeing center distance d >= 2.35m > 2.0m)
-        this.enforceAntiOverlap(dt, playerVehicle);
-
-        // 3. Sync instanced GPU buffers if active
         if (this.instancedFleet) {
             this.instancedFleet.update(this.vehicles, dt);
         }
 
-        // 4. Update telemetry metrics in-place
         this.metrics.count = len;
         this.metrics.avgSpeed = len > 0 ? (totalSpeed / len) : 0;
         this.metrics.stoppedCount = stoppedCount;
-    }
-
-    /**
-     * Multi-pass relaxation solver guaranteeing pairwise distance d >= 2.35m (strictly > 2.0m)
-     * across all traffic vehicles and the player vehicle, with zero heap allocations.
-     */
-    enforceAntiOverlap(dt, playerVehicle = null) {
-        const vehicles = this.vehicles;
-        const count = vehicles.length;
-        const minDist = TRAFFIC_CONFIG.MIN_CENTER_DISTANCE; // 2.35m
-        const minDistSq = minDist * minDist;
-        const softDist = TRAFFIC_CONFIG.SOFT_SEPARATION_DIST; // 3.8m
-        const softDistSq = softDist * softDist;
-        const passes = TRAFFIC_CONFIG.SEPARATION_SOLVER_ITERATIONS;
-
-        for (let pass = 0; pass < passes; pass++) {
-            for (let i = 0; i < count; i++) {
-                const vA = vehicles[i];
-                const posA = vA.position;
-
-                // Check against player vehicle on pass 0 & 1
-                if (playerVehicle && playerVehicle !== vA) {
-                    const posP = playerVehicle.position;
-                    const dxP = posA.x - posP.x;
-                    const dzP = posA.z - posP.z;
-                    const dSqP = dxP * dxP + dzP * dzP;
-                    if (dSqP < minDistSq) {
-                        const dP = Math.sqrt(dSqP) || 0.001;
-                        const penP = minDist - dP;
-                        posA.x += (dxP / dP) * penP;
-                        posA.z += (dzP / dP) * penP;
-                    }
-                }
-
-                for (let j = i + 1; j < count; j++) {
-                    const vB = vehicles[j];
-                    const posB = vB.position;
-
-                    const dx = posA.x - posB.x;
-                    const dz = posA.z - posB.z;
-                    const distSq = dx * dx + dz * dz;
-
-                    if (distSq < minDistSq) {
-                        // Hard non-penetration constraint (guarantees d >= 2.35m)
-                        let dist = Math.sqrt(distSq);
-                        let nx = 1.0;
-                        let nz = 0.0;
-                        if (dist > 1e-4) {
-                            nx = dx / dist;
-                            nz = dz / dist;
-                        } else {
-                            dist = 0;
-                        }
-
-                        const pen = (minDist - dist) * 0.52;
-                        posA.x += nx * pen;
-                        posA.z += nz * pen;
-                        posB.x -= nx * pen;
-                        posB.z -= nz * pen;
-
-                        if (pass === 0) {
-                            // Dampen relative closing velocity
-                            const relVx = vA.velocity.x - vB.velocity.x;
-                            const relVz = vA.velocity.y - vB.velocity.y;
-                            const vDotN = relVx * nx + relVz * nz;
-                            if (vDotN < 0) {
-                                const impulse = -0.6 * vDotN;
-                                vA.velocity.x += nx * impulse;
-                                vA.velocity.y += nz * impulse;
-                                vB.velocity.x -= nx * impulse;
-                                vB.velocity.y -= nz * impulse;
-                            }
-                        }
-                    } else if (pass === 0 && distSq < softDistSq) {
-                        // Soft repulsion buffer between 2.35m and 3.8m
-                        const dist = Math.sqrt(distSq);
-                        const overlap = softDist - dist;
-                        const nx = dx / dist;
-                        const nz = dz / dist;
-                        const push = overlap * 1.5 * dt;
-                        posA.x += nx * push;
-                        posA.z += nz * push;
-                        posB.x -= nx * push;
-                        posB.z -= nz * push;
-                    }
-                }
-            }
-        }
-
-        // Sync collision circles after position adjustments; separation impulses must not leave
-        // AI cars sliding sideways, so their velocity stays along their heading
-        for (let i = 0; i < count; i++) {
-            const v = vehicles[i];
-            v._syncCollisionCircles();
-            if (!v.isPlayer) {
-                const spd = v.speed;
-                v.velocity.set(-Math.sin(v.yaw) * spd, -Math.cos(v.yaw) * spd);
-            }
-        }
     }
 
     /** Pedestrians currently on a crosswalk, as an array of {x, z}; cars hold short of them. */
@@ -965,13 +954,12 @@ export class TrafficManager {
 
         const cfg = TRAFFIC_CONFIG;
         const despawn2 = cfg.POPULATION_DESPAWN_RADIUS * cfg.POPULATION_DESPAWN_RADIUS;
-        const inViewMin2 = cfg.POPULATION_IN_VIEW_MIN * cfg.POPULATION_IN_VIEW_MIN;
-        // True when a point is out of the camera's view or far enough away to change unnoticed
-        const accept = (wp) => {
+        const inView2 = cfg.POPULATION_IN_VIEW_MIN * cfg.POPULATION_IN_VIEW_MIN;
+        const accept = (p) => {
             if (!viewDir) return true;
-            const dx = wp.x - center.x, dz = wp.z - center.z;
+            const dx = p.x - center.x, dz = p.z - center.z;
             const d2 = dx * dx + dz * dz;
-            if (d2 >= inViewMin2) return true;
+            if (d2 >= inView2) return true;
             // Never pop a car into existence where the player is looking
             return (dx * viewDir.x + dz * viewDir.z) / Math.sqrt(d2) < 0.35;
         };
@@ -980,7 +968,7 @@ export class TrafficManager {
         for (let i = 0; i < this.agents.length && budget > 0; i++) {
             const agent = this.agents[i];
             const v = agent.vehicle;
-            if (v.isPlayer || v.driverDead || v.hasWindowBlood || (v.mesh && v.mesh.parent)) continue;
+            if (agent.retired || v.isPlayer || v.driverDead || v.hasWindowBlood || (v.mesh && v.mesh.parent)) continue;
             const dx = v.position.x - center.x, dz = v.position.z - center.z;
             const d2 = dx * dx + dz * dz;
             const stuck = agent.stuckTime > cfg.STUCK_RECYCLE_TIME &&
@@ -1000,24 +988,9 @@ export class TrafficManager {
 
     _placeAgent(agent, sp) {
         const v = agent.vehicle;
-        v.position.x = sp.x;
-        v.position.z = sp.z;
-        v.yaw = sp.yaw;
         v.steerAngle = 0;
         v.speed = agent.desiredSpeed * 0.6;
-        v.velocity.set(-Math.sin(sp.yaw) * v.speed, -Math.cos(sp.yaw) * v.speed);
-        if (v.lastSafePosition) v.lastSafePosition.set(sp.x, 0, sp.z);
-        v.lastSafeYaw = sp.yaw;
-        v.laneId = sp.laneId;
-        v.waypointIndex = sp.index;
-        agent.laneId = sp.laneId;
-        agent.waypointIndex = sp.index;
-        agent.nextLaneId = null;
-        agent.stationaryTimer = 0;
-        agent.stuckTime = 0;
-        agent.ghostTimer = 0;
-        agent._releaseJunction(this.intersectionLocks, true);
-        v._syncCollisionCircles();
+        agent.place(this.net, sp.laneId, sp.index);
     }
 
     getActiveVehicles() {
@@ -1033,6 +1006,7 @@ export class TrafficManager {
     }
 
     destroy() {
+        for (let i = 0; i < this.agents.length; i++) this.agents[i].retire();
         for (let i = 0; i < this.vehicles.length; i++) {
             this.vehicles[i].destroy();
         }
@@ -1040,9 +1014,10 @@ export class TrafficManager {
             this.instancedFleet.dispose();
             this.instancedFleet = null;
         }
+        for (const p of this._occupied) p.occ.length = 0;
+        this._occupied.length = 0;
         this.agents.length = 0;
         this.vehicles.length = 0;
-        this.intersectionLocks.clear();
         this.metrics.count = 0;
         this.metrics.avgSpeed = 0;
         this.metrics.stoppedCount = 0;

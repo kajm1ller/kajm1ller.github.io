@@ -219,7 +219,7 @@ class CDPHarness {
       '--disable-default-apps',
       '--disable-extensions',
       '--mute-audio',
-      '--disable-gpu',
+      ...(this.options.gpu ? [] : ['--disable-gpu']),
       `--window-size=${this.options.viewport.width},${this.options.viewport.height}`,
       'about:blank'
     ];

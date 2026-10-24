@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Vehicle } from './vehicle.js';
+import { cabinShape } from './carModels.js';
 
 const _scratchTargetDelta = new THREE.Vector3();
 const _scratchForward = new THREE.Vector3();
@@ -300,7 +301,7 @@ export class PoliceOfficer {
  */
 export class PoliceVehicle extends Vehicle {
     constructor(id, x, z, yaw, scene) {
-        super(id, x, z, yaw, 0x0f1423, false);
+        super(id, x, z, yaw, 0x0f1423, false, 'cruiser');
         this.isPolice = true;
         this.isPlayer = false;
 
@@ -322,31 +323,39 @@ export class PoliceVehicle extends Vehicle {
 
     _buildPoliceAesthetics() {
         const root = this.getMesh();
+        // Livery is laid out on the cruiser model's body (doors around the B-pillar, roof, nose)
+        const m = this.model;
+        const c = m.cabin;
+        const half = m.width / 2;
+        const doorZ = cabinShape(m).bPillar;
+        const roofF = c.front + c.rakeF, roofR = c.rear - c.rakeR;
         const whiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.45, envMapIntensity: 1.1 });
         const blackMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.32, metalness: 0.45, envMapIntensity: 1.1 });
 
         // Left white door decal
-        const leftDoor = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.58, 1.4), whiteMat);
+        const doorH = c.belt - m.ground - 0.3;
+        const doorY = m.ground + 0.2 + doorH / 2;
+        const leftDoor = new THREE.Mesh(new THREE.BoxGeometry(0.04, doorH, 1.9), whiteMat);
         leftDoor.name = 'police_door_left';
-        leftDoor.position.set(-1.11, 0.55, -0.1);
+        leftDoor.position.set(-half - 0.005, doorY, doorZ);
         root.add(leftDoor);
 
         // Right white door decal
-        const rightDoor = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.58, 1.4), whiteMat);
+        const rightDoor = new THREE.Mesh(new THREE.BoxGeometry(0.04, doorH, 1.9), whiteMat);
         rightDoor.name = 'police_door_right';
-        rightDoor.position.set(1.11, 0.55, -0.1);
+        rightDoor.position.set(half + 0.005, doorY, doorZ);
         root.add(rightDoor);
 
         // Roof white center panel
-        const roofPanel = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.03, 1.2), whiteMat);
+        const roofPanel = new THREE.Mesh(new THREE.BoxGeometry((c.halfW - c.tumble) * 2 - 0.12, 0.012, roofR - roofF - 0.12), whiteMat);
         roofPanel.name = 'police_roof_panel';
-        roofPanel.position.set(0, 1.41, -0.2);
+        roofPanel.position.set(0, c.roof + 0.04, (roofF + roofR) / 2);
         root.add(roofPanel);
 
         // Front heavy push-bumper / ram bar
         const pushBumper = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.28, 0.12), blackMat);
         pushBumper.name = 'police_push_bumper';
-        pushBumper.position.set(0, 0.35, -2.36);
+        pushBumper.position.set(0, 0.42, -m.length / 2 - 0.1);
         root.add(pushBumper);
     }
 
@@ -354,7 +363,8 @@ export class PoliceVehicle extends Vehicle {
         const root = this.getMesh();
         const lightbarGroup = new THREE.Group();
         lightbarGroup.name = 'police_lightbar';
-        lightbarGroup.position.set(0, 1.45, -0.1);
+        const c = this.model.cabin;
+        lightbarGroup.position.set(0, c.roof + 0.08, (c.front + c.rakeF + c.rear - c.rakeR) / 2 - 0.15);
 
         const mountMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
         const mount = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 0.26), mountMat);
@@ -486,6 +496,7 @@ export class PoliceSystem {
         this.spatialGrid = spatialGrid;
         this.roadNetwork = roadNetwork;
 
+        this.disabled = false; // dev switch: no crimes are recorded, no wanted level, no police at all
         this.wantedLevel = 0;
         this.policeCars = [];
         this.officers = [];
@@ -503,6 +514,13 @@ export class PoliceSystem {
         this.bustedOverlayTimer = 0;
         this.lastCrimeType = null;
         this.crimeHistory = [];
+
+        // Crimes the police didn't see get reported by a caller first. Null: the police respond at
+        // once. { callMin, callMax, dispatchAfterCall } (seconds): the 911 call comes callMin..callMax
+        // after the crime, and the police are dispatched dispatchAfterCall after the call.
+        this.reportDelay = null;
+        this.pendingReport = null;  // { type, pos, level, timer, callAt, dispatchAt, called }
+        this.onCrimeReported = null; // (type, pos) when the caller gets through
         this.carIdCounter = 1;
         this.officerIdCounter = 1;
 
@@ -538,14 +556,37 @@ export class PoliceSystem {
      * Reports a crime committed by the player.
      */
     triggerCrime(type, pos = null) {
+        if (this.disabled) return;
         const crime = {
             type,
             pos: pos ? { x: pos.x, y: pos.y, z: pos.z } : null,
             time: Date.now()
         };
         this.crimeHistory.push(crime);
-        this.lastCrimeType = type;
 
+        // Not wanted yet and no officer around to see it: someone has to call it in first
+        // (crimes committed before the police turn up add to the report)
+        if (this.wantedLevel === 0 && this.reportDelay && type !== 'officer_killed') {
+            const p = this.pendingReport;
+            if (p) {
+                p.level = Math.min(5, p.level + 1);
+            } else {
+                const d = this.reportDelay;
+                const callAt = d.callMin + Math.random() * (d.callMax - d.callMin);
+                this.pendingReport = {
+                    type,
+                    pos: crime.pos,
+                    level: 1,
+                    timer: 0,
+                    callAt,
+                    dispatchAt: callAt + d.dispatchAfterCall,
+                    called: false
+                };
+            }
+            return;
+        }
+
+        this.lastCrimeType = type;
         if (this.wantedLevel === 0) {
             this.wantedLevel = (type === 'officer_killed') ? 2 : 1;
         } else {
@@ -560,10 +601,44 @@ export class PoliceSystem {
         this.updateHUD();
     }
 
+    /** Runs a reported crime's clock: the caller's 911 call, then the police being dispatched. */
+    _updatePendingReport(dt, playerPos) {
+        const p = this.pendingReport;
+        p.timer += dt;
+        if (!p.called && p.timer >= p.callAt) {
+            p.called = true;
+            if (typeof this.onCrimeReported === 'function') this.onCrimeReported(p.type, p.pos);
+        }
+        if (p.timer >= p.dispatchAt) this._dispatchReport(playerPos);
+    }
+
+    /** The police respond to the pending report now (skipping the wait); returns whether there was one. */
+    flushPendingReport(playerPos = null) {
+        const p = this.pendingReport;
+        if (!p) return false;
+        if (!p.called && typeof this.onCrimeReported === 'function') this.onCrimeReported(p.type, p.pos);
+        p.called = true;
+        this._dispatchReport(playerPos || p.pos);
+        return true;
+    }
+
+    _dispatchReport(playerPos) {
+        const p = this.pendingReport;
+        this.pendingReport = null;
+        this.lastCrimeType = p.type;
+        this.wantedLevel = Math.min(5, Math.max(this.wantedLevel, p.level));
+        this.wantedCooldown = 28.0;
+        this.isEvading = false;
+        this.isBusted = false;
+        this._syncPoliceFleet(playerPos || p.pos);
+        this.updateHUD();
+    }
+
     /**
      * Directly modifies wanted level (0 to 5).
      */
     setWantedLevel(level, pos = null) {
+        if (this.disabled) level = 0;
         this.wantedLevel = Math.max(0, Math.min(5, Math.floor(level)));
         if (this.wantedLevel === 0) {
             this.clearWantedLevel();
@@ -575,10 +650,17 @@ export class PoliceSystem {
         }
     }
 
+    /** Turns the police off completely (or back on); turning them off also ends any pursuit. */
+    setDisabled(disabled) {
+        this.disabled = !!disabled;
+        if (this.disabled) this.clearWantedLevel();
+    }
+
     /**
      * Clears wanted status and despawns pursuit vehicles and officers.
      */
     clearWantedLevel() {
+        this.pendingReport = null;
         this.wantedLevel = 0;
         this.wantedCooldown = 0;
         this.spawnTimer = 0;
@@ -876,6 +958,8 @@ export class PoliceSystem {
             }
         }
 
+        if (this.pendingReport) this._updatePendingReport(dt, playerPos);
+
         if (this.wantedLevel <= 0) {
             this.canSeePlayer = false;
             this.sirenAudio.stop();
@@ -1046,10 +1130,8 @@ export class PoliceSystem {
             if (this.isEvading) {
                 const sec = Math.ceil(this.wantedCooldown);
                 this.hudElements.title.textContent = `EVADING POLICE (${sec}s)`;
-                this.hudElements.title.style.color = '#eab308';
             } else {
                 this.hudElements.title.textContent = 'POLICE PURSUIT';
-                this.hudElements.title.style.color = '#ef4444';
             }
         }
     }

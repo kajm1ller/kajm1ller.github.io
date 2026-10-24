@@ -94,33 +94,9 @@ export class PlayerController {
      */
     _initHUD() {
         if (typeof document === 'undefined') return;
+        // The boarding prompt is #car-indicator (see showPrompt); a page may add its own #vehicle-prompt
         ensureCivicHUD(this.domElement);
-        let el = document.getElementById('vehicle-prompt');
-        if (!el && this.domElement) {
-            el = document.createElement('div');
-            el.id = 'vehicle-prompt';
-            el.style.display = 'none';
-            el.style.position = 'absolute';
-            el.style.bottom = '25%';
-            el.style.left = '50%';
-            el.style.transform = 'translateX(-50%)';
-            el.style.background = 'rgba(0, 0, 0, 0.75)';
-            el.style.color = '#4ade80';
-            el.style.border = '2px solid #4ade80';
-            el.style.padding = '10px 24px';
-            el.style.borderRadius = '8px';
-            el.style.fontFamily = 'Arial, sans-serif';
-            el.style.fontSize = '16px';
-            el.style.fontWeight = 'bold';
-            el.style.textTransform = 'uppercase';
-            el.style.letterSpacing = '1px';
-            el.style.pointerEvents = 'none';
-            el.style.zIndex = '150';
-            el.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.5)';
-            el.textContent = 'Press [E] to Drive';
-            this.domElement.appendChild(el);
-        }
-        this.hudPrompt = el;
+        this.hudPrompt = document.getElementById('vehicle-prompt');
     }
 
     /**
@@ -281,6 +257,9 @@ export class PlayerController {
 
         this.state = PlayerState.IN_VEHICLE;
         this.activeVehicle = vehicle;
+        // Whoever was in the driver's seat (e.g. a driver who was shot) is gone once the player sits there
+        vehicle.driverGone = true;
+        if (vehicle.driverMesh) vehicle.driverMesh.visible = false;
 
         if (typeof vehicle.setPlayerControlled === 'function') {
             vehicle.setPlayerControlled(true);

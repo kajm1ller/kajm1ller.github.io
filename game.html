@@ -79,185 +79,302 @@
             #loading-terminal-log { font-size: 10px; padding: 8px; }
             #loading-video-panel { right: 8px; width: 42vw; height: 40vh; top: auto; bottom: 8px; transform: none; }
         }
-        #start-btn {
-            padding: 12px 40px;
-            font-size: 20px;
-            border: 2px solid #fff;
-            border-radius: 5px;
-            background: #000;
-            color: #fff;
-            cursor: pointer;
-            display: none;
-        }
-        #start-btn:hover { background: #fff; color: #000; }
         canvas {
             display: block;
         }
-        #coords {
+
+        /* ================================================================
+           HUD: one look everywhere - translucent black panels, white text.
+           Elements sit in stacks pinned to the screen edges, so whatever is
+           showing lines up instead of overlapping.
+           ================================================================ */
+        :root {
+            --ui-bg: rgba(0, 0, 0, 0.55);
+            --ui-bg-strong: rgba(0, 0, 0, 0.78);
+            --ui-fg: #ffffff;
+            --ui-dim: rgba(255, 255, 255, 0.62);
+            --ui-faint: rgba(255, 255, 255, 0.22);
+            --ui-radius: 6px;
+            --ui-gap: 8px;
+            --ui-edge: 12px;
+            --ui-font: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        .hud-stack {
             position: absolute;
-            top: 10px;
-            right: 10px;
-            color: white;
-            background: rgba(0,0,0,0.5);
-            padding: 10px;
-            border-radius: 5px;
-            font-family: monospace;
+            display: flex;
+            flex-direction: column;
+            gap: var(--ui-gap);
+            z-index: 100;
+            pointer-events: none;
+        }
+        .hud-stack > * { pointer-events: none; }
+        .hud-row { display: flex; gap: var(--ui-gap); align-items: center; white-space: nowrap; }
+        #hud-tl { top: var(--ui-edge); left: var(--ui-edge); align-items: flex-start; }
+        #hud-tc { top: var(--ui-edge); left: 50%; transform: translateX(-50%); align-items: center; max-width: 46vw; }
+        #hud-tr { top: var(--ui-edge); right: var(--ui-edge); align-items: flex-end; }
+        #hud-center { top: calc(50% + 36px); left: 50%; transform: translateX(-50%); align-items: center; }
+        #hud-bl { bottom: var(--ui-edge); left: var(--ui-edge); align-items: flex-start; width: min(320px, 28vw); }
+        #hud-bc { bottom: var(--ui-edge); left: 50%; transform: translateX(-50%); align-items: center; max-width: 40vw; }
+        #hud-br { bottom: var(--ui-edge); right: var(--ui-edge); align-items: flex-end; }
+
+        /* Every panel, prompt, button and field */
+        #coords, #wanted-hud, #car-indicator, #ped-talk-indicator, #ped-dialog, #car-speed-hud,
+        #radio-ui, #player-health-hud, #spray-hud, #color-picker, #dev-hud, #image-upload-btn,
+        #mode-indicator, #dev-menu-btn, #dev-menu, #plane-hud, #mp-status, #mp-chat-btn, #chat-input,
+        #game-toast, #name-input, #busted-overlay {
+            box-sizing: border-box;
+            background: var(--ui-bg);
+            color: var(--ui-fg);
+            font-family: var(--ui-font);
             font-size: 14px;
-            z-index: 100;
-        }
-        #name-input {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%,-50%);
-            color: white;
-            background: rgba(0,0,0,0.9);
-            padding: 30px 50px;
-            border-radius: 10px;
-            font-family: Arial, sans-serif;
-            font-size: 20px;
-            z-index: 200;
-            text-align: center;
-            display: none;
-        }
-        #name-input input {
-            padding: 10px;
-            font-size: 18px;
+            line-height: 1.35;
             border: none;
-            border-radius: 5px;
-            width: 200px;
-            text-align: center;
+            border-radius: var(--ui-radius);
+            box-shadow: none;
+            text-shadow: none;
+            padding: 8px 12px;
         }
-        #name-input button {
-            padding: 12px 30px;
-            font-size: 18px;
+        .ui-dim, .key-hint { color: var(--ui-dim); }
+        .ui-label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+        }
+
+        /* Buttons: black, a little darker on hover, outlined while pressed */
+        #start-btn, #name-input button, #image-upload-btn, #dev-menu-btn, #mp-chat-btn,
+        #radio-controls button, #dev-menu button.dev-action, .mbtn, #mobile-spray-btn {
+            background: var(--ui-bg);
+            color: var(--ui-fg);
+            font-family: var(--ui-font);
+            border: none;
+            border-radius: var(--ui-radius);
             cursor: pointer;
-            border: none;
-            border-radius: 5px;
-            background: #000;
-            color: white;
+            transition: background 0.12s, box-shadow 0.12s;
         }
-        #crosshair {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%,-50%);
-            z-index: 100;
-            pointer-events: none;
+        #start-btn:hover, #name-input button:hover, #image-upload-btn:hover, #dev-menu-btn:hover,
+        #mp-chat-btn:hover, #radio-controls button:hover, #dev-menu button.dev-action:hover {
+            background: var(--ui-bg-strong);
+        }
+        #radio-controls button:active, #dev-menu button.dev-action:active, .mbtn:active, .mbtn.held,
+        #mobile-spray-btn:active, #mobile-spray-btn.held, #image-upload-btn.has-image {
+            background: var(--ui-bg-strong);
+            box-shadow: inset 0 0 0 1px var(--ui-fg);
+        }
+
+        #start-btn {
             display: none;
+            padding: 12px 40px;
+            font-size: 20px;
+            box-shadow: inset 0 0 0 1px var(--ui-fg);
         }
-        #crosshair .h {
-            position: absolute;
-            width: 20px;
-            height: 2px;
-            background: rgba(255,255,255,0.8);
-            left: -10px;
-            top: -1px;
+        #start-btn:hover { background: var(--ui-fg); color: #000; }
+
+        /* ---- Top left: dev menu button, multiplayer status ---- */
+        #dev-menu-btn { display: none; pointer-events: auto; }
+        #mp-bar { display: none; align-items: center; gap: var(--ui-gap); pointer-events: auto; }
+        #mp-status { cursor: default; }
+        #mp-status.offline { cursor: pointer; color: var(--ui-dim); }
+
+        /* ---- Top centre: fly-cam help, notices ---- */
+        #dev-hud { display: none; white-space: pre; text-align: center; }
+        #game-toast { display: none; text-align: center; }
+
+        /* ---- Top right: position, wanted level ---- */
+        #coords { font-variant-numeric: tabular-nums; }
+        #wanted-hud { display: none; text-align: center; user-select: none; }
+        #wanted-stars { font-size: 24px; letter-spacing: 4px; line-height: 1; margin-bottom: 4px; }
+        .wanted-star { color: var(--ui-faint); transition: color 0.15s; }
+        .wanted-star.active { color: var(--ui-fg); }
+        #wanted-title { font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; }
+
+        /* ---- Centre, under the crosshair: interaction prompts ---- */
+        #car-indicator, #ped-talk-indicator { display: none; font-size: 15px; font-weight: 600; }
+        #scope-overlay { position: fixed; inset: 0; z-index: 90; pointer-events: none; display: none;
+            background: radial-gradient(circle at 50% 50%, transparent 0, transparent 34vmin, rgba(0,0,0,0.92) 34.3vmin); }
+        #scope-overlay::before, #scope-overlay::after { content: ''; position: absolute; background: rgba(0,0,0,0.85); }
+        #scope-overlay::before { left: calc(50% - 34vmin); width: 68vmin; top: 50%; height: 1px; }
+        #scope-overlay::after { top: calc(50% - 34vmin); height: 68vmin; left: 50%; width: 1px; }
+
+        /* ---- Bottom left: chat, radio ---- */
+        #chat-log {
+            width: 100%;
+            font-family: var(--ui-font);
+            font-size: 14px;
+            color: var(--ui-fg);
+            text-shadow: 0 1px 2px #000, 0 0 4px #000;
         }
-        #crosshair .v {
-            position: absolute;
-            width: 2px;
-            height: 20px;
-            background: rgba(255,255,255,0.8);
-            left: -1px;
-            top: -10px;
-        }
-        #spray-hud {
+        #chat-log .line { margin-top: 2px; word-wrap: break-word; transition: opacity 1.5s; }
+        #chat-log .line.old { opacity: 0; }
+        #chat-log .line .who { font-weight: 700; }
+        #chat-log .line.system { color: var(--ui-dim); font-style: italic; }
+        #chat-input {
             display: none;
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: white;
-            background: rgba(0,0,0,0.6);
-            padding: 10px 20px;
-            border-radius: 8px;
-            font-family: Arial, sans-serif;
+            width: 100%;
             font-size: 15px;
-            z-index: 100;
-            pointer-events: none;
-            text-align: center;
+            outline: none;
+            pointer-events: auto;
+            box-shadow: inset 0 0 0 1px var(--ui-faint);
         }
+        #chat-input::placeholder { color: var(--ui-dim); }
+        #radio-ui {
+            display: none;
+            width: 100%;
+            padding: 10px 12px;
+            pointer-events: auto;
+            user-select: none;
+        }
+        #radio-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+        #radio-badge { flex: none; }
+        #radio-track-title {
+            font-size: 14px;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 0;
+        }
+        #radio-controls { display: flex; gap: 6px; margin-bottom: 8px; }
+        #radio-controls button { flex: 1; padding: 6px 8px; font-size: 12px; font-weight: 600; background: rgba(0, 0, 0, 0.4); }
+        #radio-volume-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+        #radio-volume-slider { flex: 1; min-width: 0; accent-color: var(--ui-fg); cursor: pointer; height: 5px; }
+        #radio-volume-val { color: var(--ui-dim); min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
+
+        /* ---- Bottom centre: speech, vehicle readouts, weapon bar ---- */
+        #ped-dialog { display: none; min-width: 260px; max-width: 100%; text-align: center; font-size: 15px; }
+        #ped-dialog-speaker { margin-bottom: 4px; color: var(--ui-dim); }
+        #plane-hud { display: none; text-align: center; font-variant-numeric: tabular-nums; }
+        #plane-hud-hint { margin-top: 4px; font-size: 11px; color: var(--ui-dim); }
+        #plane-hud-line.warn { font-weight: 700; text-decoration: underline; }
+        #car-speed-hud { display: none; font-size: 15px; font-variant-numeric: tabular-nums; }
+        #spray-hud { display: none; text-align: center; max-width: 100%; }
+        #spray-hud .weapon-bar { font-weight: 600; }
+        #spray-hud .weapon-bar .current { text-decoration: underline; text-underline-offset: 3px; }
+        #spray-hud .weapon-help { font-size: 12px; color: var(--ui-dim); margin-top: 2px; }
         #color-picker {
             display: none;
-            position: absolute;
-            bottom: 60px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 100;
-            background: rgba(0,0,0,0.7);
-            padding: 8px 12px;
-            border-radius: 8px;
+            pointer-events: auto;
             gap: 6px;
-            display: none;
             flex-wrap: wrap;
             justify-content: center;
             max-width: 280px;
         }
         .color-swatch {
-            width: 28px;
-            height: 28px;
+            width: 26px;
+            height: 26px;
             border-radius: 50%;
-            border: 2px solid rgba(255,255,255,0.4);
+            box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.35);
             cursor: pointer;
             transition: transform 0.1s;
         }
-        .color-swatch:hover {
-            transform: scale(1.2);
-        }
-        .color-swatch.active {
-            border-color: white;
-            transform: scale(1.25);
-        }
-        #dev-hud {
-            display: none;
+        .color-swatch:hover { transform: scale(1.15); }
+        .color-swatch.active { box-shadow: inset 0 0 0 2px #fff, 0 0 0 2px #000; transform: scale(1.2); }
+
+        /* ---- Bottom right: spray mode, image upload, health ---- */
+        #mode-indicator { display: none; }
+        #image-upload-btn { display: none; pointer-events: auto; }
+        #player-health-hud { display: flex; align-items: center; gap: 10px; user-select: none; }
+        #player-health-bar { width: 120px; height: 8px; background: var(--ui-faint); border-radius: 4px; overflow: hidden; }
+        #player-health-fill { width: 100%; height: 100%; background: var(--ui-fg); transition: width 0.15s ease; }
+        #player-health-val { font-size: 12px; font-weight: 600; min-width: 36px; text-align: right; font-variant-numeric: tabular-nums; }
+
+        /* ---- Centre screen ---- */
+        #crosshair {
             position: absolute;
-            top: 50px;
+            top: 50%;
             left: 50%;
-            transform: translateX(-50%);
-            color: #0f0;
-            background: rgba(0,0,0,0.8);
-            padding: 8px 18px;
-            border-radius: 6px;
-            font-family: monospace;
-            font-size: 14px;
-            z-index: 200;
+            transform: translate(-50%, -50%);
+            z-index: 100;
             pointer-events: none;
-            white-space: pre;
+            display: none;
         }
-        /* Image upload button */
-        #image-upload-btn {
+        #crosshair .h, #crosshair .v { position: absolute; background: rgba(255, 255, 255, 0.85); box-shadow: 0 0 2px rgba(0, 0, 0, 0.8); }
+        #crosshair .h { width: 20px; height: 2px; left: -10px; top: -1px; }
+        #crosshair .v { width: 2px; height: 20px; left: -1px; top: -10px; }
+        #busted-overlay {
             display: none;
             position: absolute;
-            bottom: 70px;
-            right: 20px;
-            z-index: 100;
-            background: rgba(0,0,0,0.7);
-            color: white;
-            border: 2px solid rgba(255,255,255,0.4);
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-family: Arial, sans-serif;
-            font-size: 14px;
-            cursor: pointer;
-        }
-        #image-upload-btn:hover { background: rgba(0,0,0,0.9); }
-        #image-upload-btn.has-image { border-color: #4f4; }
-        #mode-indicator {
-            display: none;
-            position: absolute;
-            bottom: 100px;
-            right: 20px;
-            z-index: 100;
-            background: rgba(0,0,0,0.7);
-            color: white;
-            padding: 6px 14px;
-            border-radius: 8px;
-            font-family: Arial, sans-serif;
-            font-size: 13px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 16px 40px;
+            font-size: 64px;
+            font-weight: 800;
+            letter-spacing: 10px;
+            z-index: 250;
             pointer-events: none;
         }
-        /* Mobile controls */
+        #damage-flash {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: radial-gradient(ellipse at center, rgba(220, 38, 38, 0) 30%, rgba(220, 38, 38, 0.45) 100%);
+            pointer-events: none;
+            z-index: 999;
+        }
+        #death-fade {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: #000;
+            opacity: 0;
+            transition: opacity 1.2s ease;
+            pointer-events: none;
+            z-index: 240;
+        }
+
+        /* ---- Dialogs ---- */
+        #name-input, #dev-menu {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: var(--ui-bg-strong);
+            padding: 18px 22px;
+        }
+        #name-input { display: none; z-index: 200; text-align: center; font-size: 16px; padding: 24px 36px; }
+        #name-input input {
+            box-sizing: border-box;
+            width: 220px;
+            padding: 9px 10px;
+            font-family: var(--ui-font);
+            font-size: 16px;
+            text-align: center;
+            color: var(--ui-fg);
+            background: var(--ui-bg);
+            border: none;
+            border-radius: var(--ui-radius);
+            box-shadow: inset 0 0 0 1px var(--ui-faint);
+            outline: none;
+        }
+        #name-input input:focus { box-shadow: inset 0 0 0 1px var(--ui-fg); }
+        #name-input button { padding: 10px 28px; font-size: 16px; }
+        #dev-menu { display: none; z-index: 300; min-width: 280px; user-select: none; }
+        #dev-menu-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 16px;
+            margin-bottom: 12px;
+        }
+        #dev-menu-title span { font-size: 12px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ui-dim); }
+        #dev-menu button.dev-action {
+            display: block;
+            width: 100%;
+            margin-bottom: 6px;
+            padding: 9px 12px;
+            text-align: left;
+            font-size: 14px;
+            background: rgba(0, 0, 0, 0.45);
+        }
+        #dev-menu label { display: block; margin: 6px 0 10px; font-size: 13px; cursor: pointer; }
+        #dev-menu input[type="checkbox"] { accent-color: var(--ui-fg); }
+        #dev-menu select { margin-left: 6px; font: inherit; }
+        #dev-menu-status { min-height: 16px; margin-top: 4px; font-size: 12px; color: var(--ui-dim); }
+
+        /* ---- Mobile controls ---- */
         #mobile-controls {
             display: none;
             position: fixed;
@@ -273,8 +390,8 @@
             width: 110px;
             height: 110px;
             border-radius: 50%;
-            background: rgba(255,255,255,0.12);
-            border: 2px solid rgba(255,255,255,0.3);
+            background: var(--ui-bg);
+            box-shadow: inset 0 0 0 1px var(--ui-faint);
             pointer-events: auto;
             touch-action: none;
         }
@@ -283,7 +400,7 @@
             width: 44px;
             height: 44px;
             border-radius: 50%;
-            background: rgba(255,255,255,0.5);
+            background: rgba(255, 255, 255, 0.55);
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
@@ -305,21 +422,17 @@
             width: 76px;
             height: 76px;
             border-radius: 50%;
-            background: rgba(255,60,60,0.5);
-            border: 2px solid rgba(255,255,255,0.4);
             pointer-events: auto;
             touch-action: none;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-family: Arial, sans-serif;
             font-size: 12px;
-            color: white;
+            font-weight: 600;
             text-transform: uppercase;
             user-select: none;
             -webkit-user-select: none;
         }
-        #mobile-spray-btn:active, #mobile-spray-btn.held { background: rgba(255,60,60,0.8); }
         /* Context buttons: only the ones tagged for the current mode (foot / car / plane) are shown */
         #mobile-actions {
             position: absolute;
@@ -345,509 +458,51 @@
         .mbtn {
             width: 64px;
             height: 38px;
-            border-radius: 8px;
-            background: rgba(0,0,0,0.6);
-            border: 1px solid rgba(255,255,255,0.3);
             pointer-events: auto;
             touch-action: none;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-family: Arial, sans-serif;
             font-size: 12px;
-            color: white;
+            font-weight: 600;
             user-select: none;
             -webkit-user-select: none;
         }
-        .mbtn:active, .mbtn.held { background: rgba(90,169,255,0.55); }
         #mobile-controls.mode-foot .mbtn:not([data-modes~="foot"]),
         #mobile-controls.mode-car .mbtn:not([data-modes~="car"]),
         #mobile-controls.mode-plane .mbtn:not([data-modes~="plane"]) { display: none; }
-        #mobile-start-btn { background: rgba(40,160,80,0.65); }
-        #mobile-start-btn.engine-on { background: rgba(0,0,0,0.6); }
+        #mobile-start-btn:not(.engine-on) { box-shadow: inset 0 0 0 1px var(--ui-fg); }
         #mobile-controls.mode-plane #mobile-spray-btn { display: none; }
-        /* Touch devices: keep the page still and move HUD out from under the thumbs */
+
+        /* Narrow windows: slimmer bottom row so the three bottom stacks keep clear of each other */
+        @media (max-width: 1000px) {
+            #hud-bc { max-width: 34vw; }
+            #player-health-bar { width: 72px; }
+        }
+
+        /* Touch devices: keep the page still; the bottom corners belong to the thumb controls, so
+           the corner stacks move up to the top of the screen */
         body.is-mobile {
             touch-action: none;
             overscroll-behavior: none;
             -webkit-user-select: none;
             user-select: none;
         }
-        body.is-mobile #radio-ui {
-            bottom: auto;
-            top: 52px;
-            left: 10px;
-            min-width: 0;
-            width: 215px;
-            padding: 8px 10px;
-            transform: scale(0.85);
-            transform-origin: top left;
-        }
-        body.is-mobile #radio-track-title { max-width: 110px; }
-        body.is-mobile #player-health-hud {
-            bottom: auto;
-            top: 10px;
-            right: auto;
-            left: 50%;
-            transform: translateX(-50%);
-        }
-        body.is-mobile #plane-hud-hint { display: none; }
+        /* (on touch devices the chat and radio join the top-left stack, health the top-right one,
+           and the interaction prompts sit on top of the bottom-centre stack) */
+        body.is-mobile #chat-log, body.is-mobile #chat-input, body.is-mobile #radio-ui { width: min(240px, 34vw); }
+        body.is-mobile #hud-bc { max-width: 46vw; }
+        body.is-mobile #radio-ui { padding: 8px 10px; }
+        body.is-mobile #chat-log { font-size: 13px; }
+        body.is-mobile #plane-hud-hint, body.is-mobile .weapon-help { display: none; }
         body.is-mobile #mode-indicator { display: none !important; }
         body.is-mobile.mobile-vehicle #spray-hud { display: none !important; }
         body.is-mobile #dev-menu { max-height: 88vh; overflow-y: auto; }
         body.is-mobile #dev-menu-btn { padding: 10px 14px; }
         body.is-mobile #image-upload-btn { display: none !important; }
-        /* Kaj Simulator Honda Civic HUD */
-        #car-indicator {
-            display: none;
-            position: absolute;
-            top: 55%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: #7cff7c;
-            font-family: Arial, sans-serif;
-            font-size: 18px;
-            font-weight: bold;
-            background: rgba(0, 0, 0, 0.6);
-            padding: 8px 16px;
-            border-radius: 5px;
-            z-index: 140;
-            pointer-events: none;
-        }
-        #car-speed-hud {
-            display: none;
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: white;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 10px 20px;
-            border-radius: 5px;
-            font-family: Arial, sans-serif;
-            font-size: 16px;
-            z-index: 100;
-            pointer-events: none;
-        }
-        #ped-talk-indicator {
-            display: none;
-            position: absolute;
-            top: 61%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: #ffdf6b;
-            font-family: Arial, sans-serif;
-            font-size: 17px;
-            font-weight: bold;
-            background: rgba(0, 0, 0, 0.72);
-            border: 1px solid rgba(255, 223, 107, 0.5);
-            padding: 7px 16px;
-            border-radius: 6px;
-            z-index: 140;
-            pointer-events: none;
-        }
-        #ped-dialog {
-            display: none;
-            position: absolute;
-            bottom: 85px;
-            left: 50%;
-            transform: translateX(-50%);
-            min-width: 280px;
-            max-width: 480px;
-            color: #ffffff;
-            background: rgba(15, 20, 30, 0.88);
-            border: 2px solid #ffdf6b;
-            padding: 12px 22px;
-            border-radius: 10px;
-            font-family: Arial, sans-serif;
-            font-size: 16px;
-            z-index: 160;
-            pointer-events: none;
-            text-align: center;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.6);
-        }
-        #ped-dialog-speaker {
-            color: #ffdf6b;
-            font-weight: bold;
-            font-size: 13px;
-            text-transform: uppercase;
-            margin-bottom: 4px;
-            letter-spacing: 0.8px;
-        }
-        /* In-Car Radio HUD (Bottom-Left) */
-        #radio-ui {
-            display: none;
-            position: absolute;
-            bottom: 25px;
-            left: 25px;
-            z-index: 200;
-            background: rgba(15, 23, 42, 0.9);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 10px;
-            padding: 12px 16px;
-            color: #f1f5f9;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55), 0 0 12px rgba(99, 102, 241, 0.25);
-            min-width: 270px;
-            pointer-events: auto;
-            user-select: none;
-            backdrop-filter: blur(8px);
-        }
-        #radio-header {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 10px;
-        }
-        #radio-badge {
-            background: #4f46e5;
-            color: white;
-            font-size: 11px;
-            font-weight: bold;
-            padding: 2px 7px;
-            border-radius: 4px;
-            letter-spacing: 0.5px;
-        }
-        #radio-track-title {
-            font-size: 13px;
-            font-weight: 600;
-            color: #f8fafc;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            max-width: 180px;
-        }
-        #radio-controls {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 10px;
-        }
-        #radio-controls button {
-            flex: 1;
-            background: rgba(255, 255, 255, 0.12);
-            border: 1px solid rgba(255, 255, 255, 0.22);
-            border-radius: 6px;
-            color: #ffffff;
-            padding: 6px 10px;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.15s, border-color 0.15s;
-        }
-        #radio-controls button:hover {
-            background: rgba(255, 255, 255, 0.25);
-            border-color: rgba(255, 255, 255, 0.4);
-        }
-        #radio-controls button:active {
-            background: rgba(99, 102, 241, 0.6);
-        }
-        #radio-volume-row {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 12px;
-        }
-        #radio-vol-icon {
-            font-size: 14px;
-        }
-        #radio-volume-slider {
-            flex: 1;
-            accent-color: #6366f1;
-            cursor: pointer;
-            height: 5px;
-        }
-        #radio-volume-val {
-            font-size: 11px;
-            color: #94a3b8;
-            min-width: 32px;
-            text-align: right;
-        }
-        /* Police & Wanted System HUD */
-        #wanted-hud {
-            display: none;
-            position: absolute;
-            top: 85px;
-            right: 10px;
-            background: rgba(10, 15, 25, 0.88);
-            border: 2px solid rgba(239, 68, 68, 0.7);
-            border-radius: 8px;
-            padding: 8px 16px;
-            color: white;
-            font-family: Arial, sans-serif;
-            text-align: center;
-            z-index: 100;
-            box-shadow: 0 0 15px rgba(239, 68, 68, 0.35);
-            pointer-events: none;
-            user-select: none;
-        }
-        #wanted-stars {
-            font-size: 26px;
-            letter-spacing: 4px;
-            line-height: 1;
-            margin-bottom: 4px;
-        }
-        .wanted-star {
-            color: rgba(255, 255, 255, 0.2);
-            transition: color 0.15s, text-shadow 0.15s;
-        }
-        .wanted-star.active {
-            color: #ffd700;
-            text-shadow: 0 0 8px #ffd700, 0 0 16px #ff8800;
-        }
-        #wanted-title {
-            font-size: 11px;
-            font-weight: 800;
-            letter-spacing: 2px;
-            color: #ef4444;
-            text-transform: uppercase;
-        }
-        #busted-overlay {
-            display: none;
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            font-size: 72px;
-            font-weight: 900;
-            font-family: Impact, Arial Black, sans-serif;
-            color: #dc2626;
-            text-shadow: 0 0 25px #000000, 0 0 50px #ef4444;
-            letter-spacing: 8px;
-            z-index: 250;
-            pointer-events: none;
-        }
-        #damage-flash {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: radial-gradient(ellipse at center, rgba(220, 38, 38, 0) 30%, rgba(220, 38, 38, 0.45) 100%);
-            pointer-events: none;
-            z-index: 999;
-        }
-        #player-health-hud {
-            position: absolute;
-            bottom: 25px;
-            right: 25px;
-            background: rgba(10, 15, 25, 0.85);
-            border: 2px solid rgba(34, 197, 94, 0.6);
-            border-radius: 8px;
-            padding: 8px 14px;
-            color: white;
-            font-family: Arial, sans-serif;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            z-index: 100;
-            pointer-events: none;
-            user-select: none;
-        }
-        #player-health-label {
-            font-size: 11px;
-            font-weight: 800;
-            letter-spacing: 1.5px;
-            color: #22c55e;
-        }
-        #player-health-bar {
-            width: 120px;
-            height: 12px;
-            background: rgba(255, 255, 255, 0.15);
-            border-radius: 6px;
-            overflow: hidden;
-        }
-        #player-health-fill {
-            width: 100%;
-            height: 100%;
-            background: #22c55e;
-            transition: width 0.15s ease, background 0.15s ease;
-        }
-        #player-health-val {
-            font-size: 12px;
-            font-weight: 700;
-            min-width: 36px;
-        }
-        /* Dev menu */
-        #dev-menu-btn {
-            display: none;
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            z-index: 210;
-            background: rgba(0,0,0,0.6);
-            color: #9cf;
-            border: 1px solid rgba(153,204,255,0.5);
-            border-radius: 6px;
-            padding: 6px 12px;
-            font-family: monospace;
-            font-size: 13px;
-            cursor: pointer;
-        }
-        #dev-menu-btn:hover { background: rgba(30,50,80,0.85); }
-        #dev-menu {
-            display: none;
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            z-index: 300;
-            min-width: 280px;
-            background: rgba(10, 15, 25, 0.95);
-            border: 2px solid #5aa9ff;
-            border-radius: 10px;
-            padding: 16px 20px 14px;
-            color: #e6f0ff;
-            font-family: monospace;
-            font-size: 14px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.7);
-            user-select: none;
-        }
-        #dev-menu-title {
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
-            font-weight: bold;
-            letter-spacing: 2px;
-            color: #5aa9ff;
-            margin-bottom: 12px;
-        }
-        #dev-menu-title span { font-size: 11px; font-weight: normal; letter-spacing: 0; color: #8aa; }
-        #dev-menu button.dev-action {
-            display: block;
-            width: 100%;
-            margin-bottom: 8px;
-            padding: 9px 12px;
-            text-align: left;
-            font-family: monospace;
-            font-size: 14px;
-            color: #fff;
-            background: rgba(90,169,255,0.16);
-            border: 1px solid rgba(90,169,255,0.45);
-            border-radius: 6px;
-            cursor: pointer;
-        }
-        #dev-menu button.dev-action:hover { background: rgba(90,169,255,0.38); }
-        #dev-menu label { display: block; margin: 4px 0 10px; font-size: 13px; cursor: pointer; }
-        #dev-menu-status { min-height: 16px; margin-top: 4px; font-size: 12px; color: #9fd8a8; }
-        /* Aircraft HUD & toast */
-        #plane-hud {
-            display: none;
-            position: absolute;
-            bottom: 70px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 100;
-            pointer-events: none;
-            text-align: center;
-            color: white;
-            background: rgba(0,0,0,0.7);
-            padding: 8px 18px;
-            border-radius: 5px;
-            font-family: monospace;
-            font-size: 15px;
-        }
-        #plane-hud-hint { margin-top: 4px; font-size: 11px; color: #9ab; }
-        #plane-hud-line.warn { color: #ff8a65; }
-        /* Multiplayer: status bar, chat */
-        #mp-bar {
-            display: none;
-            position: absolute;
-            top: 10px;
-            left: 132px;
-            z-index: 210;
-            align-items: center;
-            gap: 6px;
-            font-family: monospace;
-            font-size: 13px;
-            color: #cde;
-        }
-        #mp-status {
-            background: rgba(0,0,0,0.6);
-            border: 1px solid rgba(255,255,255,0.25);
-            border-radius: 6px;
-            padding: 6px 10px;
-            cursor: default;
-        }
-        #mp-status.offline { cursor: pointer; color: #fca; }
-        #mp-chat-btn {
-            background: rgba(0,0,0,0.6);
-            color: #fff;
-            border: 1px solid rgba(255,255,255,0.25);
-            border-radius: 6px;
-            padding: 5px 10px;
-            font-size: 14px;
-            cursor: pointer;
-        }
-        #chat-log {
-            position: absolute;
-            left: 10px;
-            bottom: 150px;
-            width: min(360px, 60vw);
-            z-index: 150;
-            pointer-events: none;
-            font-family: Arial, sans-serif;
-            font-size: 14px;
-            color: #fff;
-            text-shadow: 0 1px 2px #000, 0 0 4px #000;
-        }
-        #chat-log .line { margin-top: 2px; word-wrap: break-word; transition: opacity 1.5s; }
-        #chat-log .line.old { opacity: 0; }
-        #chat-log .line .who { font-weight: bold; color: #9fd3ff; }
-        #chat-log .line.self .who { color: #a8f0a8; }
-        #chat-log .line.system { color: #ffd479; font-style: italic; }
-        #chat-input {
-            display: none;
-            position: absolute;
-            left: 10px;
-            bottom: 112px;
-            width: min(360px, 60vw);
-            z-index: 280;
-            box-sizing: border-box;
-            padding: 8px 10px;
-            font-size: 15px;
-            color: #fff;
-            background: rgba(0,0,0,0.75);
-            border: 1px solid #5aa9ff;
-            border-radius: 6px;
-            outline: none;
-        }
-        body.is-mobile #mp-bar { left: 132px; }
-        body.is-mobile #chat-log { bottom: auto; top: 52px; width: min(300px, 45vw); font-size: 13px; }
-        body.is-mobile #chat-input { bottom: auto; top: 52px; width: min(420px, 70vw); }
-        #death-fade {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: #000;
-            opacity: 0;
-            transition: opacity 1.2s ease;
-            pointer-events: none;
-            z-index: 240;
-        }
-        #game-toast {
-            display: none;
-            position: absolute;
-            top: 14%;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 260;
-            pointer-events: none;
-            color: #fff;
-            background: rgba(10, 15, 25, 0.88);
-            border: 1px solid rgba(255,255,255,0.35);
-            border-radius: 6px;
-            padding: 8px 18px;
-            font-family: Arial, sans-serif;
-            font-size: 15px;
-        }
     </style>
 </head>
 <body>
-    <div id="coords">X: 0.00<br>Y: 0.00<br>Z: 0.00</div>
     <div id="name-input">
         <div style="margin-bottom:15px;">NAME</div>
         <input type="text" id="player-name" maxlength="20" placeholder="Your Name">
@@ -922,73 +577,95 @@
             bootLog('Fetching three.js and game modules...');
         })();
     </script>
-    <div id="car-indicator"><span class="key-hint">(E) </span>Enter Car</div>
-    <div id="ped-talk-indicator"><span class="key-hint">(E) </span>Talk</div>
-    <div id="ped-dialog"><div id="ped-dialog-speaker">Pedestrian</div><div id="ped-dialog-text"></div></div>
-    <div id="car-speed-hud">Speed: <span id="car-speed-val">0</span> mph</div>
-    <!-- Police & Wanted System HUD -->
-    <div id="wanted-hud">
-        <div id="wanted-stars">
-            <span class="wanted-star" data-star="1">★</span>
-            <span class="wanted-star" data-star="2">★</span>
-            <span class="wanted-star" data-star="3">★</span>
-            <span class="wanted-star" data-star="4">★</span>
-            <span class="wanted-star" data-star="5">★</span>
+    <!-- HUD: stacks pinned to the screen edges (see .hud-stack) -->
+    <div id="hud-tl" class="hud-stack">
+        <div class="hud-row">
+            <button id="dev-menu-btn" type="button" title="Dev menu (`)">Dev (`)</button>
+            <div id="mp-bar"><span id="mp-status" class="offline">Single player</span><button id="mp-chat-btn" type="button" title="Chat (T)">Chat (T)</button></div>
         </div>
-        <div id="wanted-title">POLICE PURSUIT</div>
     </div>
+    <div id="hud-tc" class="hud-stack">
+        <div id="dev-hud">DEV FLY MODE
+WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
+        <div id="game-toast"></div>
+    </div>
+    <div id="hud-tr" class="hud-stack">
+        <div id="coords">X: 0.00<br>Y: 0.00<br>Z: 0.00</div>
+        <div id="wanted-hud">
+            <div id="wanted-stars">
+                <span class="wanted-star" data-star="1">★</span>
+                <span class="wanted-star" data-star="2">★</span>
+                <span class="wanted-star" data-star="3">★</span>
+                <span class="wanted-star" data-star="4">★</span>
+                <span class="wanted-star" data-star="5">★</span>
+            </div>
+            <div id="wanted-title">POLICE PURSUIT</div>
+        </div>
+    </div>
+    <div id="hud-center" class="hud-stack">
+        <div id="car-indicator"><span class="key-hint">(E) </span>Enter Car</div>
+        <div id="ped-talk-indicator"><span class="key-hint">(E) </span>Talk</div>
+    </div>
+    <div id="hud-bl" class="hud-stack">
+        <div id="chat-log"></div>
+        <input id="chat-input" type="text" maxlength="120" placeholder="Say something... (Enter to send, Esc to cancel)" autocomplete="off">
+        <div id="radio-ui">
+            <div id="radio-header">
+                <span id="radio-badge" class="ui-label">RADIO</span>
+                <span id="radio-track-title">Hot In Herre</span>
+            </div>
+            <div id="radio-controls">
+                <button id="radio-btn-restart" type="button" title="Restart track">Restart</button>
+                <button id="radio-btn-pause" type="button" title="Play / Pause (R)">Pause</button>
+                <button id="radio-btn-skip" type="button" title="Skip to next track (N)">Skip</button>
+            </div>
+            <div id="radio-volume-row">
+                <span id="radio-vol-icon" class="ui-label">VOL</span>
+                <input type="range" id="radio-volume-slider" min="0" max="1" step="0.01" value="0.5">
+                <span id="radio-volume-val">50%</span>
+            </div>
+        </div>
+    </div>
+    <div id="hud-bc" class="hud-stack">
+        <div id="ped-dialog"><div id="ped-dialog-speaker" class="ui-label">Pedestrian</div><div id="ped-dialog-text"></div></div>
+        <div id="plane-hud">
+            <div id="plane-hud-line"></div>
+            <div id="plane-hud-hint">W/S throttle · A/D bank · ↓/↑ pitch up/down · Space brake · R/N radio · E exit (on ground)</div>
+        </div>
+        <div id="color-picker"></div>
+        <div id="car-speed-hud">Speed: <span id="car-speed-val">0</span> mph</div>
+        <div id="spray-hud"></div>
+    </div>
+    <div id="hud-br" class="hud-stack">
+        <div id="mode-indicator">Mode: Spray</div>
+        <button id="image-upload-btn">Upload Image</button>
+        <div id="player-health-hud">
+            <div id="player-health-label" class="ui-label">HEALTH</div>
+            <div id="player-health-bar"><div id="player-health-fill"></div></div>
+            <div id="player-health-val">100%</div>
+        </div>
+    </div>
+
+    <!-- Screen overlays and dialogs -->
+    <div id="crosshair"><div class="h"></div><div class="v"></div></div>
     <div id="busted-overlay">BUSTED</div>
     <div id="damage-flash"></div>
-    <div id="player-health-hud">
-        <div id="player-health-label">HEALTH</div>
-        <div id="player-health-bar"><div id="player-health-fill"></div></div>
-        <div id="player-health-val">100%</div>
-    </div>
-    <!-- In-Car Radio HUD (Bottom-Left) -->
-    <div id="radio-ui">
-        <div id="radio-header">
-            <span id="radio-badge">📻 RADIO</span>
-            <span id="radio-track-title">Hot In Herre</span>
-        </div>
-        <div id="radio-controls">
-            <button id="radio-btn-restart" type="button" title="Restart Track (⏮)">⏮ Restart</button>
-            <button id="radio-btn-pause" type="button" title="Play / Pause (R)">⏸ Pause</button>
-            <button id="radio-btn-skip" type="button" title="Skip to Next Track (N)">⏭ Skip</button>
-        </div>
-        <div id="radio-volume-row">
-            <span id="radio-vol-icon">🔊</span>
-            <input type="range" id="radio-volume-slider" min="0" max="1" step="0.01" value="0.5">
-            <span id="radio-volume-val">50%</span>
-        </div>
-    </div>
-    <div id="crosshair"><div class="h"></div><div class="v"></div></div>
-    <div id="spray-hud">Spray Can | Scroll to resize | C colors | V mode</div>
-    <div id="color-picker"></div>
-    <div id="dev-hud">DEV FLY MODE
-WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
-    <button id="dev-menu-btn" type="button" title="Dev menu (`)">🛠 Dev (`)</button>
+    <div id="death-fade"></div>
     <div id="dev-menu">
-        <div id="dev-menu-title">DEV MENU <span>` or Esc to close</span></div>
-        <button class="dev-action" id="dev-spawn-car" type="button">🚗 Spawn Car</button>
-        <button class="dev-action" id="dev-spawn-plane" type="button">✈ Spawn Plane</button>
-        <button class="dev-action" id="dev-spawn-plane-air" type="button">✈ Spawn Plane (already flying)</button>
+        <div id="dev-menu-title" class="ui-label">Dev menu <span>` or Esc to close</span></div>
+        <label>Car model <select id="dev-car-model"><option value="random">Random</option></select></label>
+        <button class="dev-action" id="dev-spawn-car" type="button">Spawn car</button>
+        <button class="dev-action" id="dev-spawn-plane" type="button">Spawn plane</button>
+        <button class="dev-action" id="dev-spawn-plane-air" type="button">Spawn plane (already flying)</button>
         <label><input type="checkbox" id="dev-board-on-spawn"> Get in after spawning</label>
-        <button class="dev-action" id="dev-clear-spawned" type="button">🧹 Remove spawned vehicles</button>
-        <button class="dev-action" id="dev-fly-cam" type="button">🎥 Toggle fly camera (F12)</button>
+        <button class="dev-action" id="dev-give-guns" type="button">Refill all ammo</button>
+        <label><input type="checkbox" id="dev-infinite-ammo"> Infinite ammo</label>
+        <label><input type="checkbox" id="dev-disable-police"> Disable police</label>
+        <button class="dev-action" id="dev-clear-spawned" type="button">Remove spawned vehicles</button>
+        <button class="dev-action" id="dev-fly-cam" type="button">Toggle fly camera (F12)</button>
         <div id="dev-menu-status"></div>
     </div>
-    <div id="plane-hud">
-        <div id="plane-hud-line"></div>
-        <div id="plane-hud-hint">W/S throttle · A/D bank · ↓/↑ pitch up/down · Space brake · R/N radio · E exit (on ground)</div>
-    </div>
-    <div id="mp-bar"><span id="mp-status" class="offline">Single player</span><button id="mp-chat-btn" type="button" title="Chat (T)">💬</button></div>
-    <div id="chat-log"></div>
-    <input id="chat-input" type="text" maxlength="120" placeholder="Say something... (Enter to send, Esc to cancel)" autocomplete="off">
-    <div id="game-toast"></div>
-    <div id="death-fade"></div>
     <input type="file" id="image-file-input" accept="image/*" style="display:none">
-    <button id="image-upload-btn">📷 Upload Image</button>
-    <div id="mode-indicator">Mode: Spray</div>
     <div id="mobile-controls" class="mode-foot">
         <div id="mobile-joystick"><div id="mobile-joystick-thumb"></div></div>
         <div id="mobile-look"></div>
@@ -1004,11 +681,11 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             <div class="mbtn" id="mobile-more-btn" data-modes="foot car plane">⋯</div>
         </div>
         <div id="mobile-more-menu">
-            <div class="mbtn" id="mobile-radio-btn" data-modes="car plane">📻 Radio</div>
-            <div class="mbtn" id="mobile-radio-skip-btn" data-modes="car plane">⏭ Next</div>
+            <div class="mbtn" id="mobile-radio-btn" data-modes="car plane">Radio</div>
+            <div class="mbtn" id="mobile-radio-skip-btn" data-modes="car plane">Next</div>
             <div class="mbtn" id="mobile-mode-btn" data-modes="foot">Spray</div>
             <div class="mbtn" id="mobile-color-btn" data-modes="foot">Color</div>
-            <div class="mbtn" id="mobile-upload-btn" data-modes="foot">📷 Img</div>
+            <div class="mbtn" id="mobile-upload-btn" data-modes="foot">Image</div>
         </div>
         <div id="mobile-spray-btn">Spray</div>
     </div>
@@ -1051,6 +728,14 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         import { loadCityNav } from './js/game/cityNav.js';
         import { PedestrianSystem } from './js/game/pedestrians.js';
         import { CarInterior, GlassShatterSystem } from './js/game/carInterior.js';
+        import { CAR_MODELS, CAR_MODEL_IDS, pickCarModel, pickCarColor, getWindowFrames, pointInPoly } from './js/game/carModels.js';
+        import { EngineSound } from './js/game/engineAudio.js';
+        import { VehicleTransition, playCarDoor } from './js/game/vehicleTransition.js';
+        import { RoadSigns } from './js/game/roadSigns.js';
+        import { loadStreetSigns } from './js/game/streetSigns.js';
+        import { Inventory, createItem, getItemDef, findItemDefByName } from './js/game/items.js';
+        import { GUNS, GUN_IDS, allWeaponDefs, buildGunModel, GunAudio } from './js/game/guns.js';
+        import { WeaponWheel } from './js/game/weaponWheel.js';
 
         // Loading-screen terminal (defined by the inline script next to #loading)
         const bootLog = window.bootLog || (() => {});
@@ -1271,6 +956,17 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         });
         bootLog(`Spawned ${trafficVehicles.length} AI traffic cars around Kaj's house (instanced fleet)`);
 
+        // Traffic lights, stop signs, speed limit and one-way signs where OSM has them
+        const roadSigns = new RoadSigns(scene, trafficManager.net);
+        bootLog(`Road signs: ${roadSigns.counts.signals} signalized junctions (${roadSigns.counts.signalHeads} signal heads), ` +
+            `${roadSigns.counts.stop} stop signs, ${roadSigns.counts.speed} speed limit signs, ` +
+            `${roadSigns.counts.oneWay} one-way / ${roadSigns.counts.doNotEnter} do-not-enter signs`, 'ok');
+
+        // Green street-name signs at junctions and along long streets (baked from OSM)
+        const streetSigns = await loadStreetSigns(scene);
+        bootLog(`Street signs: ${streetSigns.counts.signs} posts, ${streetSigns.counts.blades} name blades for ${streetSigns.counts.names} streets`, 'ok');
+
+
         // Immediately sync initial proximity HUD so #car-indicator is shown on startup
         playerController.update(1 / 60, spatialGrid, roadNetwork);
 
@@ -1302,7 +998,13 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         function updateCarInterior(dt) {
             const v = playerController.getState() === 'IN_VEHICLE' ? playerController.getVehicle() : null;
             const interior = getCarInterior(v);
-            if (activeCarInterior && activeCarInterior !== interior) activeCarInterior.setCockpitActive(false);
+            if (activeCarInterior !== interior) {
+                if (activeCarInterior) {
+                    activeCarInterior.setCockpitActive(false);
+                    activeCarInterior.setOccupied(false);
+                }
+                if (interior) interior.setOccupied(true);
+            }
             activeCarInterior = interior;
             hoveredScreenButton = null;
             cockpitPointerActive = false;
@@ -1347,11 +1049,12 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     reach: carReachHeld && !aiming,
                     reachPoint: _cockpitReachPoint,
                     radioTitle: track && isEngineRunning(v) ? track.title : '',
-                    radioPlaying: radioState.isPlaying && !radioState.isUserPaused
+                    radioPlaying: radioState.isPlaying && !radioState.isUserPaused,
+                    showArms: inSeat
                 });
 
                 // Holding the trigger keeps automatic weapons firing out of the window
-                const w = weapons[currentWeaponIndex];
+                const w = currentWeapon();
                 if (carGunHeld && w && w.automatic && cameraController.aimTransition > 0.5) shootWeapon();
             }
             glassShatter.update(dt);
@@ -1379,13 +1082,32 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         const policeSystem = new PoliceSystem(scene, spatialGrid, roadNetwork, null);
         bootLog('Police dispatch system armed');
 
+        // Crimes get called in: 20-30 s after the crime a witness's 911 call plays, and about 20 s
+        // after that the police are dispatched (stars, cruisers, chase music and dispatch voice).
+        // Crimes in front of the police (once wanted, or killing an officer) count straight away.
+        policeSystem.reportDelay = { callMin: 20, callMax: 30, dispatchAfterCall: 20 };
+        const CRIME_CALLS = {
+            shooting: ['/media/ShotMale.mp3', '/media/ShooterCallFemale.mp3'],
+            assault: ['/media/FightCall.mp3'],
+            public_masturbation: ['/media/FightCall.mp3'],
+            stolen_vehicle: ['/media/CarCall.mp3'],
+            vehicular_homicide: ['/media/CarCall.mp3']
+        };
+        let crimeCallAudio = null;
+        policeSystem.onCrimeReported = (type) => {
+            const calls = CRIME_CALLS[type] || CRIME_CALLS.shooting;
+            if (crimeCallAudio) crimeCallAudio.pause();
+            crimeCallAudio = new Audio(calls[Math.floor(Math.random() * calls.length)]);
+            crimeCallAudio.volume = 0.85;
+            crimeCallAudio.play().catch(() => {});
+        };
+
         // ============ PLAYER HEALTH & DAMAGE SYSTEM ============
         let playerHealth = 100;
         const playerMaxHealth = 100;
         const damageFlashEl = document.getElementById('damage-flash');
         const healthFillEl = document.getElementById('player-health-fill');
         const healthValEl = document.getElementById('player-health-val');
-        const healthLabelEl = document.getElementById('player-health-label');
         let damageFlashTimer = 0;
         // Death sequence: collapse to the ground, blood pools, fade to black, respawn at the house
         const DEATH_FADE_DELAY_MS = 1400;    // time lying on the ground before the screen fades to black
@@ -1393,19 +1115,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         let deathFallTime = 0;               // seconds since the player died (drives the collapse camera)
 
         function updatePlayerHealthHUD() {
-            if (healthFillEl) {
-                healthFillEl.style.width = `${Math.max(0, playerHealth)}%`;
-                if (playerHealth > 50) {
-                    healthFillEl.style.backgroundColor = '#22c55e';
-                    if (healthLabelEl) healthLabelEl.style.color = '#22c55e';
-                } else if (playerHealth > 25) {
-                    healthFillEl.style.backgroundColor = '#eab308';
-                    if (healthLabelEl) healthLabelEl.style.color = '#eab308';
-                } else {
-                    healthFillEl.style.backgroundColor = '#ef4444';
-                    if (healthLabelEl) healthLabelEl.style.color = '#ef4444';
-                }
-            }
+            if (healthFillEl) healthFillEl.style.width = `${Math.max(0, playerHealth)}%`;
             if (healthValEl) {
                 healthValEl.textContent = `${Math.max(0, Math.round(playerHealth))}%`;
             }
@@ -1551,7 +1261,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     uploadedTexture.needsUpdate = true;
                     uploadedTexture.colorSpace = THREE.SRGBColorSpace;
                     imageUploadBtn.classList.add('has-image');
-                    imageUploadBtn.textContent = '📷 ' + file.name.substring(0, 12);
+                    imageUploadBtn.textContent = 'Image: ' + file.name.substring(0, 12);
                     // Auto-switch to image mode
                     imageMode = true;
                     updateModeIndicator();
@@ -1775,7 +1485,12 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             { id: 'one_little_pidgeon', title: 'One Little Pidgeon', file: '/media/radio/One_Little_Pidgeon.mp3' },
             { id: 'oppa_stoppa', title: 'Oppa Stoppa', file: '/media/radio/Oppa_Stoppa.mp3' },
             { id: 'thru_the_walls', title: 'Thru The Walls', file: '/media/radio/Thru_The_Walls.mp3' },
-            { id: 'whiskey_river', title: 'Whiskey River', file: '/media/radio/Whiskey_River.mp3' }
+            { id: 'whiskey_river', title: 'Whiskey River', file: '/media/radio/Whiskey_River.mp3' },
+            { id: 'cosmic_girl', title: 'Cosmic Girl', file: '/media/radio/Cosmic_Girl.mp3' },
+            { id: 'fuck_up_some_commas', title: 'Fuck Up Some Commas', file: '/media/radio/Fuck_Up_Some_Commas.mp3' },
+            { id: 'image', title: 'Image', file: '/media/radio/Image.mp3' },
+            { id: 'partition', title: 'Partition', file: '/media/radio/Partition.mp3' },
+            { id: 'do_that_shit', title: 'Do That Shit!', file: '/media/radio/dothatshit!.mp3' }
         ];
 
         const radioAudio = new Audio();
@@ -1785,6 +1500,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         const radioState = {
             tracks: RADIO_TRACKS,
             currentTrackIndex: 0,
+            order: RADIO_TRACKS.map((_, i) => i), // play order (shuffled each time the player gets in a car)
+            orderPos: 0,
             isPlaying: false,
             isUserPaused: false,
             volume: 0.5,
@@ -1872,13 +1589,15 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             } else {
                 vehicle.engineOn = true;
                 ensureRadioGraph();
+                // Starter motor cranks, then the engine catches
+                if (_engineSound && vehicle.engineSpec) _engineSound.playStart(vehicle.engineSpec.sound);
                 radioState.sourceVehicle = vehicle;
                 if (!radioState.isUserPaused) {
                     startRadioPlayback();
                 } else {
                     updateRadioUI();
                 }
-                showToast('Engine on');
+                showToast(vehicle.modelName ? `Engine on: ${vehicle.modelName}` : 'Engine on');
             }
         }
 
@@ -1930,7 +1649,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 titleEl.textContent = track ? track.title : 'No Track';
             }
             if (pauseBtn) {
-                pauseBtn.innerHTML = radioState.isUserPaused ? '▶ Play' : '⏸ Pause';
+                pauseBtn.textContent = radioState.isUserPaused ? 'Play' : 'Pause';
             }
             if (volSlider) {
                 volSlider.value = radioState.volume;
@@ -1987,8 +1706,34 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
         }
 
+        // New random play order. The first song is never the one that was just playing, so getting
+        // into (or stealing) another car always brings on a different song.
+        function shuffleRadioOrder() {
+            const order = RADIO_TRACKS.map((_, i) => i);
+            for (let i = order.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [order[i], order[j]] = [order[j], order[i]];
+            }
+            if (order.length > 1 && order[0] === radioState.currentTrackIndex) {
+                const k = 1 + Math.floor(Math.random() * (order.length - 1));
+                [order[0], order[k]] = [order[k], order[0]];
+            }
+            radioState.order = order;
+            radioState.orderPos = 0;
+            radioState.currentTrackIndex = order[0];
+            radioAudio.src = RADIO_TRACKS[order[0]].file;
+            radioAudio.currentTime = 0;
+        }
+
+        // Steps through the play order: +1 next song, -1 previous
+        function stepRadioOrder(dir) {
+            const n = radioState.order.length;
+            radioState.orderPos = (radioState.orderPos + dir + n) % n;
+            radioState.currentTrackIndex = radioState.order[radioState.orderPos];
+        }
+
         function skipRadioTrack() {
-            radioState.currentTrackIndex = (radioState.currentTrackIndex + 1) % RADIO_TRACKS.length;
+            stepRadioOrder(1);
             const track = RADIO_TRACKS[radioState.currentTrackIndex];
             radioAudio.src = track.file;
             radioAudio.currentTime = 0;
@@ -2005,7 +1750,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 restartRadioTrack();
                 return;
             }
-            radioState.currentTrackIndex = (radioState.currentTrackIndex - 1 + RADIO_TRACKS.length) % RADIO_TRACKS.length;
+            stepRadioOrder(-1);
             const track = RADIO_TRACKS[radioState.currentTrackIndex];
             radioAudio.src = track.file;
             radioAudio.currentTime = 0;
@@ -2038,10 +1783,22 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
         function handleEnterVehicleRadio(vehicle) {
             radioState.isInCar = true;
+            // Every car gets a fresh random order, unless this is the running car whose radio was
+            // already playing (getting back in just carries on with the song)
+            const sameRadio = !!vehicle && vehicle === radioState.sourceVehicle && !radioAudio.paused;
+            if (!sameRadio) {
+                // Another car left running with its radio on goes quiet: this car has the radio now
+                if (radioState.sourceVehicle && radioState.sourceVehicle !== vehicle) {
+                    radioAudio.pause();
+                    radioState.isPlaying = false;
+                    radioState.sourceVehicle = null;
+                }
+                shuffleRadioOrder();
+            }
             if (isEngineRunning(vehicle)) {
                 // Planes, or a car that was left running: pick the radio up (un-muffled now we're inside)
                 radioState.sourceVehicle = vehicle;
-                if (radioAudio.paused && !radioState.isUserPaused) {
+                if ((radioAudio.paused || !sameRadio) && !radioState.isUserPaused) {
                     startRadioPlayback();
                 } else {
                     updateRadioUI();
@@ -2250,10 +2007,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         };
 
         let _carAudioCtx = null;
-        let _engineOsc1 = null;
-        let _engineOsc2 = null;
-        let _engineGainNode = null;
-        let _engineFilterNode = null;
+        let _engineSound = null; // per-model engine voice + road / wind noise (engineAudio.js)
         let _brakeNoiseNode = null;
         let _brakeFilterNode = null;
         let _brakeGainNode = null;
@@ -2265,28 +2019,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 if (!AudioCtx) return null;
                 _carAudioCtx = new AudioCtx();
 
-                // Dual-oscillator Honda Civic 4-cylinder engine synthesizer (sawtooth + sub-octave triangle)
-                _engineOsc1 = _carAudioCtx.createOscillator();
-                _engineOsc2 = _carAudioCtx.createOscillator();
-                _engineOsc1.type = 'sawtooth';
-                _engineOsc2.type = 'triangle';
-                _engineOsc1.frequency.value = 55;
-                _engineOsc2.frequency.value = 110;
-
-                const engineFilter = _carAudioCtx.createBiquadFilter();
-                engineFilter.type = 'lowpass';
-                engineFilter.frequency.value = 340;
-                _engineFilterNode = engineFilter;
-
-                _engineGainNode = _carAudioCtx.createGain();
-                _engineGainNode.gain.value = 0;
-
-                _engineOsc1.connect(engineFilter);
-                _engineOsc2.connect(engineFilter);
-                engineFilter.connect(_engineGainNode);
-                _engineGainNode.connect(_carAudioCtx.destination);
-                _engineOsc1.start();
-                _engineOsc2.start();
+                // Engine voice of whichever car the player is in (4-cylinder, turbo six, V8, ...)
+                _engineSound = new EngineSound(_carAudioCtx);
 
                 // Bandpass-filtered white noise generator for tire braking / screeching sound
                 const bufferSize = _carAudioCtx.sampleRate * 1.0;
@@ -2325,16 +2059,16 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             if (!isInVehicle || !vehicle) {
                 carAudioState.isPlaying = false;
                 carAudioState.mode = 'off';
+                carAudioState.rpm = 0;
                 carAudioState.rpmNormalized = 0;
                 carAudioState.engineFreqHz = 0;
                 carAudioState.engineGain = 0;
                 carAudioState.brakeScreechGain = 0;
                 carAudioState.speed = 0;
+                carAudioState.gear = '';
                 carAudioState.wasAccelerating = false;
                 carAudioState.wasBraking = false;
-                if (_engineGainNode && _carAudioCtx) {
-                    _engineGainNode.gain.setTargetAtTime(0, _carAudioCtx.currentTime, 0.05);
-                }
+                if (_engineSound) _engineSound.mute();
                 if (_brakeGainNode && _carAudioCtx) {
                     _brakeGainNode.gain.setTargetAtTime(0, _carAudioCtx.currentTime, 0.04);
                 }
@@ -2353,30 +2087,33 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             const isThrottling = !!(vehicle.inputThrottle > 0.05 || (playerController && playerController.keys && playerController.keys.w));
             const isBrakingInput = !!(vehicle.inputBrake > 0.05 || vehicle.inputHandbrake || (playerController && playerController.keys && (playerController.keys.s || playerController.keys.space)));
             const isBrakingWhileMoving = isBrakingInput && spd > 0.15;
-
-            // Compute simulated gear RPM & engine pitch
-            let gearRatio = (speedRatio * 3.2) % 1.0;
-            let rpmNorm = Math.min(1.0, 0.18 + speedRatio * 0.55 + gearRatio * 0.22 + (isThrottling ? 0.18 : 0));
-            let baseFreq = 52 + rpmNorm * 165;
-            let engineGain = isThrottling ? 0.16 : (spd > 0.5 ? 0.11 : 0.06);
             let brakeGain = isBrakingWhileMoving ? Math.min(0.18, 0.05 + speedRatio * 0.15) : 0;
+
+            // Engine revs come from the car's gearbox (vehicle.rpm); a plane's prop follows its throttle lever
+            const running = isEngineRunning(vehicle);
+            let rpm, idle, redline, cylinders, voice, throttle;
             if (vehicle.isPlane) {
-                // Prop engine: pitch follows the throttle lever rather than road speed, no gear changes
-                rpmNorm = 0.2 + 0.8 * (vehicle.throttle || 0);
-                baseFreq = 60 + rpmNorm * 110;
-                engineGain = 0.08 + 0.12 * (vehicle.throttle || 0);
+                throttle = vehicle.throttle || 0;
+                idle = 900;
+                redline = 2700;
+                cylinders = 6;
+                voice = 'prop';
+                rpm = idle + (redline - idle) * throttle;
                 // Tyre squeal only from wheel braking on the runway
                 brakeGain = (vehicle.onGround && vehicle.inputHandbrake && spd > 3) ? Math.min(0.14, 0.04 + speedRatio * 0.2) : 0;
+            } else {
+                const e = vehicle.engineSpec || { idle: 800, redline: 7000, cyl: 4, sound: 'i4' };
+                idle = e.idle;
+                redline = e.redline;
+                cylinders = e.cyl;
+                voice = e.sound;
+                rpm = Number.isFinite(vehicle.rpm) ? vehicle.rpm : idle;
+                throttle = Math.max(vehicle.throttleSmoothed || 0, running && isThrottling ? 0.5 : 0);
             }
 
-            // Drift boost: engine screams at a much higher pitch, brighter and louder
+            // Drift boost: the engine screams on the limiter
             const isBoosting = !!(vehicle.boostTimer > 0);
-            if (isBoosting) {
-                rpmNorm = 1.0;
-                baseFreq *= 1.75;
-                engineGain = 0.26;
-                brakeGain = 0;
-            }
+            if (isBoosting) brakeGain = 0;
 
             let mode = 'idle';
             if (isBoosting) {
@@ -2399,101 +2136,69 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 carAudioState.drivingTickCount++;
             }
 
+            if (_engineSound) {
+                _engineSound.update({
+                    running, rpm, idle, redline, cylinders, voice, throttle,
+                    speed: spd,
+                    boost: isBoosting,
+                    inside: cameraController.isCockpitView(),
+                    shiftCount: vehicle.shiftCount
+                }, 1 / 60);
+            }
+
+            // The note the engine is (or, switched off, would be) making: firing frequency of the revs
+            const noteRpm = running ? rpm : Math.max(rpm, isThrottling ? idle + 0.42 * (redline - idle) : idle);
             carAudioState.isPlaying = true;
             carAudioState.mode = mode;
-            carAudioState.rpmNormalized = rpmNorm;
-            carAudioState.engineFreqHz = baseFreq;
-            carAudioState.engineGain = engineGain;
+            carAudioState.rpm = rpm;
+            carAudioState.rpmNormalized = Math.max(0, Math.min(1, (rpm - idle) / Math.max(1, redline - idle)));
+            carAudioState.engineFreqHz = (noteRpm / 60) * (cylinders / 2);
+            carAudioState.engineGain = _engineSound ? _engineSound.engineGain.gain.value : 0;
+            carAudioState.engineVoice = voice;
+            carAudioState.gear = vehicle.gearLabel || '';
             carAudioState.brakeScreechGain = brakeGain;
             carAudioState.speed = spd;
             carAudioState.wasAccelerating = isThrottling;
             carAudioState.wasBraking = isBrakingWhileMoving;
 
-            if (_carAudioCtx && _engineOsc1 && _engineOsc2 && _engineGainNode && _brakeGainNode) {
-                const now = _carAudioCtx.currentTime;
-                _engineOsc1.frequency.setTargetAtTime(baseFreq, now, 0.04);
-                _engineOsc2.frequency.setTargetAtTime(baseFreq * 2.0, now, 0.04);
-                _engineGainNode.gain.setTargetAtTime(engineGain, now, 0.04);
-                if (_engineFilterNode) {
-                    _engineFilterNode.frequency.setTargetAtTime(isBoosting ? 1100 : 340, now, 0.05);
-                }
-                _brakeGainNode.gain.setTargetAtTime(brakeGain, now, 0.03);
+            if (_carAudioCtx && _brakeGainNode) {
+                _brakeGainNode.gain.setTargetAtTime(brakeGain, _carAudioCtx.currentTime, 0.03);
             }
         }
 
         // ============ WEAPON & VIEWMODEL SYSTEM (SPRAY CAN + KAJ SIMULATOR GUNS) ============
-        const weapons = [
-            {
-                // Slot 1: bare hands. In a car the right hand presses the radio's touch buttons
-                name: 'Hands',
-                type: 'hands',
-                damage: 0,
-                fireRate: 350,
-                range: 1.5,
-                spread: 0,
-                projectileSpeed: 0,
-                sound: null
-            },
-            {
-                name: 'Spray Can',
-                type: 'spray',
-                damage: 0,
-                fireRate: 50,
-                range: 20,
-                spread: 0,
-                projectileSpeed: 0,
-                sound: null
-            },
-            {
-                name: 'Pistol',
-                type: 'gun',
-                damage: 100,
-                fireRate: 350,
-                range: 120,
-                spread: 0.015,
-                projectileSpeed: 2.2,
-                sound: '/media/mp3/pistol_fire3.mp3',
-                audioObj: pistolFireSound
-            },
-            {
-                name: 'Rifle',
-                type: 'gun',
-                damage: 100,
-                fireRate: 140,
-                range: 200,
-                spread: 0.01,
-                projectileSpeed: 3.0,
-                automatic: true,
-                sound: '/media/hl2-smg-shot.mp3',
-                audioObj: smgFireSound
-            },
-            {
-                name: 'Shotgun',
-                type: 'gun',
-                damage: 100,
-                fireRate: 750,
-                range: 70,
-                spread: 0.07,
-                pellets: 8,
-                projectileSpeed: 2.5,
-                sound: '/media/mp3/shotgun.mp3',
-                audioObj: shotgunFireSound
-            },
-            {
-                name: 'RPG',
-                type: 'gun',
-                damage: 250,
-                fireRate: 1600,
-                range: 300,
-                spread: 0,
-                projectileSpeed: 1.2,
-                explosive: true,
-                sound: '/media/explosion-meme_dTCfAHs.mp3',
-                audioObj: explosionSound
+        // Everything the player holds is an item (items.js): fists, the spray can and 30 guns
+        // (guns.js). `weapons` lists every held-item definition; the inventory says what's owned.
+        const weapons = allWeaponDefs();
+        const HANDS_DEF = getItemDef('hands');
+        const inventory = new Inventory({ hotbarSize: 9, bagSize: 60 });
+        // For now the player carries everything: fists, the spray can, all 30 guns and full ammo
+        for (const id of ['hands', 'spraycan', ...GUN_IDS]) inventory.add(createItem(id));
+        refillAmmo();
+        inventory.select(0);
+        let weaponWheel = null;
+        // Gun state (see GUN HANDLING below)
+        let gunAudio = null;                 // GunAudio (guns.js), once the audio context exists
+        let reloadState = null;              // { stack, gun, t, total, perRound, nextRound }
+        let burstRemaining = 0;
+        let gunSpin = 0;                     // minigun barrels 0..1
+        let adsHeld = false;                 // right mouse on foot with a gun
+        let adsAmount = 0;                   // 0..1 aim-down-sights blend
+        let infiniteAmmo = false;            // dev menu
+        let muzzleFlashTimer = 0;
+        let recoilRecover = 0;               // camera kick still to settle back
+        let cycleTimer = 0;                  // pump / bolt work after a shot
+        let autoReloadAt = 0;
+        let lastTriggerTime = 0;
+        const BASE_FOV = 75;
+        let lastHeldStack = inventory.selectedItem();
+        inventory.onChange(() => {
+            if (inventory.selectedItem() !== lastHeldStack) {
+                lastHeldStack = inventory.selectedItem();
+                onWeaponSwitched();
             }
-        ];
+        });
 
-        let currentWeaponIndex = 0;
         let lastShotTime = 0;
         // Fists (Hands slot): punches alternate hands, leading with Kaj's left; right mouse blocks
         let punchLead = 0;      // 0..1 punch animation, left (lead) hand
@@ -2502,7 +2207,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         let lastPunchTime = 0;
         let isBlocking = false;
         let blockAmount = 0;    // 0..1 guard raise for the viewmodel
-        const currentWeaponType = () => (weapons[currentWeaponIndex] ? weapons[currentWeaponIndex].type : 'hands');
+        const currentWeapon = () => inventory.selectedDef() || HANDS_DEF;
+        const currentWeaponType = () => currentWeapon().type;
         let isFiringGun = false;
         const projectiles = [];
 
@@ -2612,167 +2318,69 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             return handsGroup;
         }
 
-        function createPistolViewmodel() {
-            const group = new THREE.Group();
-            group.name = 'viewmodel_pistol';
-            const metalMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.3, metalness: 0.8 });
-            const gripMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.7, metalness: 0.2 });
-
-            const slideGeo = new THREE.BoxGeometry(0.035, 0.045, 0.18);
-            const slide = new THREE.Mesh(slideGeo, metalMat);
-            slide.position.set(0, 0.02, -0.04);
-            group.add(slide);
-
-            const barrelGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.06, 8);
-            barrelGeo.rotateX(Math.PI / 2);
-            const barrel = new THREE.Mesh(barrelGeo, metalMat);
-            barrel.position.set(0, 0.02, -0.15);
-            group.add(barrel);
-
-            const gripGeo = new THREE.BoxGeometry(0.03, 0.09, 0.045);
-            const grip = new THREE.Mesh(gripGeo, gripMat);
-            grip.position.set(0, -0.04, 0.02);
-            grip.rotation.x = 0.2;
-            group.add(grip);
-
-            const guardGeo = new THREE.BoxGeometry(0.025, 0.02, 0.04);
-            const guard = new THREE.Mesh(guardGeo, metalMat);
-            guard.position.set(0, -0.01, -0.02);
-            group.add(guard);
-
-            group.add(createHandsGeometry());
-            group.position.set(0.22, -0.2, -0.4);
-            return group;
+        // Guns in the (mirrored, left-handed) viewmodel: built from the gun's own model the first
+        // time it is held, with Kaj's hand on the grip, a support hand on long guns and a muzzle flash
+        const gunViewmodels = new Map();
+        let _flashGeo = null;
+        let _flashMat = null;
+        function getGunViewmodel(id) {
+            if (gunViewmodels.has(id)) return gunViewmodels.get(id);
+            const gun = GUNS[id];
+            const { group: model, muzzle, length } = buildGunModel(id);
+            const vm = new THREE.Group();
+            vm.name = `viewmodel_${id}`;
+            model.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+            vm.add(model);
+            vm.add(createHandsGeometry());
+            if (length > 0.3) {
+                const support = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.05, 0.08), new THREE.MeshLambertMaterial({ color: 0xffcc99 }));
+                support.position.set(0, -0.005, muzzle.z * 0.5);
+                vm.add(support);
+            }
+            if (!_flashGeo) {
+                const a = new THREE.PlaneGeometry(0.16, 0.16);
+                const b = a.clone().rotateY(Math.PI / 2);
+                const c = new THREE.PlaneGeometry(0.16, 0.16).rotateX(Math.PI / 2);
+                _flashGeo = [a, b, c];
+                const tex = (() => {
+                    const cv = document.createElement('canvas');
+                    cv.width = cv.height = 64;
+                    const g = cv.getContext('2d');
+                    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+                    grd.addColorStop(0, 'rgba(255,255,230,1)');
+                    grd.addColorStop(0.3, 'rgba(255,200,80,0.9)');
+                    grd.addColorStop(1, 'rgba(255,120,20,0)');
+                    g.fillStyle = grd;
+                    g.fillRect(0, 0, 64, 64);
+                    const t = new THREE.CanvasTexture(cv);
+                    t.colorSpace = THREE.SRGBColorSpace;
+                    return t;
+                })();
+                _flashMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+            }
+            const flash = new THREE.Group();
+            for (const fg of _flashGeo) flash.add(new THREE.Mesh(fg, _flashMat));
+            flash.position.copy(muzzle);
+            flash.position.z -= 0.04;
+            flash.scale.setScalar(gun.category === 'Pistol' ? 0.7 : (gun.explosive ? 1.4 : 1.0));
+            flash.visible = false;
+            vm.add(flash);
+            vm.userData.flash = flash;
+            vm.userData.barrels = model.getObjectByName('minigun_barrels');
+            vm.scale.setScalar(0.85);
+            vm.position.set(0.21, -0.21, -0.36);
+            vm.visible = false;
+            if (viewmodelRoot) viewmodelRoot.add(vm);
+            gunViewmodels.set(id, vm);
+            return vm;
         }
 
-        function createRifleViewmodel() {
-            const group = new THREE.Group();
-            group.name = 'viewmodel_rifle';
-            const metalMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.3, metalness: 0.85 });
-            const woodMat = new THREE.MeshStandardMaterial({ color: 0x5c3a1e, roughness: 0.6, metalness: 0.1 });
-            const skinMat = new THREE.MeshLambertMaterial({ color: 0xffcc99 });
-
-            const bodyGeo = new THREE.BoxGeometry(0.04, 0.055, 0.35);
-            const body = new THREE.Mesh(bodyGeo, metalMat);
-            body.position.set(0, 0.01, -0.08);
-            group.add(body);
-
-            const barrelGeo = new THREE.CylinderGeometry(0.01, 0.01, 0.25, 8);
-            barrelGeo.rotateX(Math.PI / 2);
-            const barrel = new THREE.Mesh(barrelGeo, metalMat);
-            barrel.position.set(0, 0.02, -0.35);
-            group.add(barrel);
-
-            const handguardGeo = new THREE.BoxGeometry(0.038, 0.04, 0.15);
-            const handguard = new THREE.Mesh(handguardGeo, woodMat);
-            handguard.position.set(0, 0.005, -0.25);
-            group.add(handguard);
-
-            const magGeo = new THREE.BoxGeometry(0.025, 0.1, 0.04);
-            const mag = new THREE.Mesh(magGeo, metalMat);
-            mag.position.set(0, -0.06, -0.06);
-            mag.rotation.x = -0.15;
-            group.add(mag);
-
-            const stockGeo = new THREE.BoxGeometry(0.035, 0.06, 0.16);
-            const stock = new THREE.Mesh(stockGeo, woodMat);
-            stock.position.set(0, 0, 0.15);
-            group.add(stock);
-
-            const gripGeo = new THREE.BoxGeometry(0.028, 0.07, 0.035);
-            const grip = new THREE.Mesh(gripGeo, woodMat);
-            grip.position.set(0, -0.045, 0.04);
-            grip.rotation.x = 0.25;
-            group.add(grip);
-
-            group.add(createHandsGeometry());
-
-            const leftHandGeo = new THREE.BoxGeometry(0.055, 0.06, 0.08);
-            const leftHand = new THREE.Mesh(leftHandGeo, skinMat);
-            leftHand.position.set(-0.02, -0.02, -0.22);
-            group.add(leftHand);
-
-            group.position.set(0.2, -0.22, -0.35);
-            return group;
-        }
-
-        function createShotgunViewmodel() {
-            const group = new THREE.Group();
-            group.name = 'viewmodel_shotgun';
-            const metalMat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.35, metalness: 0.8 });
-            const woodMat = new THREE.MeshStandardMaterial({ color: 0x6b4226, roughness: 0.55, metalness: 0.1 });
-            const skinMat = new THREE.MeshLambertMaterial({ color: 0xffcc99 });
-
-            const barrelGeo = new THREE.CylinderGeometry(0.012, 0.012, 0.42, 8);
-            barrelGeo.rotateX(Math.PI / 2);
-            const barrel1 = new THREE.Mesh(barrelGeo, metalMat);
-            barrel1.position.set(-0.012, 0.025, -0.18);
-            group.add(barrel1);
-
-            const barrel2 = new THREE.Mesh(barrelGeo, metalMat);
-            barrel2.position.set(0.012, 0.025, -0.18);
-            group.add(barrel2);
-
-            const pumpGeo = new THREE.BoxGeometry(0.042, 0.035, 0.12);
-            const pump = new THREE.Mesh(pumpGeo, woodMat);
-            pump.position.set(0, -0.005, -0.22);
-            group.add(pump);
-
-            const recGeo = new THREE.BoxGeometry(0.044, 0.05, 0.16);
-            const receiver = new THREE.Mesh(recGeo, metalMat);
-            receiver.position.set(0, 0.01, 0.0);
-            group.add(receiver);
-
-            const stockGeo = new THREE.BoxGeometry(0.038, 0.065, 0.18);
-            const stock = new THREE.Mesh(stockGeo, woodMat);
-            stock.position.set(0, -0.005, 0.16);
-            group.add(stock);
-
-            group.add(createHandsGeometry());
-
-            const leftHandGeo = new THREE.BoxGeometry(0.055, 0.055, 0.08);
-            const leftHand = new THREE.Mesh(leftHandGeo, skinMat);
-            leftHand.position.set(-0.01, -0.025, -0.22);
-            group.add(leftHand);
-
-            group.position.set(0.2, -0.22, -0.35);
-            return group;
-        }
-
-        function createRPGViewmodel() {
-            const group = new THREE.Group();
-            group.name = 'viewmodel_rpg';
-            const tubeMat = new THREE.MeshStandardMaterial({ color: 0x3b4d2b, roughness: 0.5, metalness: 0.5 });
-            const warheadMat = new THREE.MeshStandardMaterial({ color: 0x4a5d3b, roughness: 0.4, metalness: 0.6 });
-            const gripMat = new THREE.MeshStandardMaterial({ color: 0x4a2f18, roughness: 0.7, metalness: 0.1 });
-
-            const tubeGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.55, 12);
-            tubeGeo.rotateX(Math.PI / 2);
-            const tube = new THREE.Mesh(tubeGeo, tubeMat);
-            tube.position.set(0, 0.02, -0.1);
-            group.add(tube);
-
-            const flareGeo = new THREE.CylinderGeometry(0.048, 0.035, 0.08, 12);
-            flareGeo.rotateX(Math.PI / 2);
-            const flare = new THREE.Mesh(flareGeo, tubeMat);
-            flare.position.set(0, 0.02, 0.2);
-            group.add(flare);
-
-            const coneGeo = new THREE.ConeGeometry(0.05, 0.16, 10);
-            coneGeo.rotateX(-Math.PI / 2);
-            const warhead = new THREE.Mesh(coneGeo, warheadMat);
-            warhead.position.set(0, 0.02, -0.44);
-            group.add(warhead);
-
-            const gripGeo = new THREE.BoxGeometry(0.03, 0.08, 0.04);
-            const grip = new THREE.Mesh(gripGeo, gripMat);
-            grip.position.set(0, -0.04, -0.04);
-            grip.rotation.x = 0.2;
-            group.add(grip);
-
-            group.add(createHandsGeometry());
-            group.position.set(0.24, -0.18, -0.35);
-            return group;
+        /** The viewmodel for whatever is held (fists, spray can or a gun). */
+        function currentViewmodel() {
+            const w = currentWeapon();
+            if (w.type === 'hands') return viewmodelMeshes[0];
+            if (w.type === 'spray') return viewmodelSprayCan;
+            return getGunViewmodel(w.id);
         }
 
         // Skin-colored rectangle shown at the bottom of the screen while pressing M (see "PUBLIC INDECENCY")
@@ -2807,61 +2415,102 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
             const handsVM = createHandsViewmodel();
             viewmodelSprayCan = createSprayCanViewmodel();
-            const pistolVM = createPistolViewmodel();
-            const rifleVM = createRifleViewmodel();
-            const shotgunVM = createShotgunViewmodel();
-            const rpgVM = createRPGViewmodel();
 
+            // [0] fists, [1] spray can; guns join through getGunViewmodel()
             viewmodelMeshes.length = 0;
-            viewmodelMeshes.push(handsVM, viewmodelSprayCan, pistolVM, rifleVM, shotgunVM, rpgVM);
-
-            for (let i = 0; i < viewmodelMeshes.length; i++) {
-                viewmodelMeshes[i].visible = (i === currentWeaponIndex);
-                viewmodelRoot.add(viewmodelMeshes[i]);
+            viewmodelMeshes.push(handsVM, viewmodelSprayCan);
+            for (const vm of viewmodelMeshes) {
+                vm.visible = false;
+                viewmodelRoot.add(vm);
             }
+            currentViewmodel().visible = true;
 
             viewmodelStroke = createStrokeViewmodel();
             viewmodelRoot.add(viewmodelStroke);
         }
 
         function updateWeaponHUD() {
-            const sprayHudEl = document.getElementById('spray-hud');
-            if (!sprayHudEl) return;
-            const w = weapons[currentWeaponIndex];
-            const weaponBar = weapons.map((wp, idx) =>
-                idx === currentWeaponIndex ? `[${idx + 1}: ${wp.name.toUpperCase()}]` : `${idx + 1}: ${wp.name}`
-            ).join('  |  ');
-
-            if (w.type === 'spray') {
-                sprayHudEl.textContent = `${weaponBar}   (Q: Switch Weapon | C: Colors | V: Spray/Image)`;
-            } else if (w.type === 'hands') {
-                sprayHudEl.textContent = `${weaponBar}   (Left Click: Punch, or press the car radio | Q / 1-6: Switch)`;
-            } else {
-                sprayHudEl.textContent = `${weaponBar}   (Left Click: Shoot | Q / 1-6: Switch Weapon)`;
-            }
+            if (!weaponWheel) return;
+            const w = currentWeapon();
+            let help;
+            if (w.type === 'spray') help = 'C colors · V spray / image · Hold Tab weapon wheel';
+            else if (w.type === 'hands') help = 'Click punch (or press the car radio) · Hold Tab weapon wheel · 1-8 quick select';
+            else help = `Click shoot · Right click aim · R reload${fireModesOf(w).length > 1 ? ' · X fire mode' : ''} · Hold Tab weapon wheel`;
+            weaponWheel.setHelp(help);
+            weaponWheel.render();
         }
 
-        function selectWeapon(indexOrName) {
-            let targetIdx = currentWeaponIndex;
-            if (typeof indexOrName === 'number') {
-                targetIdx = ((indexOrName % weapons.length) + weapons.length) % weapons.length;
-            } else if (typeof indexOrName === 'string') {
-                const lower = indexOrName.toLowerCase();
-                const found = weapons.findIndex(w => w.name.toLowerCase() === lower);
-                if (found !== -1) targetIdx = found;
-            }
-
-            currentWeaponIndex = targetIdx;
+        /** Everything that resets when the held item changes. */
+        function onWeaponSwitched() {
             isSpraying = false;
             isBlocking = false;
+            burstRemaining = 0;
+            gunSpin = 0;
+            cancelReload();
+            for (const vm of [...viewmodelMeshes, ...gunViewmodels.values()]) if (vm) vm.visible = false;
+            if (viewmodelRoot) currentViewmodel().visible = true;
+            updateWeaponHUD();
+        }
 
-            for (let i = 0; i < viewmodelMeshes.length; i++) {
-                if (viewmodelMeshes[i]) {
-                    viewmodelMeshes[i].visible = (i === currentWeaponIndex);
+        /**
+         * Holds an inventory slot (number) or an item by name ('Pistol'). A gun asked for by name that
+         * the player doesn't own is handed over (the game API and carjacking rely on that).
+         */
+        function selectWeapon(indexOrName) {
+            if (typeof indexOrName === 'number') {
+                inventory.select(indexOrName);
+            } else if (typeof indexOrName === 'string') {
+                const def = findItemDefByName(indexOrName) || getItemDef(indexOrName);
+                if (def) {
+                    let slot = inventory.find(def.id);
+                    if (slot < 0 && def.kind === 'gun') {
+                        inventory.add(createItem(def.id));
+                        slot = inventory.find(def.id);
+                    }
+                    if (slot >= 0) inventory.select(slot);
                 }
             }
-            updateWeaponHUD();
-            return weapons[currentWeaponIndex];
+            onWeaponSwitched();
+            return currentWeapon();
+        }
+
+        /** Holds a gun for drive-bys / carjacking: the held one, else the first gun carried. */
+        function selectBestGun() {
+            if (currentWeaponType() === 'gun') return currentWeapon();
+            const slot = inventory.slots.findIndex((x) => x && getItemDef(x.id).kind === 'gun');
+            if (slot >= 0) return selectWeapon(slot);
+            return selectWeapon('Pistol');
+        }
+
+        function fireModesOf(gun) {
+            if (!gun || gun.type !== 'gun') return [];
+            if (gun.mode === 'auto') return ['auto', 'semi'];
+            if (gun.mode === 'burst') return ['burst', 'semi'];
+            return [gun.mode];
+        }
+
+        // Weapon wheel (hold Tab) and the weapon HUD at the bottom of the screen
+        weaponWheel = new WeaponWheel({
+            inventory,
+            hud: document.getElementById('spray-hud'),
+            reserveFor: (gun) => gunReserve(gun),
+            onOpenChange: (open) => {
+                if (open) {
+                    isFiringGun = false;
+                    isSpraying = false;
+                    adsHeld = false;
+                    carGunHeld = false;
+                }
+            }
+        });
+
+        /** Tops every kind of ammunition up to a full stack. */
+        function refillAmmo() {
+            for (const id of GUN_IDS) {
+                const ammo = getItemDef(GUNS[id].ammoItem);
+                const missing = ammo.maxStack - inventory.count(ammo.id);
+                if (missing > 0) inventory.add(createItem(ammo.id, missing));
+            }
         }
 
         // ============ PEDESTRIAN NPC & BLOOD POOL SYSTEM ============
@@ -2949,6 +2598,87 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         let activeDialog = null;
         let activeDialogTimer = 0;
 
+        // ============ GETTING IN AND OUT OF CARS (FIRST-PERSON ANIMATION) ============
+        // Walk to the door, open it, climb in and shut it (or the reverse). Player controls are
+        // locked while it plays; the game API's tryEnterVehicle / tryExitVehicle stay instant.
+        let vehicleTransition = null;
+        const _transitionGround = new THREE.Vector3();
+
+        function startVehicleTransition(kind, vehicle, extra = {}) {
+            if (vehicleTransition || !vehicle) return null;
+            if (isStroking) stopStroking();
+            // The cabin has to exist before the camera climbs into it
+            getCarInterior(vehicle);
+            if (vehicle.mesh && !vehicle.mesh.parent) {
+                scene.add(vehicle.mesh);
+                vehicle._updateMeshTransform(0);
+            }
+            playerController.hidePrompt();
+            releaseHeldKeys();
+            // Keep the cabin drawn while climbing in or out (see CarInterior.updateVisibility)
+            vehicle.transitionActive = true;
+            if (vehicle.interior) vehicle.interior.updateVisibility();
+            vehicleTransition = new VehicleTransition(Object.assign({
+                kind,
+                vehicle,
+                camera,
+                onDoor: (doorKind, veh) => playCarDoor(ensureCarAudioEngine(), doorKind, veh)
+            }, extra));
+            return vehicleTransition;
+        }
+
+        function updateVehicleTransition(dt) {
+            const tr = vehicleTransition;
+            if (!tr) return;
+            const finished = tr.update(dt);
+            myPosition.copy(tr.groundPosition(_transitionGround));
+            if (tr.kind === 'exit') playerController.position.copy(myPosition);
+            if (!finished) return;
+            vehicleTransition = null;
+            const v = tr.vehicle;
+            v.transitionActive = false;
+            if (tr.kind === 'enter') {
+                if (v.interior) v.interior.setOccupied(true);
+                if (playerController.enterVehicle(v)) {
+                    handleEnterVehicleRadio(v);
+                    // Start from the seat: the chase view (if chosen) pulls back out from there
+                    cameraController.viewBlend = 1;
+                }
+            } else {
+                if (v.interior) v.interior.updateVisibility();
+                // On foot where the exit check put us, looking the way the car faces
+                if (tr.exitGround) {
+                    myPosition.copy(tr.exitGround);
+                    playerController.position.copy(tr.exitGround);
+                }
+                cameraController.fpYaw = v.yaw || 0;
+                cameraController.fpPitch = 0;
+                fpCameraYaw = cameraController.fpYaw;
+                fpCameraPitch = 0;
+                camera.position.set(myPosition.x, myPosition.y + 1.7, myPosition.z);
+            }
+        }
+
+        // Climbs out of the car (keyboard / Use button). Bailing out of a car still doing more
+        // than ~15 km/h, or out of a plane, is instant.
+        function exitVehicleAnimated() {
+            const v = playerController.getVehicle();
+            if (!v || v.isPlane || !v.leftDoorPivot || Math.abs(v.speed || 0) > 4 || vehicleTransition) return false;
+            const exitInfo = playerController.calculateSafeExitPosition(v, spatialGrid);
+            const startPos = camera.position.clone();
+            const startQuat = camera.quaternion.clone();
+            if (!playerController.exitVehicle(spatialGrid)) return false;
+            handleExitVehicleRadio();
+            // exitVehicle put the camera at the exit spot; the climb starts from where it was
+            camera.position.copy(startPos);
+            camera.quaternion.copy(startQuat);
+            startVehicleTransition('exit', v, {
+                exitPos: new THREE.Vector3(exitInfo.x, exitInfo.y || 0, exitInfo.z),
+                exitSide: exitInfo.name
+            });
+            return true;
+        }
+
         // ============ CARJACKING ANIMATION SYSTEM (MOVING VEHICLE HIJACK) ============
         let carjackState = {
             active: false,
@@ -2966,26 +2696,28 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         };
 
         function startCarjackAnimation(targetVehicle) {
-            if (!targetVehicle || carjackState.active) return null;
+            if (!targetVehicle || (carjackState.active || vehicleTransition)) return null;
             if (policeSystem) policeSystem.triggerCrime('stolen_vehicle', targetVehicle.position);
 
-            // Stop the moving car immediately and claim it from AI traffic control
+            // Stop the moving car immediately and claim it from AI traffic control; it was being
+            // driven, so the engine (and its radio) are still running when Kaj gets in
             targetVehicle.isPlayer = true;
+            targetVehicle.engineOn = true;
             targetVehicle.speed = 0;
             targetVehicle.velocity.set(0, 0);
             targetVehicle.setInputs(0, 0, 1.0, true);
 
-            // Mount the vehicle's individual mesh in scene so its animated driver door is visible
+            // Mount the vehicle's individual mesh in scene so its animated driver door is visible,
+            // with its interior (seen through the open door)
             if (targetVehicle.mesh && !targetVehicle.mesh.parent) {
                 scene.add(targetVehicle.mesh);
             }
+            getCarInterior(targetVehicle);
             targetVehicle._updateMeshTransform(0);
 
             // Auto-equip Pistol (or keep current gun if a gun is already equipped) to point at driver
-            const prevWeapon = currentWeaponIndex;
-            if (currentWeaponType() !== 'gun') {
-                selectWeapon('Pistol');
-            }
+            const prevWeapon = inventory.selected;
+            selectBestGun();
 
             // Compute driver door world coordinates (left side of vehicle)
             const vYaw = targetVehicle.yaw;
@@ -3002,7 +2734,9 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
             // Spawn the car's driver NPC inside the driver's seat
             const driverIdx = pedestrians.length;
-            const driverMesh = createPedestrianMesh(driverIdx);
+            const driverMesh = (targetVehicle.isPolice && policeSystem && policeSystem.createOfficerMesh)
+                ? policeSystem.createOfficerMesh(driverIdx * 7919 + 3)
+                : createPedestrianMesh(driverIdx);
             const seatX = targetVehicle.position.x + leftX * 0.35;
             const seatZ = targetVehicle.position.z + leftZ * 0.35;
             driverMesh.position.set(seatX, 0.1, seatZ);
@@ -3032,6 +2766,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             driverMesh.userData.pedestrian = driverPed;
             pedestrians.push(driverPed);
 
+            playCarDoor(ensureCarAudioEngine(), 'open', targetVehicle);
             carjackState = {
                 active: true,
                 phase: 'opening_door',
@@ -3106,53 +2841,28 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     }
                 }
             }
-            // Phase 3 (1.05s -> 1.50s): Driver runs away in panic, player climbs in & shuts door
-            else if (t < carjackState.duration) {
-                carjackState.phase = 'driver_running_away';
-                carjackState.driverExited = true;
-                carjackState.driverFleeing = true;
-
-                const p = Math.min(1.0, (t - 1.05) / 0.45);
-                carjackState.doorAngle = 1.15 * (1.0 - p);
-                v.setDoorAngle(carjackState.doorAngle);
-
-                if (ped && !ped.isDead && ped.state !== 'fleeing') {
-                    ped.state = 'fleeing';
-                    ped.speed = 0.22;
-                    ped.fleeTimer = 600;
+            // Phase 3 (1.05s on): the driver runs away in panic and the player scrambles in over the
+            // seat and slams the door (a hurried VehicleTransition takes over the camera)
+            else {
+                v.setDoorAngle(1.15);
+                if (ped && !ped.isDead) {
                     const fwdX = -sinY;
                     const fwdZ = -cosY;
                     const fleeDirX = leftX * 0.8 - fwdX * 0.6;
                     const fleeDirZ = leftZ * 0.8 - fwdZ * 0.6;
                     const fLen = Math.hypot(fleeDirX, fleeDirZ) || 1;
-                    ped.velocity.set((fleeDirX / fLen) * ped.speed, 0, (fleeDirZ / fLen) * ped.speed);
-                }
-
-                // Interpolate player into driver seat
-                const doorStandX = v.position.x + leftX * 1.8;
-                const doorStandZ = v.position.z + leftZ * 1.8;
-                myPosition.set(
-                    doorStandX + (v.position.x - doorStandX) * p,
-                    0,
-                    doorStandZ + (v.position.z - doorStandZ) * p
-                );
-                playerController.position.copy(myPosition);
-            }
-            // Complete carjacking: transition player into IN_VEHICLE state
-            else {
-                v.setDoorAngle(0);
-                if (ped && !ped.isDead) {
                     ped.state = 'fleeing';
                     ped.speed = 0.22;
                     ped.fleeTimer = 600;
+                    ped.velocity.set((fleeDirX / fLen) * ped.speed, 0, (fleeDirZ / fLen) * ped.speed);
                 }
                 carjackState.active = false;
                 carjackState.phase = 'completed';
-                carjackState.doorAngle = 0;
+                carjackState.doorAngle = 1.15;
                 carjackState.driverExited = true;
                 carjackState.driverFleeing = true;
                 carjackState.completedCount++;
-                playerController.enterVehicle(v);
+                startVehicleTransition('enter', v, { doorStartsOpen: true, speed: 1.8 });
                 return;
             }
 
@@ -3164,12 +2874,39 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             v._updateMeshTransform(0);
         }
 
-        function tryBoardOrJackVehicle() {
-            if (carjackState.active) return true;
+        // Every car the player can get into: their own, AI traffic, dev-spawned cars and police cruisers
+        function boardableVehicles() {
+            const list = [playerVehicle, ...trafficVehicles, ...spawnedVehicles];
+            if (policeSystem) {
+                for (let i = 0; i < policeSystem.policeCars.length; i++) list.push(policeSystem.policeCars[i]);
+            }
+            return list;
+        }
+
+        // A stolen cruiser leaves the police fleet: police AI stops driving it, clearing the wanted
+        // level no longer despawns it, and from then on it is an ordinary car the player owns
+        function claimPoliceCar(vehicle) {
+            if (!policeSystem || !vehicle || !vehicle.isPolice) return;
+            const idx = policeSystem.policeCars.indexOf(vehicle);
+            if (idx < 0) return;
+            policeSystem.policeCars.splice(idx, 1);
+            vehicle.stolen = true;
+            vehicle.hasDeployedOfficers = true;
+            spawnedVehicles.push(vehicle);
+        }
+
+        function tryBoardOrJackVehicle(animate = false) {
+            if ((carjackState.active || vehicleTransition)) return true;
             if (playerController.getState() !== 'ON_FOOT') return false;
-            const candidateVehicles = [playerVehicle, ...trafficVehicles, ...spawnedVehicles];
-            const nearCar = playerController.getNearbyVehicle(candidateVehicles);
+            const nearCar = playerController.getNearbyVehicle(boardableVehicles());
             if (!nearCar) return false;
+            const isCruiser = !!policeSystem && policeSystem.policeCars.includes(nearCar);
+            // A car someone was driving (AI traffic, a police cruiser) still has its engine running
+            const agent = nearCar._trafficAgent;
+            if (!nearCar.driverDead && ((agent && !agent.retired) || (isCruiser && !nearCar.hasDeployedOfficers))) {
+                nearCar.engineOn = true;
+            }
+            claimPoliceCar(nearCar);
 
             const carSpeed = Math.abs(typeof nearCar.getSpeed === 'function' ? nearCar.getSpeed() : (nearCar.speed || 0));
             // Only AI traffic gets carjacked; dev-spawned cars and planes are simply boarded
@@ -3180,6 +2917,13 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
             if (nearCar.mesh && !nearCar.mesh.parent) {
                 scene.add(nearCar.mesh);
+            }
+            // (carjacking reports itself)
+            if (isCruiser) policeSystem.triggerCrime('stolen_vehicle', nearCar.position);
+            if (animate && !nearCar.isPlane && nearCar.leftDoorPivot) {
+                // Hold the car still while the player gets in
+                nearCar.setInputs(0, 0, 1.0, true);
+                return !!startVehicleTransition('enter', nearCar);
             }
             const entered = playerController.enterVehicle(nearCar);
             if (entered) {
@@ -3505,7 +3249,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 arms.position.set(-0.38, 0.78, -0.12);
                 driver.add(arms);
 
-                vehicle.mesh.add(driver);
+                // The cabin anchor moves the Civic-seat layout above into this model's driver's seat
+                (vehicle.cabinAnchor || vehicle.mesh).add(driver);
                 vehicle.driverMesh = driver;
             }
             return driver;
@@ -3530,9 +3275,9 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             let bloodDecal = winMesh.getObjectByName('window_blood_decal');
             if (!bloodDecal) {
                 const tex = getWindowBloodTexture();
-                const decalGeo = isSide
-                    ? new THREE.PlaneGeometry(1.7, 0.38)
-                    : new THREE.PlaneGeometry(1.68, isFront ? 0.48 : 0.42);
+                // Glass panes lie in their local XY plane with +Z pointing out of the car
+                const size = winMesh.userData.windowSize || { w: 1.6, h: 0.45 };
+                const decalGeo = new THREE.PlaneGeometry(size.w * 0.92, size.h * 0.88);
                 const decalMat = new THREE.MeshBasicMaterial({
                     map: tex,
                     transparent: true,
@@ -3542,14 +3287,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 });
                 bloodDecal = new THREE.Mesh(decalGeo, decalMat);
                 bloodDecal.name = 'window_blood_decal';
-                if (isSide) {
-                    // Side glass is thin along X: face the decal outward
-                    const outward = (windowType === 'left') ? -1 : 1;
-                    bloodDecal.rotation.y = outward * Math.PI / 2;
-                    bloodDecal.position.set(outward * 0.035, 0, 0);
-                } else {
-                    bloodDecal.position.set(0, 0, 0.035);
-                }
+                bloodDecal.position.set(0, 0, -0.006); // on the inside of the glass
                 winMesh.add(bloodDecal);
             }
 
@@ -3567,35 +3305,65 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
         }
 
+        const OPPOSITE_WINDOW = { front: 'back', back: 'front', left: 'right', right: 'left' };
+
+        // Whether someone is sitting in a car the player is not driving: AI traffic and police
+        // cruisers (a cruiser keeps chasing after its officers get out, so someone is still at the
+        // wheel). The player's own car, dev-spawned cars and cars the player has been in are empty.
+        function vehicleHasDriver(vehicle) {
+            if (!vehicle || vehicle.isPlane || vehicle === playerVehicle || vehicle.isSpawned || vehicle.driverGone) return false;
+            return true;
+        }
+
+        // A bullet through a car's glass from outside: the pane shatters, the cabin opens up so it
+        // can be seen into, and whoever is driving is killed
+        function shootVehicleWindow(vehicle, windowType) {
+            if (!vehicle || !vehicle.mesh) return;
+            // AI traffic is drawn by the instanced fleet; mount the car's own mesh (the fleet hides
+            // its copy) so the broken glass and the body inside show
+            if (!vehicle.mesh.parent) {
+                scene.add(vehicle.mesh);
+                if (typeof vehicle._updateMeshTransform === 'function') vehicle._updateMeshTransform(0);
+            }
+            glassShatter.breakWindow(vehicle, windowType, ensureCarAudioEngine(), false);
+            const interior = getCarInterior(vehicle);
+            if (interior) interior.exposeCabin();
+            if (vehicleHasDriver(vehicle)) killVehicleDriver(vehicle, windowType);
+        }
+
         // Kills vehicle driver when the front, back or a side window is shot
         function killVehicleDriver(vehicle, windowType, hitWorldPos = null) {
             if (!vehicle) return;
 
-            // Apply visible blood splatter to the hit window
-            applyWindowBloodSplatter(vehicle, windowType);
+            // Blood on the shot window, or, once it has shattered, on the glass across the cabin
+            let bloodWindow = windowType;
+            if (glassShatter.isBroken(vehicle, windowType)) bloodWindow = OPPOSITE_WINDOW[windowType];
+            if (bloodWindow && !glassShatter.isBroken(vehicle, bloodWindow)) applyWindowBloodSplatter(vehicle, bloodWindow);
 
             if (vehicle.driverDead) return; // Already marked dead
 
             vehicle.driverDead = true;
             vehicle.driverState = 'dead';
 
-            // Slump driver forward over steering wheel
+            // Slump driver forward over steering wheel; the horn sounds when the face hits it
             const driver = ensureVehicleDriverMesh(vehicle);
             if (driver) {
+                driver.visible = true;
                 const head = driver.getObjectByName('driver_head');
                 const torso = driver.getObjectByName('driver_torso');
-                const cap = driver.getObjectByName('driver_cap');
-                if (head) {
-                    head.position.set(-0.38, 0.94, -0.16);
-                    head.rotation.x = 0.58;
-                    head.rotation.z = 0.22;
-                }
-                if (cap) {
-                    cap.position.set(-0.38, 1.04, -0.22);
-                    cap.rotation.x = 0.58;
-                }
-                if (torso) {
-                    torso.rotation.x = 0.35;
+                startDriverSlump(vehicle, driver);
+                // Blood on the head and down the shirt
+                if (!driver.getObjectByName('driver_blood')) {
+                    const bloodMat = new THREE.MeshLambertMaterial({ color: 0x5a0000 });
+                    const blood = new THREE.Group();
+                    blood.name = 'driver_blood';
+                    const headWound = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.12, 0.012), bloodMat);
+                    headWound.position.set(0.0, 0.04, -0.125);
+                    if (head) head.add(headWound);
+                    const shirt = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.3, 0.012), bloodMat);
+                    shirt.position.set(0.02, 0.08, -0.146);
+                    if (torso) torso.add(shirt);
+                    driver.add(blood);
                 }
             }
 
@@ -3616,12 +3384,135 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 }
             }
 
-            // Car horn honks briefly as driver slumps onto the wheel
-            try {
-                const honk = new Audio('/media/mp3/TheBiggestHonk.mp3');
-                honk.volume = 0.4;
-                honk.play().catch(() => {});
-            } catch (e) {}
+        }
+
+        // ---- Dead drivers: slump onto the wheel, face on the horn, horn blares for 5 s ----
+        const DRIVER_SLUMP_TIME = 0.45;   // seconds from the shot to the face hitting the wheel
+        const DEAD_HORN_TIME = 5.0;
+        const HORN_HEARING_RANGE = 90;     // metres at which a horn fades out
+        // Dead pose of each part (driver space; the head ends up on the wheel's hub)
+        const DRIVER_DEAD_POSE = {
+            driver_torso: { p: [-0.38, 0.7, 0.0], r: [-0.5, 0, 0] },
+            driver_head: { p: [-0.38, 1.0, -0.27], r: [-0.55, 0, 0.25] },
+            driver_cap: { p: [-0.4, 1.1, -0.33], r: [-0.55, 0, 0.25] },
+            driver_arms: { p: [-0.38, 0.66, -0.3], r: [-0.3, 0, 0] }
+        };
+        const slumpingDrivers = [];
+
+        function startDriverSlump(vehicle, driver) {
+            const parts = [];
+            for (const name in DRIVER_DEAD_POSE) {
+                const obj = driver.getObjectByName(name);
+                if (!obj) continue;
+                const to = DRIVER_DEAD_POSE[name];
+                parts.push({
+                    obj,
+                    fromP: obj.position.clone(),
+                    fromR: obj.rotation.clone(),
+                    toP: new THREE.Vector3(...to.p),
+                    toR: new THREE.Euler(...to.r)
+                });
+            }
+            slumpingDrivers.push({ vehicle, parts, t: 0, horn: null, hornLeft: 0 });
+        }
+
+        let _hornShaperCurve = null;
+
+        /**
+         * Synthesized car horn on the car audio engine's context: two horns a major third apart
+         * (F#4 / A#4, like a dual-tone automotive horn), each a buzzy sawtooth + square pair, driven
+         * into soft clipping and band-limited to the horn's brassy range.
+         */
+        function startDeadHorn(entry) {
+            const ctx = ensureCarAudioEngine();
+            if (!ctx) {
+                entry.hornLeft = 0;
+                return;
+            }
+            if (ctx.state === 'suspended') ctx.resume();
+            if (!_hornShaperCurve) {
+                _hornShaperCurve = new Float32Array(1024);
+                for (let i = 0; i < 1024; i++) {
+                    const x = (i / 1023) * 2 - 1;
+                    _hornShaperCurve[i] = Math.tanh(x * 3);
+                }
+            }
+            const now = ctx.currentTime;
+            const mix = ctx.createGain();
+            mix.gain.value = 0.18;
+            const oscs = [];
+            for (const f of [370, 466]) {
+                for (const type of ['sawtooth', 'square']) {
+                    const o = ctx.createOscillator();
+                    o.type = type;
+                    o.frequency.value = f;
+                    o.detune.value = (Math.random() - 0.5) * 8;
+                    o.connect(mix);
+                    oscs.push(o);
+                }
+            }
+            const shaper = ctx.createWaveShaper();
+            shaper.curve = _hornShaperCurve;
+            const band = ctx.createBiquadFilter();
+            band.type = 'bandpass';
+            band.frequency.value = 1100;
+            band.Q.value = 0.6;
+            const lowpass = ctx.createBiquadFilter();
+            lowpass.type = 'lowpass';
+            lowpass.frequency.value = 3200;
+            const gain = ctx.createGain();
+            gain.gain.value = 0;
+            mix.connect(shaper);
+            shaper.connect(band);
+            band.connect(lowpass);
+            lowpass.connect(gain);
+            gain.connect(ctx.destination);
+            oscs.forEach((o) => o.start(now));
+            entry.horn = { oscs, gain };
+            entry.hornLeft = DEAD_HORN_TIME;
+        }
+
+        function stopDeadHorn(entry) {
+            if (!entry.horn) return;
+            const ctx = ensureCarAudioEngine();
+            const now = ctx.currentTime;
+            entry.horn.gain.gain.cancelScheduledValues(now);
+            entry.horn.gain.gain.setTargetAtTime(0, now, 0.03);
+            entry.horn.oscs.forEach((o) => o.stop(now + 0.25));
+            entry.horn = null;
+        }
+
+        function updateDeadDrivers(dt) {
+            for (let i = slumpingDrivers.length - 1; i >= 0; i--) {
+                const e = slumpingDrivers[i];
+                if (e.t < DRIVER_SLUMP_TIME) {
+                    e.t = Math.min(DRIVER_SLUMP_TIME, e.t + dt);
+                    // Falls like dead weight: slow at first, fastest when it hits the wheel
+                    const k = (e.t / DRIVER_SLUMP_TIME) ** 2;
+                    for (const part of e.parts) {
+                        part.obj.position.lerpVectors(part.fromP, part.toP, k);
+                        part.obj.rotation.set(
+                            part.fromR.x + (part.toR.x - part.fromR.x) * k,
+                            part.fromR.y + (part.toR.y - part.fromR.y) * k,
+                            part.fromR.z + (part.toR.z - part.fromR.z) * k
+                        );
+                    }
+                    if (e.t >= DRIVER_SLUMP_TIME) startDeadHorn(e);
+                    continue;
+                }
+                e.hornLeft -= dt;
+                if (e.hornLeft <= 0) {
+                    stopDeadHorn(e);
+                    slumpingDrivers.splice(i, 1);
+                    continue;
+                }
+                if (e.horn) {
+                    const v = e.vehicle;
+                    const d = Math.hypot(camera.position.x - v.position.x, camera.position.z - v.position.z);
+                    const falloff = Math.max(0, 1 - d / HORN_HEARING_RANGE);
+                    e.horn.gain.gain.setTargetAtTime(0.5 * falloff * falloff, ensureCarAudioEngine().currentTime, 0.03);
+                }
+            }
         }
 
         // Raycasts against vehicle front & back windows in vehicle local coordinates
@@ -3651,63 +3542,29 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
             let closestHit = null;
 
-            // 1. Front Window (windshield): local Z = -1.4
-            if (Math.abs(locDirZ) > 0.001) {
-                const tFront = (-1.4 - locOrigZ) / locDirZ;
-                if (tFront > 0 && tFront <= maxRange) {
-                    const hitX = locOrigX + locDirX * tFront;
-                    const hitY = locOrigY + locDirY * tFront;
-                    // Windshield bounds: X in [-0.88, 0.88], Y in [0.75, 1.45]
-                    if (Math.abs(hitX) <= 0.88 && hitY >= 0.75 && hitY <= 1.45) {
-                        closestHit = {
-                            vehicle: veh,
-                            windowType: 'front',
-                            distance: tFront,
-                            hitPos: rayOrigin.clone().addScaledVector(rayDir, tFront)
-                        };
-                    }
-                }
-            }
-
-            // 2. Back Window (rear glass): local Z = 0.8
-            if (Math.abs(locDirZ) > 0.001) {
-                const tRear = (0.8 - locOrigZ) / locDirZ;
-                if (tRear > 0 && tRear <= maxRange) {
-                    const hitX = locOrigX + locDirX * tRear;
-                    const hitY = locOrigY + locDirY * tRear;
-                    // Rear glass bounds: X in [-0.88, 0.88], Y in [0.75, 1.45]
-                    if (Math.abs(hitX) <= 0.88 && hitY >= 0.75 && hitY <= 1.45) {
-                        if (!closestHit || tRear < closestHit.distance) {
-                            closestHit = {
-                                vehicle: veh,
-                                windowType: 'back',
-                                distance: tRear,
-                                hitPos: rayOrigin.clone().addScaledVector(rayDir, tRear)
-                            };
-                        }
-                    }
-                }
-            }
-
-            // 3. Side windows (driver / passenger doors): local X = +/-0.956
-            if (Math.abs(locDirX) > 0.001) {
-                for (let side = -1; side <= 1; side += 2) {
-                    const tSide = (side * 0.956 - locOrigX) / locDirX;
-                    if (tSide > 0 && tSide <= maxRange) {
-                        const hitZ = locOrigZ + locDirZ * tSide;
-                        const hitY = locOrigY + locDirY * tSide;
-                        // Side glass spans Z in [-1.29, 0.69], Y in [0.89, 1.31]
-                        if (hitZ >= -1.29 && hitZ <= 0.69 && hitY >= 0.89 && hitY <= 1.31) {
-                            if (!closestHit || tSide < closestHit.distance) {
-                                closestHit = {
-                                    vehicle: veh,
-                                    windowType: side < 0 ? 'left' : 'right',
-                                    distance: tSide,
-                                    hitPos: rayOrigin.clone().addScaledVector(rayDir, tSide)
-                                };
-                            }
-                        }
-                    }
+            // Each pane of this model's glass (front, back, driver / passenger door glass): intersect
+            // the ray with the pane's plane and test the hit against the pane outline
+            const frames = getWindowFrames(veh);
+            for (const type of ['front', 'back', 'left', 'right']) {
+                const w = frames[type];
+                if (!w || glassShatter.isBroken(veh, type)) continue;
+                const denom = locDirX * w.N.x + locDirY * w.N.y + locDirZ * w.N.z;
+                if (Math.abs(denom) < 0.001) continue;
+                const t = ((w.origin.x - locOrigX) * w.N.x + (w.origin.y - locOrigY) * w.N.y + (w.origin.z - locOrigZ) * w.N.z) / denom;
+                if (t <= 0 || t > maxRange) continue;
+                const px = locOrigX + locDirX * t - w.origin.x;
+                const py = locOrigY + locDirY * t - w.origin.y;
+                const pz = locOrigZ + locDirZ * t - w.origin.z;
+                const u = px * w.U.x + py * w.U.y + pz * w.U.z;
+                const v = px * w.V.x + py * w.V.y + pz * w.V.z;
+                if (!pointInPoly(w.poly, u, v)) continue;
+                if (!closestHit || t < closestHit.distance) {
+                    closestHit = {
+                        vehicle: veh,
+                        windowType: type,
+                        distance: t,
+                        hitPos: rayOrigin.clone().addScaledVector(rayDir, t)
+                    };
                 }
             }
 
@@ -3992,23 +3849,278 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         const sharedRocketGeo = new THREE.CylinderGeometry(0.08, 0.12, 0.5, 8);
         sharedRocketGeo.rotateX(Math.PI / 2);
         const sharedRocketMat = new THREE.MeshBasicMaterial({ color: 0xff4400 });
+        const sharedGrenadeGeo = new THREE.SphereGeometry(0.06, 8, 6);
+        const sharedGrenadeMat = new THREE.MeshStandardMaterial({ color: 0x4b5232, roughness: 0.6, metalness: 0.3 });
+        const sharedTracerGeo = new THREE.CylinderGeometry(0.012, 0.012, 1.4, 4);
+        sharedTracerGeo.rotateX(Math.PI / 2);
+        const sharedTracerMat = new THREE.MeshBasicMaterial({ color: 0xffe9a0, transparent: true, opacity: 0.85 });
+
+        // ============ GUN HANDLING: AMMO, RELOADING, FIRE MODES, RECOIL, AIMING ============
+        // (gun state variables live with the inventory, above)
+        const _fallbackGunAudio = new Map();
+        const scopeOverlay = document.createElement('div');
+        scopeOverlay.id = 'scope-overlay';
+        document.body.appendChild(scopeOverlay);
+
+        function ensureGunAudio() {
+            if (gunAudio) return gunAudio;
+            const ctx = ensureCarAudioEngine();
+            if (ctx) gunAudio = new GunAudio(ctx);
+            return gunAudio;
+        }
+
+        /** Plain <audio> for a gun's recorded shot (used until Web Audio has the recordings). */
+        function fallbackGunAudio(gun) {
+            const known = { '/media/mp3/pistol_fire3.mp3': pistolFireSound, '/media/hl2-smg-shot.mp3': smgFireSound,
+                '/media/mp3/shotgun.mp3': shotgunFireSound, '/media/explosion-meme_dTCfAHs.mp3': explosionSound };
+            if (known[gun.sound]) return known[gun.sound];
+            if (!_fallbackGunAudio.has(gun.sound)) {
+                const a = new Audio(gun.sound);
+                a.volume = 0.6;
+                _fallbackGunAudio.set(gun.sound, a);
+            }
+            return _fallbackGunAudio.get(gun.sound) || gunFallbackSound;
+        }
+
+        function gunReserve(gun) {
+            return infiniteAmmo ? 999 : inventory.count(gun.ammoItem);
+        }
+
+        function heldGunStack() {
+            const st = inventory.selectedItem();
+            return st && getItemDef(st.id).kind === 'gun' ? st : null;
+        }
+
+        function startReload() {
+            const stack = heldGunStack();
+            if (!stack || reloadState) return false;
+            const gun = getItemDef(stack.id);
+            if (stack.data.mag >= gun.magSize) return false;
+            if (gunReserve(gun) <= 0) {
+                showToast(`No ${getItemDef(gun.ammoItem).name}`, 1400);
+                return false;
+            }
+            const perRound = gun.reloadOne > 0;
+            reloadState = { stack, gun, t: 0, perRound, total: perRound ? gun.reloadOne : gun.reloadTime, nextRound: gun.reloadOne, magIn: false };
+            burstRemaining = 0;
+            if (ensureGunAudio()) gunAudio.mechanic(perRound ? 'shell' : 'magOut');
+            return true;
+        }
+
+        function cancelReload() {
+            reloadState = null;
+            if (weaponWheel) weaponWheel.setReload(-1);
+        }
+
+        function updateReload(dt) {
+            const r = reloadState;
+            if (!r) return;
+            if (heldGunStack() !== r.stack) {
+                cancelReload();
+                return;
+            }
+            r.t += dt;
+            const gun = r.gun;
+            if (r.perRound) {
+                // Shell by shell (pump shotgun, bolt rifles, grenade launcher); shooting interrupts
+                weaponWheel.setReload(r.stack.data.mag / gun.magSize);
+                if (r.t >= r.nextRound) {
+                    r.nextRound += gun.reloadOne;
+                    const got = infiniteAmmo ? 1 : inventory.consume(gun.ammoItem, 1);
+                    if (got > 0) {
+                        r.stack.data.mag += 1;
+                        if (gunAudio) gunAudio.mechanic('shell');
+                    }
+                    if (got <= 0 || r.stack.data.mag >= gun.magSize) {
+                        if (gunAudio) gunAudio.mechanic(gun.mode === 'pump' ? 'pump' : 'bolt');
+                        cancelReload();
+                    }
+                    weaponWheel.render(true);
+                }
+            } else {
+                weaponWheel.setReload(Math.min(1, r.t / r.total));
+                if (!r.magIn && r.t >= r.total * 0.6) {
+                    r.magIn = true;
+                    if (gunAudio) gunAudio.mechanic('magIn');
+                }
+                if (r.t >= r.total) {
+                    const want = gun.magSize - r.stack.data.mag;
+                    const got = infiniteAmmo ? want : inventory.consume(gun.ammoItem, want);
+                    r.stack.data.mag += got;
+                    if (gunAudio) gunAudio.mechanic(gun.mode === 'bolt' ? 'bolt' : 'slide');
+                    cancelReload();
+                    weaponWheel.render(true);
+                }
+            }
+        }
+
+        function cycleFireMode() {
+            const stack = heldGunStack();
+            if (!stack) return;
+            const gun = getItemDef(stack.id);
+            const modes = fireModesOf(gun);
+            if (modes.length < 2) return;
+            const cur = stack.data.mode || gun.mode;
+            stack.data.mode = modes[(modes.indexOf(cur) + 1) % modes.length];
+            if (ensureGunAudio()) gunAudio.mechanic('mode');
+            showToast(`${gun.name}: ${stack.data.mode}`, 1000);
+            weaponWheel.render(true);
+        }
+
+        /** Left click with a gun: one shot, or the start of a burst / automatic fire. */
+        function pullTrigger() {
+            const stack = heldGunStack();
+            if (!stack) return;
+            const gun = getItemDef(stack.id);
+            const mode = stack.data.mode || gun.mode;
+            lastTriggerTime = performance.now();
+            if (mode === 'spin') {
+                if (ensureGunAudio() && gunSpin < 0.2) gunAudio.mechanic('spin');
+                return; // the barrels spin up first (updateGunTrigger fires)
+            }
+            const r = shootWeapon();
+            if (r.fired && mode === 'burst') burstRemaining = gun.burst - 1;
+        }
+
+        /** Kicks the view up (and a little sideways); part of it settles back. */
+        function applyGunRecoil(gun) {
+            const kick = gun.recoil * (1 - 0.4 * adsAmount) * (0.85 + Math.random() * 0.3);
+            const side = (Math.random() - 0.5) * kick * 0.6;
+            if (playerController.getState() === 'IN_VEHICLE') {
+                cameraController.aimPitch = Math.min(1.3, cameraController.aimPitch + kick);
+                cameraController.aimYaw += side;
+            } else {
+                cameraController.fpPitch = Math.min(fpMaxPitch, cameraController.fpPitch + kick);
+                cameraController.fpYaw += side;
+                fpCameraPitch = cameraController.fpPitch;
+                fpCameraYaw = cameraController.fpYaw;
+            }
+            recoilRecover += kick * 0.55;
+        }
+
+        /** Per-step gun work: reloads, bursts, automatic fire, minigun spin, recoil, sights. */
+        function updateGunTrigger(dt) {
+            updateReload(dt);
+            const gun = currentWeapon();
+            const stack = heldGunStack();
+            const onFoot = playerController.getState() === 'ON_FOOT';
+            const inCar = !onFoot;
+            const triggerHeld = (onFoot && isFiringGun) || (inCar && carGunHeld);
+            if (stack) {
+                const mode = stack.data.mode || gun.mode;
+                if (mode === 'spin') {
+                    gunSpin = Math.max(0, Math.min(1, gunSpin + (triggerHeld ? dt / gun.spinUp : -dt / 1.2)));
+                    if (triggerHeld && gunSpin >= 1) shootWeapon();
+                } else if (burstRemaining > 0) {
+                    if (performance.now() - lastShotTime >= gun.fireRate) {
+                        const r = shootWeapon();
+                        if (r.fired) burstRemaining--;
+                        else if (r.reason !== 'cooldown') burstRemaining = 0;
+                        if (burstRemaining === 0) lastShotTime += gun.burstDelay;
+                    }
+                } else if (onFoot && isFiringGun && mode === 'auto') {
+                    shootWeapon();
+                }
+                if (autoReloadAt && performance.now() >= autoReloadAt) {
+                    autoReloadAt = 0;
+                    if (stack.data.mag === 0) startReload();
+                }
+            } else {
+                gunSpin = 0;
+            }
+            muzzleFlashTimer = Math.max(0, muzzleFlashTimer - dt);
+            cycleTimer = Math.max(0, cycleTimer - dt * 2.2);
+
+            // Recoil settles back partway
+            if (recoilRecover > 0) {
+                const back = Math.min(recoilRecover, dt * 0.9);
+                recoilRecover -= back;
+                if (inCar) cameraController.aimPitch -= back;
+                else {
+                    cameraController.fpPitch -= back;
+                    fpCameraPitch = cameraController.fpPitch;
+                }
+            }
+
+            // Aiming down the sights: zoom (scopes a lot), steadier, slower look
+            const wantAds = onFoot && adsHeld && !!stack && !reloadState && !vehicleTransition;
+            adsAmount += ((wantAds ? 1 : 0) - adsAmount) * Math.min(1, dt * 12);
+            if (adsAmount < 0.002) adsAmount = 0;
+            const zoom = stack ? (gun.adsZoom || 1.3) : 1;
+            const fov = BASE_FOV / (1 + (zoom - 1) * adsAmount);
+            if (Math.abs(camera.fov - fov) > 0.01) {
+                camera.fov = fov;
+                camera.updateProjectionMatrix();
+            }
+            scopeOverlay.style.display = (stack && gun.scope && adsAmount > 0.85) ? 'block' : 'none';
+            if (weaponWheel) weaponWheel.render();
+        }
+
+        // Hits on people: headshots do double damage, a kill ragdolls them
+        function damageTarget(ped, damage, hit) {
+            if (!ped || ped.isDead) return false;
+            const head = hit.y > ped.mesh.position.y + 1.45;
+            ped.hp -= damage * (head ? 2 : 1);
+            if (ped.hp <= 0) {
+                if (ped.isPoliceOfficer && policeSystem) {
+                    policeSystem.killOfficer(ped, hit);
+                } else {
+                    killPedestrian(ped, hit);
+                    if (policeSystem) policeSystem.triggerCrime('shooting', ped.mesh.position);
+                }
+                return true;
+            }
+            if (policeSystem && !ped.isPoliceOfficer) policeSystem.triggerCrime('shooting', ped.mesh.position);
+            return false;
+        }
+
+        /** Every car that bullets or blasts can hit (not the one the player is driving). */
+        function shootableVehicles(exclude) {
+            const list = [];
+            const push = (v) => { if (v && v !== exclude && !list.includes(v)) list.push(v); };
+            if (Array.isArray(trafficVehicles)) trafficVehicles.forEach(push);
+            if (policeSystem && policeSystem.policeCars) policeSystem.policeCars.forEach(push);
+            push(playerVehicle);
+            spawnedVehicles.forEach((v) => { if (!v.isPlane) push(v); });
+            for (const child of scene.children) if (child.userData && child.userData.vehicle) push(child.userData.vehicle);
+            return list;
+        }
 
         function shootWeapon() {
-            const weapon = weapons[currentWeaponIndex];
+            const weapon = currentWeapon();
             if (!weapon || weapon.type !== 'gun') return { fired: false, reason: 'not_a_gun' };
-
+            const stack = inventory.selectedItem();
             const now = performance.now();
             if (now - lastShotTime < weapon.fireRate) {
                 return { fired: false, reason: 'cooldown' };
             }
+            if (reloadState) {
+                // Shell-by-shell reloads can be cut short to fire what's loaded
+                if (reloadState.perRound && stack.data.mag > 0) cancelReload();
+                else return { fired: false, reason: 'reloading' };
+            }
+            if (stack.data.mag <= 0) {
+                lastShotTime = now;
+                if (ensureGunAudio()) gunAudio.mechanic('dry');
+                if (!startReload()) burstRemaining = 0;
+                return { fired: false, reason: 'empty' };
+            }
+            if (!infiniteAmmo) stack.data.mag--;
             lastShotTime = now;
             totalShotCount++;
 
-            // Play authentic gunshot sound from /media
-            playGunSound(weapon.audioObj || gunFallbackSound, weapon.sound);
+            // The recording through Web Audio (pitched, with a synthesized body), or plain <audio>
+            lastPlayedSound = weapon.sound;
+            if (!ensureGunAudio() || !gunAudio.shot(weapon)) playGunSound(fallbackGunAudio(weapon), weapon.sound);
 
-            // Apply recoil to viewmodel
-            viewmodelRecoil = weapon.explosive ? 0.14 : 0.07;
+            viewmodelRecoil = weapon.explosive ? 0.14 : Math.min(0.12, 0.035 + weapon.recoil * 0.7);
+            muzzleFlashTimer = 0.05;
+            if (weapon.mode === 'pump' || weapon.mode === 'bolt') {
+                cycleTimer = 1;
+                setTimeout(() => { if (gunAudio) gunAudio.mechanic(weapon.mode); }, Math.min(350, weapon.fireRate * 0.35));
+            }
+            applyGunRecoil(weapon);
+            if (stack.data.mag === 0 && gunReserve(weapon) > 0) autoReloadAt = now + Math.max(250, Math.min(600, weapon.fireRate));
 
             // Compute camera aim direction
             const aimDir = new THREE.Vector3();
@@ -4018,26 +4130,56 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
 
             const muzzleOrigin = camera.position.clone().addScaledVector(aimDir, 0.6);
-            makeNearbyPedestriansFlee(myPosition);
+            if (!weapon.suppressed) makeNearbyPedestriansFlee(myPosition);
             mpSend({ type: 'fire', weapon: weapon.name, ox: muzzleOrigin.x, oy: muzzleOrigin.y, oz: muzzleOrigin.z, dx: aimDir.x, dy: aimDir.y, dz: aimDir.z });
 
             let hitCount = 0;
             const pellets = weapon.pellets || 1;
+            const moving = fpKeys.w || fpKeys.a || fpKeys.s || fpKeys.d;
+            // Aimed and standing still is accurate; spraying on the move isn't. A first shot after a
+            // pause goes where the sights are.
+            const spreadMul = (1 - 0.6 * adsAmount) * (moving ? 1.5 : 1);
+            const firstShotSteady = pellets === 1 && now - lastTriggerTime < 30 && !moving;
+            const activePlayerVeh = (playerController && playerController.getState() === 'IN_VEHICLE')
+                ? (playerController.getVehicle() || playerVehicle)
+                : null;
 
             for (let p = 0; p < pellets; p++) {
                 const dir = aimDir.clone();
-                if (weapon.spread > 0 && p > 0) {
-                    dir.x += (Math.random() - 0.5) * weapon.spread;
-                    dir.y += (Math.random() - 0.5) * weapon.spread;
-                    dir.z += (Math.random() - 0.5) * weapon.spread;
+                const sp = weapon.spread * spreadMul;
+                if (sp > 0 && !(p === 0 && firstShotSteady)) {
+                    dir.x += (Math.random() - 0.5) * sp;
+                    dir.y += (Math.random() - 0.5) * sp;
+                    dir.z += (Math.random() - 0.5) * sp;
                     dir.normalize();
+                }
+
+                // Rockets and grenades fly: they do their damage where they land
+                if (weapon.explosive) {
+                    const isGrenade = !!weapon.gravity;
+                    const mesh = new THREE.Mesh(isGrenade ? sharedGrenadeGeo : sharedRocketGeo, isGrenade ? sharedGrenadeMat : sharedRocketMat);
+                    mesh.position.copy(muzzleOrigin);
+                    mesh.lookAt(muzzleOrigin.clone().add(dir));
+                    scene.add(mesh);
+                    projectiles.push({
+                        mesh,
+                        velocity: dir.clone().multiplyScalar(weapon.projectileSpeed),
+                        damage: weapon.damage,
+                        explosive: true,
+                        blastRadius: weapon.blastRadius || 5,
+                        gravity: weapon.gravity || 0,
+                        distanceTraveled: 0,
+                        maxRange: weapon.range,
+                        weaponName: weapon.name
+                    });
+                    continue;
                 }
 
                 // Immediate hitscan check along aim ray against living pedestrians & armed police officers
                 const hitTargets = (policeSystem && policeSystem.officers.length > 0)
                     ? [...pedestrians, ...policeSystem.officers]
                     : pedestrians;
-
+                let pelletHitDist = weapon.range;
                 for (let i = 0; i < hitTargets.length; i++) {
                     const ped = hitTargets[i];
                     if (ped.isDead) continue;
@@ -4058,34 +4200,14 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
                         const distHoriz = Math.hypot(pedCenterX - closestX, pedCenterZ - closestZ);
                         const distVert = Math.abs(pedCenterY - closestY);
-                        const hitRadius = weapon.explosive ? 6.0 : 1.15;
-
-                        if (distHoriz <= hitRadius && distVert <= (weapon.explosive ? 6.0 : 1.5)) {
-                            ped.hp -= weapon.damage;
-                            if (ped.hp <= 0) {
-                                if (ped.isPoliceOfficer && policeSystem) {
-                                    policeSystem.killOfficer(ped, {
-                                        x: closestX, y: closestY, z: closestZ,
-                                        dirX: dir.x, dirY: dir.y, dirZ: dir.z,
-                                        explosive: !!weapon.explosive
-                                    });
-                                } else {
-                                    killPedestrian(ped, {
-                                        x: closestX, y: closestY, z: closestZ,
-                                        dirX: dir.x, dirY: dir.y, dirZ: dir.z,
-                                        explosive: !!weapon.explosive
-                                    });
-                                    if (policeSystem) {
-                                        policeSystem.triggerCrime('shooting', ped.mesh.position);
-                                    }
-                                }
+                        if (distHoriz <= 1.15 && distVert <= 1.5) {
+                            // Damage falls off past half the gun's range
+                            const falloff = proj > weapon.range * 0.5 ? 1 - 0.5 * (proj / weapon.range - 0.5) * 2 : 1;
+                            if (damageTarget(ped, weapon.damage * falloff, { x: closestX, y: closestY, z: closestZ, dirX: dir.x, dirY: dir.y, dirZ: dir.z, explosive: false })) {
                                 hitCount++;
-                            } else {
-                                if (policeSystem && !ped.isPoliceOfficer) {
-                                    policeSystem.triggerCrime('shooting', ped.mesh.position);
-                                }
                             }
-                            if (!weapon.explosive) break;
+                            pelletHitDist = proj;
+                            break;
                         }
                     }
                 }
@@ -4100,74 +4222,48 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                         const cx = camera.position.x + dir.x * proj;
                         const cy = camera.position.y + dir.y * proj;
                         const cz = camera.position.z + dir.z * proj;
-                        const reach = weapon.explosive ? 6.0 : t.radius;
-                        if (Math.hypot(t.x - cx, t.z - cz) <= reach && Math.abs(t.y - cy) <= (weapon.explosive ? 6.0 : t.halfHeight)) {
+                        if (Math.hypot(t.x - cx, t.z - cz) <= t.radius && Math.abs(t.y - cy) <= t.halfHeight) {
                             mpSend({ type: 'shoot', targetId: t.id, weapon: weapon.name, damage: mpShotDamage(weapon) });
                             hitCount++;
-                            if (!weapon.explosive) break;
+                            break;
                         }
                     }
                 }
 
-                // Check candidate vehicles along aim ray for front and back window hits
-                const candidateVehicles = [];
-                const activePlayerVeh = (playerController && playerController.getState() === 'IN_VEHICLE')
-                    ? (playerController.getVehicle() || playerVehicle)
-                    : null;
-
-                if (trafficVehicles && Array.isArray(trafficVehicles)) {
-                    for (let v = 0; v < trafficVehicles.length; v++) {
-                        const tv = trafficVehicles[v];
-                        if (tv && tv !== activePlayerVeh) candidateVehicles.push(tv);
-                    }
-                }
-                if (policeSystem && policeSystem.policeCars) {
-                    for (let v = 0; v < policeSystem.policeCars.length; v++) {
-                        const pv = policeSystem.policeCars[v];
-                        if (pv && pv !== activePlayerVeh) candidateVehicles.push(pv);
-                    }
-                }
-                if (playerVehicle && playerVehicle !== activePlayerVeh && !candidateVehicles.includes(playerVehicle)) {
-                    candidateVehicles.push(playerVehicle);
-                }
-                if (scene && scene.children) {
-                    for (let c = 0; c < scene.children.length; c++) {
-                        const child = scene.children[c];
-                        if (child && child.userData && child.userData.vehicle && child.userData.vehicle !== activePlayerVeh && !candidateVehicles.includes(child.userData.vehicle)) {
-                            candidateVehicles.push(child.userData.vehicle);
-                        }
-                    }
-                }
-
+                // Car glass along the aim ray
                 let closestWinHit = null;
-                for (let v = 0; v < candidateVehicles.length; v++) {
-                    const winHit = checkVehicleWindowIntersection(candidateVehicles[v], camera.position, dir, weapon.range);
+                for (const v of shootableVehicles(activePlayerVeh)) {
+                    const winHit = checkVehicleWindowIntersection(v, camera.position, dir, weapon.range);
                     if (winHit && (!closestWinHit || winHit.distance < closestWinHit.distance)) {
                         closestWinHit = winHit;
                     }
                 }
 
-                if (closestWinHit) {
-                    killVehicleDriver(closestWinHit.vehicle, closestWinHit.windowType, closestWinHit.hitPos);
+                // From the driver's seat the shot goes through the player's own glass first
+                if (activePlayerVeh && activePlayerVeh.isHondaCivic && !activePlayerVeh.isPlane &&
+                    (cameraController.isCockpitView() || cameraController.aimTransition > 0.5)) {
+                    const ownHit = checkVehicleWindowIntersection(activePlayerVeh, camera.position, dir, 3);
+                    if (ownHit && (!closestWinHit || ownHit.distance < closestWinHit.distance)) {
+                        glassShatter.breakWindow(activePlayerVeh, ownHit.windowType, ensureCarAudioEngine(), true);
+                    }
+                }
+
+                if (closestWinHit && closestWinHit.distance < pelletHitDist) {
+                    shootVehicleWindow(closestWinHit.vehicle, closestWinHit.windowType);
                     hitCount++;
                 }
 
-                // Also spawn visible 3D projectile for visual feedback & moving targets
-                const projMesh = new THREE.Mesh(
-                    weapon.explosive ? sharedRocketGeo : sharedBulletGeo,
-                    weapon.explosive ? sharedRocketMat : sharedBulletMat
-                );
-                projMesh.position.copy(muzzleOrigin);
-                projMesh.lookAt(muzzleOrigin.clone().add(dir));
-                scene.add(projMesh);
-
+                // Tracer (visual only: the hit was decided above)
+                const tracer = new THREE.Mesh(sharedTracerGeo, sharedTracerMat);
+                tracer.position.copy(muzzleOrigin);
+                tracer.lookAt(muzzleOrigin.clone().add(dir));
+                scene.add(tracer);
                 projectiles.push({
-                    mesh: projMesh,
-                    velocity: dir.clone().multiplyScalar(weapon.projectileSpeed),
-                    damage: weapon.damage,
-                    explosive: !!weapon.explosive,
+                    mesh: tracer,
+                    velocity: dir.clone().multiplyScalar(weapon.projectileSpeed * 1.6),
+                    visualOnly: true,
                     distanceTraveled: 0,
-                    maxRange: weapon.range
+                    maxRange: Math.min(weapon.range, pelletHitDist)
                 });
             }
 
@@ -4180,56 +4276,94 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             };
         }
 
+        /** Rocket / grenade detonation: fireball, blast damage with falloff, broken glass, panic. */
+        function explodeAt(x, y, z, proj) {
+            spawnExplosion(x, Math.max(0.4, y), z);
+            if (ensureGunAudio()) gunAudio.explosion(Math.hypot(camera.position.x - x, camera.position.z - z));
+            const R = proj.blastRadius || 5;
+            const targets = (policeSystem && policeSystem.officers.length > 0) ? [...pedestrians, ...policeSystem.officers] : pedestrians;
+            for (const ped of targets) {
+                if (ped.isDead) continue;
+                const d = Math.hypot(ped.mesh.position.x - x, ped.mesh.position.z - z);
+                if (d > R) continue;
+                const dx = (ped.mesh.position.x - x) / (d || 1), dz = (ped.mesh.position.z - z) / (d || 1);
+                damageTarget(ped, proj.damage * (1 - 0.6 * d / R), { x, y: ped.mesh.position.y + 1.0, z, dirX: dx, dirY: 0.6, dirZ: dz, explosive: true });
+            }
+            for (const v of shootableVehicles(playerController.getState() === 'IN_VEHICLE' ? playerController.getVehicle() : null)) {
+                if (!v.mesh || v.isPlane) continue;
+                const d = Math.hypot(v.position.x - x, v.position.z - z);
+                if (d > R * 0.8) continue;
+                // The blast blows the glass on the side facing it and kills whoever is driving
+                const lx = (x - v.position.x) * Math.cos(v.yaw) - (z - v.position.z) * Math.sin(v.yaw);
+                const lz = (x - v.position.x) * Math.sin(v.yaw) + (z - v.position.z) * Math.cos(v.yaw);
+                const side = Math.abs(lx) > Math.abs(lz) ? (lx < 0 ? 'left' : 'right') : (lz < 0 ? 'front' : 'back');
+                if (!glassShatter.isBroken(v, side)) shootVehicleWindow(v, side);
+            }
+            if (mp && mp.isOnline) {
+                for (const t of remotePlayers.getHitTargets()) {
+                    if (Math.hypot(t.x - x, t.z - z) <= R) mpSend({ type: 'shoot', targetId: t.id, weapon: proj.weaponName || 'RPG', damage: 75 });
+                }
+            }
+            const pd = Math.hypot(myPosition.x - x, myPosition.z - z);
+            if (pd < R && playerController.getState() === 'ON_FOOT') damagePlayer(Math.round(70 * (1 - pd / R)));
+            makeNearbyPedestriansFlee({ x, y, z });
+            if (policeSystem) policeSystem.triggerCrime('shooting', new THREE.Vector3(x, y, z));
+        }
+
+        const _projBox = [];
         function updateProjectiles(dt = 1 / 60) {
             const stepScale = dt / (1 / 60);
             for (let i = projectiles.length - 1; i >= 0; i--) {
                 const proj = projectiles[i];
+                if (proj.gravity) {
+                    proj.velocity.y -= proj.gravity * stepScale;
+                    proj.mesh.lookAt(proj.mesh.position.clone().add(proj.velocity));
+                }
                 const stepVec = proj.velocity.clone().multiplyScalar(stepScale);
                 proj.mesh.position.add(stepVec);
                 proj.distanceTraveled += stepVec.length();
+                const pos = proj.mesh.position;
 
-                let hit = false;
-                const projTargets = (policeSystem && policeSystem.officers.length > 0)
-                    ? [...pedestrians, ...policeSystem.officers]
-                    : pedestrians;
-
-                for (let j = 0; j < projTargets.length; j++) {
-                    const ped = projTargets[j];
-                    if (ped.isDead) continue;
-                    const dx = proj.mesh.position.x - ped.mesh.position.x;
-                    const dy = proj.mesh.position.y - (ped.mesh.position.y + 1.0);
-                    const dz = proj.mesh.position.z - ped.mesh.position.z;
-                    const hitDist = proj.explosive ? 5.0 : 1.1;
-                    if (Math.hypot(dx, dz) < hitDist && Math.abs(dy) < 1.5) {
-                        ped.hp -= proj.damage;
-                        if (ped.hp <= 0) {
-                            if (ped.isPoliceOfficer && policeSystem) {
-                                policeSystem.killOfficer(ped, {
-                                    x: proj.mesh.position.x, y: proj.mesh.position.y, z: proj.mesh.position.z,
-                                    dirX: proj.velocity.x, dirY: proj.velocity.y, dirZ: proj.velocity.z,
-                                    explosive: !!proj.explosive
-                                });
-                            } else {
-                                killPedestrian(ped, {
-                                    x: proj.mesh.position.x, y: proj.mesh.position.y, z: proj.mesh.position.z,
-                                    dirX: proj.velocity.x, dirY: proj.velocity.y, dirZ: proj.velocity.z,
-                                    explosive: !!proj.explosive
-                                });
-                                if (policeSystem) {
-                                    policeSystem.triggerCrime('shooting', ped.mesh.position);
-                                }
-                            }
-                        } else {
-                            if (policeSystem && !ped.isPoliceOfficer) {
-                                policeSystem.triggerCrime('shooting', ped.mesh.position);
-                            }
-                        }
-                        hit = true;
-                        if (!proj.explosive) break;
+                if (proj.visualOnly) {
+                    if (proj.distanceTraveled >= proj.maxRange || pos.y < -1) {
+                        scene.remove(proj.mesh);
+                        projectiles.splice(i, 1);
                     }
+                    continue;
                 }
 
-                if (hit || proj.distanceTraveled >= proj.maxRange || proj.mesh.position.y < -1) {
+                // Explosives go off on a person, a car, the ground, a wall or at the end of their range
+                let boom = pos.y <= 0.15 || proj.distanceTraveled >= proj.maxRange;
+                if (!boom) {
+                    const targets = (policeSystem && policeSystem.officers.length > 0) ? [...pedestrians, ...policeSystem.officers] : pedestrians;
+                    for (const ped of targets) {
+                        if (ped.isDead) continue;
+                        if (Math.hypot(pos.x - ped.mesh.position.x, pos.z - ped.mesh.position.z) < 0.9 && pos.y - ped.mesh.position.y < 2.0) {
+                            boom = true;
+                            break;
+                        }
+                    }
+                }
+                if (!boom) {
+                    for (const v of shootableVehicles(playerController.getState() === 'IN_VEHICLE' ? playerController.getVehicle() : null)) {
+                        if (Math.hypot(pos.x - v.position.x, pos.z - v.position.z) < (v.width || 2) * 0.6 && pos.y < (v.height || 1.5)) {
+                            boom = true;
+                            break;
+                        }
+                    }
+                }
+                if (!boom && spatialGrid) {
+                    spatialGrid.queryRadius(pos.x, pos.z, 1.0, _projBox, 'STATIC');
+                    for (const item of _projBox) {
+                        const b = item.box || (item.userData && item.userData.worldBox);
+                        if (b && b.containsPoint(pos)) {
+                            boom = true;
+                            break;
+                        }
+                    }
+                }
+                if (boom) {
+                    explodeAt(pos.x, pos.y, pos.z, proj);
                     scene.remove(proj.mesh);
                     projectiles.splice(i, 1);
                 }
@@ -4242,8 +4376,10 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         function updateViewmodel() {
             if (!viewmodelScene || viewmodelMeshes.length === 0) return;
 
-            const activeVM = viewmodelMeshes[currentWeaponIndex];
+            const activeVM = currentViewmodel();
             if (!activeVM) return;
+            // Metal and paint on the guns reflect the same sky as the world
+            if (viewmodelScene.environment !== scene.environment) viewmodelScene.environment = scene.environment;
 
             const isMoving = fpKeys.w || fpKeys.a || fpKeys.s || fpKeys.d;
             if (isMoving) viewmodelBobTime += 0.12;
@@ -4309,10 +4445,21 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     viewmodelSprayCan.rotation.x = THREE.MathUtils.lerp(viewmodelSprayCan.rotation.x, -0.1, 0.15);
                 }
             } else {
-                activeVM.position.x = 0.21 + bobX;
-                activeVM.position.y = -0.21 + bobY;
-                activeVM.position.z = -0.36 + viewmodelRecoil;
-                activeVM.rotation.x = viewmodelRecoil * 1.6;
+                // Gun: bobs at the hip, comes to the centre when aiming, dips to reload, works the
+                // pump / bolt after a shot, kicks back on firing
+                const ads = adsAmount;
+                const rel = reloadState ? Math.sin(Math.min(1, reloadState.perRound ? 0.5 : reloadState.t / reloadState.total) * Math.PI) : 0;
+                const cyc = Math.sin(cycleTimer * Math.PI);
+                activeVM.position.x = 0.21 * (1 - ads) + bobX * (1 - ads);
+                activeVM.position.y = -0.21 + 0.075 * ads + bobY * (1 - ads) - rel * 0.12 - cyc * 0.02;
+                activeVM.position.z = -0.36 + viewmodelRecoil + cyc * 0.03;
+                activeVM.rotation.x = viewmodelRecoil * 1.6 - rel * 0.7;
+                activeVM.rotation.z = rel * 0.5 + cyc * 0.25;
+                if (activeVM.userData.flash) {
+                    activeVM.userData.flash.visible = muzzleFlashTimer > 0;
+                    activeVM.userData.flash.rotation.z = Math.random() * Math.PI;
+                }
+                if (activeVM.userData.barrels) activeVM.userData.barrels.rotation.z += gunSpin * 0.9;
             }
 
             // Update spray particles
@@ -4330,8 +4477,9 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
 
             // Weapons are lowered while pressing M; the rectangle slides back and forth instead
-            for (let i = 0; i < viewmodelMeshes.length; i++) {
-                if (viewmodelMeshes[i]) viewmodelMeshes[i].visible = !isStroking && (i === currentWeaponIndex);
+            const scoped = currentWeapon().scope && adsAmount > 0.85;
+            for (const vm of [...viewmodelMeshes, ...gunViewmodels.values()]) {
+                if (vm) vm.visible = !isStroking && !scoped && vm === activeVM;
             }
             if (viewmodelStroke) {
                 viewmodelStroke.visible = isStroking;
@@ -4610,9 +4758,15 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             const color = palette[spawnCounter % palette.length];
             const id = `spawned_${kind}_${++spawnCounter}`;
 
+            // Cars: the model picked in the dev menu (options.model), otherwise a random one in its own colours
+            let modelId = null;
+            if (kind !== 'plane') {
+                const picked = options.model || document.getElementById('dev-car-model')?.value;
+                modelId = CAR_MODELS[picked] ? picked : pickCarModel(Math.random(), CAR_MODEL_IDS);
+            }
             const vehicle = (kind === 'plane')
                 ? new Plane(id, x, z, yaw, color)
-                : new Vehicle(id, x, z, yaw, color, false);
+                : new Vehicle(id, x, z, yaw, options.color !== undefined ? options.color : pickCarColor(modelId, Math.random()), false, modelId);
             vehicle.isSpawned = true;
             vehicle.spawnKind = kind;
             if (kind === 'plane' && options.airborne) {
@@ -4636,7 +4790,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             // A plane spawned in the air is useless unless someone is flying it, so it always boards
             const board = (kind === 'plane' && options.airborne) ||
                 (options.board !== undefined ? !!options.board : !!document.getElementById('dev-board-on-spawn')?.checked);
-            if (board && playerController.getState() === 'ON_FOOT' && !carjackState.active) {
+            if (board && playerController.getState() === 'ON_FOOT' && !(carjackState.active || vehicleTransition)) {
                 if (playerController.enterVehicle(vehicle)) handleEnterVehicleRadio(vehicle);
             }
             return vehicle;
@@ -4677,14 +4831,38 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             const status = document.getElementById('dev-menu-status');
             if (status) {
                 status.textContent = v
-                    ? `Spawned ${kind} (${spawnedVehicles.length} spawned in world)`
+                    ? `Spawned ${v.modelName || kind} (${spawnedVehicles.length} spawned in world)`
                     : `Could not spawn ${kind}`;
             }
             // Boarding a flying plane: get the menu out of the way so you can fly
             if (v && options.airborne) setDevMenuOpen(false);
             return v;
         }
+        const devCarModelSelect = document.getElementById('dev-car-model');
+        if (devCarModelSelect) {
+            for (const id of CAR_MODEL_IDS) {
+                const opt = document.createElement('option');
+                opt.value = id;
+                opt.textContent = CAR_MODELS[id].name;
+                devCarModelSelect.appendChild(opt);
+            }
+        }
         document.getElementById('dev-spawn-car')?.addEventListener('click', () => devSpawn('car'));
+        document.getElementById('dev-give-guns')?.addEventListener('click', () => {
+            refillAmmo();
+            updateWeaponHUD();
+            const status = document.getElementById('dev-menu-status');
+            if (status) status.textContent = 'Ammo refilled';
+        });
+        document.getElementById('dev-infinite-ammo')?.addEventListener('change', (e) => {
+            infiniteAmmo = !!e.target.checked;
+            updateWeaponHUD();
+        });
+        document.getElementById('dev-disable-police')?.addEventListener('change', (e) => {
+            if (policeSystem) policeSystem.setDisabled(e.target.checked);
+            const status = document.getElementById('dev-menu-status');
+            if (status) status.textContent = e.target.checked ? 'Police disabled' : 'Police enabled';
+        });
         document.getElementById('dev-spawn-plane')?.addEventListener('click', () => devSpawn('plane'));
         document.getElementById('dev-spawn-plane-air')?.addEventListener('click', () => devSpawn('plane', { airborne: true }));
         document.getElementById('dev-clear-spawned')?.addEventListener('click', () => {
@@ -4820,19 +4998,21 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     x: veh.position.x, y: veh.position.y, z: veh.position.z,
                     yaw: veh.yaw, pitch: veh.pitch || 0, roll: veh.roll || 0,
                     state: veh.isPlane ? 'plane' : 'car',
-                    color: (typeof veh.color === 'number') ? veh.color : 0x111111
+                    color: (typeof veh.color === 'number') ? veh.color : 0x111111,
+                    model: veh.modelId || 'civic'
                 };
             }
             return { x: myPosition.x, y: myPosition.y, z: myPosition.z, yaw: fpCameraYaw, pitch: 0, roll: 0, state: 'foot', color: 0 };
         }
 
         function playRemoteShot(msg) {
-            const w = weapons.find((x) => x.name === msg.weapon);
-            if (!w) return;
+            const w = findItemDefByName(msg.weapon);
+            if (!w || w.type !== 'gun') return;
             const d = Math.hypot(msg.ox - camera.position.x, msg.oz - camera.position.z);
             if (d > 220) return;
+            if (ensureGunAudio() && gunAudio.shot(w, d)) return;
             try {
-                const base = w.audioObj || gunFallbackSound;
+                const base = fallbackGunAudio(w);
                 const a = base.cloneNode();
                 a.volume = Math.max(0, 0.7 * (1 - d / 220));
                 a.play().catch(() => {});
@@ -5018,8 +5198,6 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             // Spray or automatic gun fire while holding mouse
             if (currentWeaponType() === 'spray') {
                 if (isSpraying) sprayAtTarget();
-            } else if (isFiringGun && weapons[currentWeaponIndex] && weapons[currentWeaponIndex].automatic) {
-                shootWeapon();
             }
             
             // Throttled coordinates display (skip DOM manipulation during fast simulations)
@@ -5095,7 +5273,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         }
 
         function startDive() {
-            if (playerAction.type || isStroking || !gameStarted || devMode || carjackState.active || playerHealth <= 0) return;
+            if (playerAction.type || isStroking || !gameStarted || devMode || (carjackState.active || vehicleTransition) || playerHealth <= 0) return;
             if (playerController.getState() !== 'ON_FOOT') return;
             let fx = -Math.sin(fpCameraYaw), fz = -Math.cos(fpCameraYaw);
             const rx = Math.cos(fpCameraYaw), rz = -Math.sin(fpCameraYaw);
@@ -5162,7 +5340,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         }
 
         function checkPlayerVehicleImpacts() {
-            if (!gameStarted || devMode || carjackState.active || playerHealth <= 0) return;
+            if (!gameStarted || devMode || (carjackState.active || vehicleTransition) || playerHealth <= 0) return;
             if (playerHitCooldown > 0 || playerAction.type === 'ragdoll') return;
             if (playerController.getState() !== 'ON_FOOT') return;
             const lists = [trafficVehicles, spawnedVehicles, policeSystem ? policeSystem.policeCars : null];
@@ -5188,7 +5366,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             if (playerHitCooldown > 0) playerHitCooldown -= dt;
             const a = playerAction;
             if (!a.type) return;
-            if (devMode || carjackState.active || playerController.getState() !== 'ON_FOOT') {
+            if (devMode || (carjackState.active || vehicleTransition) || playerController.getState() !== 'ON_FOOT') {
                 resetPlayerAction();
                 return;
             }
@@ -5290,7 +5468,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         }
 
         function startStroking() {
-            if (isStroking || !gameStarted || devMode || carjackState.active || playerHealth <= 0) return;
+            if (isStroking || !gameStarted || devMode || (carjackState.active || vehicleTransition) || playerHealth <= 0) return;
             if (playerController.getState() !== 'ON_FOOT') return;
             isStroking = true;
             strokeReported = false;
@@ -5322,7 +5500,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
         function updateStroking(dt) {
             if (!isStroking) return;
-            if (devMode || carjackState.active || playerHealth <= 0 || playerHealth < strokeStartHealth ||
+            if (devMode || (carjackState.active || vehicleTransition) || playerHealth <= 0 || playerHealth < strokeStartHealth ||
                 playerController.getState() !== 'ON_FOOT') {
                 stopStroking();
                 return;
@@ -5389,6 +5567,15 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         // Turn the view by a mouse-style delta (pixels); shared by mouse look and arrow-key look
         function applyLookDelta(movementX, movementY) {
             if (isStroking || playerHealth <= 0 || playerAction.type === 'ragdoll') return; // eyes are on the torso / on the ground
+            if (vehicleTransition) return; // getting in or out of a car
+            if (weaponWheel && weaponWheel.isOpen) {
+                // The wheel takes the mouse while it's open
+                weaponWheel.moveCursor(movementX, movementY);
+                return;
+            }
+            const zoomScale = camera.fov / BASE_FOV;
+            movementX *= zoomScale;
+            movementY *= zoomScale;
             if (cameraController) {
                 cameraController.handleMouseMove(movementX, movementY);
                 fpCameraYaw = cameraController.fpYaw;
@@ -5433,6 +5620,10 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         // Mouse buttons - shoot gun, aim in vehicle, spray, or image paste
         renderer.domElement.addEventListener('mousedown', (e) => {
             if (!gameStarted || devMode || devMenuOpen || chatOpen || playerHealth <= 0 || playerAction.type) return;
+            if (weaponWheel && weaponWheel.isOpen) {
+                weaponWheel.click();
+                return;
+            }
             stopStroking();
             const inVehicle = (playerController && playerController.getState() === 'IN_VEHICLE');
             // Drive-by aiming and shooting use the car cockpit, so they don't apply while piloting a plane
@@ -5446,18 +5637,18 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                         cameraController.setAiming(true);
                     }
                     smashDriverWindowForAim();
-                    if (!weapons[currentWeaponIndex] || weapons[currentWeaponIndex].type !== 'gun') {
-                        selectWeapon('Pistol');
-                    }
+                    selectBestGun();
                 } else if (currentWeaponType() === 'hands') {
                     isBlocking = true; // fists up: takes most of the sting out of punches from the front
+                } else if (currentWeaponType() === 'gun') {
+                    adsHeld = true; // aim down the sights (scopes zoom in)
                 }
                 return;
             }
 
             if (e.button === 0) { // Left click
                 if (inVehicle) {
-                    const w = weapons[currentWeaponIndex];
+                    const w = currentWeapon();
                     if (w && w.type === 'gun') {
                         // Kaj (left-handed) holds the gun out in his left hand, leaning out of the window
                         carGunHeld = true;
@@ -5474,7 +5665,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
                 if (currentWeaponType() === 'gun') {
                     isFiringGun = true;
-                    shootWeapon();
+                    pullTrigger();
                 } else if (currentWeaponType() === 'hands') {
                     throwPunch();
                 } else if (imageMode) {
@@ -5491,6 +5682,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 isRightMouseDown = false;
                 isVehicleAiming = false;
                 isBlocking = false;
+                adsHeld = false;
                 if (cameraController && !carGunHeld) {
                     cameraController.setAiming(false);
                 }
@@ -5510,11 +5702,14 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         renderer.domElement.addEventListener('wheel', (event) => {
             event.preventDefault();
             if (!gameStarted) return;
+            if (weaponWheel && weaponWheel.isOpen) {
+                weaponWheel.scroll(event.deltaY > 0 ? 1 : -1);
+                return;
+            }
             if (playerController && playerController.getState() === 'IN_VEHICLE') return;
             
             if (currentWeaponType() !== 'spray') {
-                const delta = event.deltaY > 0 ? 1 : -1;
-                selectWeapon((currentWeaponIndex + delta + weapons.length) % weapons.length);
+                inventory.cycle(event.deltaY > 0 ? 1 : -1);
             } else if (imageMode) {
                 if (event.deltaY > 0) {
                     imageSize = Math.max(imageMinSize, imageSize - 0.1);
@@ -5541,6 +5736,12 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
             // Everything else is ignored while the menu is open (keyup still releases held keys)
             if (devMenuOpen) return;
+            if (weaponWheel && weaponWheel.isOpen) {
+                // Holding Tab keeps it open (key repeat); Esc closes without changing weapon
+                if (event.key === 'Tab') event.preventDefault();
+                if (event.key === 'Escape') weaponWheel.close(false);
+                return;
+            }
             // ...and while typing a chat message (the input handles Enter / Esc itself)
             if (chatOpen) return;
             if (!typing && gameStarted && mp && (event.key === 't' || event.key === 'T' || event.key === 'Enter')) {
@@ -5607,14 +5808,17 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 return;
             }
             if (keyLower === 'e') {
+                if (vehicleTransition || carjackState.active) return;
                 if (playerController.getState() === 'ON_FOOT') {
                     const nearPed = getNearbyPedestrian(4.0);
-                    const nearCar = playerController.getNearbyVehicle([playerVehicle, ...trafficVehicles, ...spawnedVehicles]);
+                    const nearCar = playerController.getNearbyVehicle(boardableVehicles());
                     if (nearPed &&(!nearCar || Math.hypot(nearPed.mesh.position.x - myPosition.x, nearPed.mesh.position.z - myPosition.z) <= Math.hypot(nearCar.position.x - myPosition.x, nearCar.position.z - myPosition.z))) {
                         talkToNearbyPedestrian();
                     } else {
-                        tryBoardOrJackVehicle();
+                        tryBoardOrJackVehicle(true);
                     }
+                } else if (exitVehicleAnimated()) {
+                    // climbing out
                 } else {
                     const exited = playerController.exitVehicle(spatialGrid);
                     if (exited) {
@@ -5629,8 +5833,20 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
 
             // Weapon selection keys 1..6 (1 = hands) and Q to cycle
-            if (event.key >= '1' && event.key <= '6') {
-                selectWeapon(parseInt(event.key, 10) - 1);
+            // 1-8 pick a kind of weapon (fists, pistols, SMGs, rifles, shotguns, snipers, heavy, spray
+            // can); pressing it again goes to the next weapon of that kind
+            if (event.key >= '1' && event.key <= '8') {
+                weaponWheel.selectSegment(parseInt(event.key, 10) - 1);
+                return;
+            }
+            // Weapon wheel (hold Tab), fire mode (X)
+            if (event.key === 'Tab') {
+                event.preventDefault();
+                if (!event.repeat && !vehicleTransition && !getActivePlane()) weaponWheel.open();
+                return;
+            }
+            if (keyLower === 'x' && !event.repeat) {
+                cycleFireMode();
                 return;
             }
             if (keyLower === 'q') {
@@ -5642,7 +5858,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                         return;
                     }
                 }
-                selectWeapon((currentWeaponIndex + 1) % weapons.length);
+                inventory.cycle(1);
                 return;
             }
 
@@ -5681,8 +5897,11 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     }
                     break;
                 case 'r':
-                    if (playerController.getState() === 'IN_VEHICLE' && isEngineRunning(radioState.sourceVehicle)) {
+                    if (playerController.getState() === 'IN_VEHICLE' && isEngineRunning(radioState.sourceVehicle) &&
+                        !(carGunHeld || isVehicleAiming)) {
                         toggleRadioPause();
+                    } else if (currentWeaponType() === 'gun') {
+                        startReload();
                     }
                     break;
                 case 'n':
@@ -5694,6 +5913,11 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         });
         
         document.addEventListener('keyup', (event) => {
+            if (event.key === 'Tab') {
+                event.preventDefault();
+                if (weaponWheel && weaponWheel.isOpen) weaponWheel.close(true);
+                return;
+            }
             if (event.key in arrowLookKeys) {
                 arrowLookKeys[event.key] = false;
                 return;
@@ -5898,7 +6122,22 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         // Touch input is translated into the same keyboard / mouse events the desktop controls use, so
         // walking, driving, flying, weapons, the radio and the dev menu all behave identically.
         const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
-        if (isMobile) document.body.classList.add('is-mobile');
+        if (isMobile) {
+            document.body.classList.add('is-mobile');
+            // The bottom corners belong to the thumb controls: chat and radio join the top-left
+            // stack, health the top-right one
+            document.getElementById('hud-tl').append(
+                document.getElementById('chat-log'),
+                document.getElementById('chat-input'),
+                document.getElementById('radio-ui')
+            );
+            document.getElementById('hud-tr').append(document.getElementById('player-health-hud'));
+            // Short screens: keep the prompts in the same stack as the speech panel below them
+            document.getElementById('hud-bc').prepend(
+                document.getElementById('car-indicator'),
+                document.getElementById('ped-talk-indicator')
+            );
+        }
         const mobileControls = document.getElementById('mobile-controls');
         const mobileJoystick = document.getElementById('mobile-joystick');
         const mobileJoystickThumb = document.getElementById('mobile-joystick-thumb');
@@ -6063,7 +6302,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         const mobileMoreMenu = document.getElementById('mobile-more-menu');
         bindMobileButton(document.getElementById('mobile-more-btn'), () => mobileMoreMenu.classList.toggle('open'));
         // Weapon switch (Q)
-        bindMobileButton(document.getElementById('mobile-weapon-btn'), () => tapVirtualKey('q'));
+        bindMobileButton(document.getElementById('mobile-weapon-btn'), () => weaponWheel.toggle());
         // Drive-by aim: hold = right mouse button
         bindMobileButton(document.getElementById('mobile-stroke-btn'), () => tapVirtualKey('m'));
 
@@ -6188,10 +6427,17 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             updateArrowKeyLook(dt);
             updateStroking(dt);
             updateRadioSpatial();
+            updateDeadDrivers(dt);
+            updateGunTrigger(dt);
+            streetSigns.update(camera.position);
 
             if (devMode) {
                 updateDevFlyCamera();
                 updateCarAudio(null, false);
+            } else if (vehicleTransition) {
+                updateVehicleTransition(dt);
+                updateCarAudio(null, false);
+                previousPlayerState = playerController.getState();
             } else if (carjackState.active) {
                 updateCarjackAnimation(dt);
                 updateCarAudio(carjackState.vehicle, false);
@@ -6251,7 +6497,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             mpTick(dt);
             const pilotedPlane = getActivePlane();
             updatePlaneHUD(pilotedPlane && !pilotedPlane.wrecked ? pilotedPlane : null);
-            setRadioBadge(pilotedPlane ? '✈ RADIO' : '📻 RADIO');
+            setRadioBadge(pilotedPlane ? 'PLANE RADIO' : 'RADIO');
 
             // Update sky dome, sun position, and directional shadow frustum to follow player
             skyDomeMesh.position.set(myPosition.x, 0, myPosition.z);
@@ -6273,6 +6519,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             // (A plane flying overhead is not a road obstacle, so traffic keeps using the Civic as its reference.)
             const trafficRef = (drivenVehicle && !drivenVehicle.isPlane) ? drivenVehicle : playerVehicle;
             trafficManager.update(dt, trafficRef);
+            roadSigns.update();
             // Recycle cars left far behind onto streets around the player (out of view)
             trafficManager.maintainPopulation(dt, myPosition, shadowLookDir);
 
@@ -6381,7 +6628,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             renderer.render(scene, camera);
             
             // Render viewmodel on top (on foot OR in vehicle first-person aiming)
-            const showViewmodel = (playerController.getState() === 'ON_FOOT') ||
+            const showViewmodel = (playerController.getState() === 'ON_FOOT' && !vehicleTransition) ||
                 (cameraController && cameraController.aimTransition > 0.4);
             if (gameStarted && viewmodelScene && viewmodelCamera && !devMode && showViewmodel) {
                 renderer.autoClear = false;
@@ -6488,7 +6735,9 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             handleEnterVehicleRadio,
             handleExitVehicleRadio,
             hitPedestrianWithVehicle,
-            getCurrentWeapon: () => weapons[currentWeaponIndex],
+            getCurrentWeapon: () => currentWeapon(),
+            getInventory: () => inventory,
+            giveItem: (id, count = 1) => inventory.add(createItem(id, count)),
             getLastPlayedSound: () => lastPlayedSound,
             getShotCount: () => totalShotCount,
             tireSmokeSystem,
@@ -6511,9 +6760,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 isVehicleAiming = !!aiming;
                 if (cameraController) cameraController.setAiming(aiming);
                 if (aiming) smashDriverWindowForAim();
-                if (aiming && (!weapons[currentWeaponIndex] || weapons[currentWeaponIndex].type !== 'gun')) {
-                    selectWeapon('Pistol');
-                }
+                if (aiming) selectBestGun();
             },
             isVehicleAiming: () => (cameraController ? cameraController.isAiming : false),
             getAimTransition: () => (cameraController ? cameraController.aimTransition : 0),

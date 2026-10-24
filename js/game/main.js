@@ -352,6 +352,9 @@ export function initGameAPI(context) {
                 crimeCount: engineContext.policeSystem.crimeHistory.length
             } : null),
             triggerCrime: (type, pos) => (engineContext.policeSystem && engineContext.policeSystem.triggerCrime(type, pos)),
+            // Crimes are called in before the police come; these skip ahead or inspect the wait
+            getPendingReport: () => (engineContext.policeSystem ? engineContext.policeSystem.pendingReport : null),
+            flushPendingReport: (pos) => (engineContext.policeSystem ? engineContext.policeSystem.flushPendingReport(pos) : false),
             spawnPoliceCar: (pos) => (engineContext.policeSystem && engineContext.policeSystem.spawnPoliceCar(pos)),
             getOfficers: () => (engineContext.policeSystem ? engineContext.policeSystem.officers : []),
             getOfficerCount: () => (engineContext.policeSystem ? engineContext.policeSystem.officers.length : 0),

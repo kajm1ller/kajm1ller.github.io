@@ -139,6 +139,14 @@ export class CityNav {
             };
         });
 
+        // ---- Traffic control (from OSM): signalized junctions, all-way stops, stop-sign approaches ----
+        const ctl = data.control || {};
+        this.signalNodes = new Set(ctl.signals || []);
+        this.allWayStopNodes = new Set(ctl.allWayStops || []);
+        this.stopApproaches = [];
+        const st = ctl.stops || [];
+        for (let i = 0; i + 1 < st.length; i += 2) this.stopApproaches.push({ road: st[i], end: st[i + 1] });
+
         // ---- Pedestrian graph (CSR adjacency) ----
         const wx = data.walk.x, wz = data.walk.z, we = data.walk.e;
         const n = wx.length;

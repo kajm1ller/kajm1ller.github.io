@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Car Showroom</title>
+<style>
+    html, body { margin: 0; height: 100%; background: #9fb6c9; overflow: hidden; font-family: Arial, sans-serif; }
+    #ui { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); color: #fff; padding: 8px 10px; border-radius: 6px; font-size: 13px; }
+    #ui select, #ui button { font-size: 13px; }
+</style>
+<script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="ui">
+    <select id="view">
+        <option value="grid">All models</option>
+    </select>
+    <button id="spin" type="button">Spin</button>
+</div>
+<script type="module">
+    // Dev showroom: every car model side by side, or one model up close (?model=id&view=interior)
+    import * as THREE from 'three';
+    import { CAR_MODEL_IDS, CAR_MODELS, buildCarMesh, pickCarColor } from '../js/game/carModels.js';
+    import { CarInterior } from '../js/game/carInterior.js';
+    import { Vehicle } from '../js/game/vehicle.js';
+    import { InstancedVehicleFleet } from '../js/game/instancedFleet.js';
+
+    const params = new URLSearchParams(location.search);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x9fb6c9);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envScene = new THREE.Scene();
+    envScene.background = new THREE.Color(0xbfd4e6);
+    const skyBox = new THREE.Mesh(new THREE.SphereGeometry(10, 16, 8), new THREE.MeshBasicMaterial({ color: 0xcfe0ee, side: THREE.BackSide }));
+    envScene.add(skyBox);
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), new THREE.MeshBasicMaterial({ color: 0x555555 }));
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -1;
+    envScene.add(ground);
+    scene.environment = pmrem.fromScene(envScene).texture;
+
+    scene.add(new THREE.HemisphereLight(0xdfefff, 0x445533, 0.9));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+    sun.position.set(-20, 30, -12);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30 });
+    scene.add(sun);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: 0x5c6066, roughness: 0.95 }));
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.05, 500);
+    const sel = document.getElementById('view');
+    for (const id of CAR_MODEL_IDS) {
+        for (const v of ['exterior', 'interior', 'open']) {
+            const o = document.createElement('option');
+            o.value = `${id}:${v}`;
+            o.textContent = `${CAR_MODELS[id].name} - ${v}`;
+            sel.appendChild(o);
+        }
+    }
+    const model = params.get('model');
+    const view = params.get('view') || 'exterior';
+    sel.value = model ? `${model}:${view}` : 'grid';
+    sel.addEventListener('change', () => {
+        if (sel.value === 'grid') location.search = '';
+        else {
+            const [m, v] = sel.value.split(':');
+            location.search = `?model=${m}&view=${v}`;
+        }
+    });
+
+    let spin = params.get('spin') !== '0';
+    document.getElementById('spin').addEventListener('click', () => { spin = !spin; });
+    let angle = parseFloat(params.get('angle') || '0.7');
+    const target = new THREE.Vector3();
+    let dist = 9;
+    let height = 2.5;
+    let eye = null;
+
+    if (!model) {
+        // ?fleet=1 draws them through the traffic renderer (InstancedVehicleFleet) instead
+        const asFleet = params.get('fleet') === '1';
+        const fleetCars = [];
+        CAR_MODEL_IDS.forEach((id, i) => {
+            const col = i % 3, row = Math.floor(i / 3);
+            const color = pickCarColor(id, ((i * 0.37) % 1));
+            const x = (col - 1) * 7, z = (row - 1) * 7.5, yaw = parseFloat(params.get('yaw') || '-0.6');
+            if (asFleet) {
+                fleetCars.push(new Vehicle(`show_${id}`, x, z, yaw, color, false, id));
+                return;
+            }
+            const car = buildCarMesh(id, color, id).root;
+            car.position.set(x, 0, z);
+            car.rotation.y = yaw;
+            scene.add(car);
+        });
+        if (asFleet) new InstancedVehicleFleet({ maxCapacity: 16 }).init(scene).update(fleetCars, 0);
+        dist = 30;
+        height = 16;
+    } else {
+        const vehicleLike = { mesh: null, model: CAR_MODELS[model], steerAngle: 0.2, speed: 12, inputThrottle: 0.5 };
+        const built = buildCarMesh(model, pickCarColor(model, 0.01), 'show');
+        vehicleLike.mesh = built.root;
+        scene.add(built.root);
+        // ?door=1 swings the driver's door open
+        if (params.get('door') === '1') built.leftDoorPivot.rotation.y = -1.15;
+        if (view !== 'exterior') {
+            const interior = new CarInterior(vehicleLike);
+            interior.setOccupied(true);
+            if (view === 'interior') interior.setCockpitActive(true);
+            interior.update(1 / 60, { radioTitle: 'Cosmic Girl', radioPlaying: true, showArms: true });
+            if (view === 'open') interior.exposeCabin();
+            vehicleLike.interior = interior;
+            if (view === 'interior') {
+                const e = vehicleLike.driverEye || interior.eye;
+                eye = new THREE.Vector3(e.x, e.y, e.z);
+            }
+        }
+        dist = CAR_MODELS[model].length * 1.45;
+        height = 2.2;
+    }
+
+    function frame() {
+        if (eye) {
+            camera.fov = 75;
+            camera.updateProjectionMatrix();
+            camera.position.copy(eye);
+            const lookYaw = parseFloat(params.get('look') || '0');
+            camera.lookAt(eye.x - Math.sin(lookYaw) * 5, eye.y - 0.35, eye.z - Math.cos(lookYaw) * 5);
+        } else {
+            if (spin) angle += 0.004;
+            camera.position.set(target.x + Math.sin(angle) * dist, height, target.z + Math.cos(angle) * dist);
+            camera.lookAt(target.x, model ? 0.7 : 0, target.z);
+        }
+        renderer.render(scene, camera);
+        requestAnimationFrame(frame);
+    }
+    frame();
+    window.__ready = true;
+</script>
+</body>
+</html>

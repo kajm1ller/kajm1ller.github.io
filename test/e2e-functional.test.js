@@ -1506,6 +1506,7 @@ async function runFunctionalTests(options = {}) {
         const inCarRadioState = window.__GAME__.audio.getRadio();
         const inCarBgmState = window.__GAME__.audio.getBackgroundMusic();
         const trackTitle0 = titleEl ? titleEl.textContent : '';
+        const initialIndex = inCarRadioState ? inCarRadioState.currentTrackIndex : -1;
 
         // Test Skip track button
         if (skipBtn) skipBtn.click();
@@ -1553,6 +1554,7 @@ async function runFunctionalTests(options = {}) {
         return {
           hasRadioApi: !!radioApi,
           trackCount: (radioApi && radioApi.tracks) ? radioApi.tracks.length : 0,
+          initialIndex,
           tracks: (radioApi && radioApi.tracks) ? radioApi.tracks.map(t => t.file) : [],
           onFootVisible,
           onFootRadioPlaying,
@@ -1579,14 +1581,14 @@ async function runFunctionalTests(options = {}) {
       });
 
       assert(radioReport.hasRadioApi, 'window.__GAME__.audio.getRadio() must return radio state');
-      assertEqual(radioReport.trackCount, 8, 'Radio playlist must contain 8 tracks from /media/radio/');
+      assertEqual(radioReport.trackCount, 13, 'Radio playlist must contain 13 tracks from /media/radio/');
       assert(radioReport.tracks.every(t => t.startsWith('/media/radio/')), 'All tracks must be sourced from /media/radio/');
       assertEqual(radioReport.onFootVisible, false, 'Radio UI must be hidden when player is on foot');
       assertEqual(radioReport.inCarVisible, true, 'Radio UI must be visible when player is in vehicle');
       assertEqual(radioReport.inCarRadioPlaying, true, 'Radio must start playing when player enters vehicle');
       assertEqual(radioReport.inCarBgmPaused, true, 'Background music must stop/pause when radio starts');
       assert(radioReport.trackTitle0.length > 0, 'Track title must be rendered in radio HUD');
-      assertEqual(radioReport.skippedIndex, 1, 'Skip button must advance to track index 1');
+      assert(radioReport.skippedIndex >= 0 && radioReport.skippedIndex !== radioReport.initialIndex, 'Skip button must advance to the next track in the shuffled order');
       assert(radioReport.trackTitle1 !== radioReport.trackTitle0, 'Track title must update when skipping track');
       assertEqual(radioReport.restartedCurrentTime, 0, 'Restart button must reset track currentTime to 0');
       assertEqual(radioReport.volumeValue, 0.75, 'Volume slider must update radio volume to 0.75');
@@ -1697,7 +1699,11 @@ async function runFunctionalTests(options = {}) {
         window.__GAME__.actions.selectWeapon('Pistol');
         window.__GAME__.actions.shootWeapon();
 
-        // Step a frame for crime dispatch
+        // The shooting is called in rather than seen: nothing yet, then skip the wait for the call
+        window.__GAME__.simulation.step(1 / 60);
+        const reportPending = !!window.__GAME__.police.getPendingReport();
+        const wantedWhileReported = window.__GAME__.police.getWantedLevel();
+        window.__GAME__.police.flushPendingReport();
         window.__GAME__.simulation.step(1 / 60);
 
         const shotWanted = window.__GAME__.police.getWantedLevel();
@@ -1750,6 +1756,8 @@ async function runFunctionalTests(options = {}) {
         const clearedHudVisible = hudEl ? hudEl.style.display !== 'none' : false;
 
         return {
+          reportPending,
+          wantedWhileReported,
           initialWanted,
           initialPoliceCount,
           initialHudVisible,
@@ -1773,6 +1781,8 @@ async function runFunctionalTests(options = {}) {
       assertEqual(policeReport.initialWanted, 0, 'Initial wanted level must be 0');
       assertEqual(policeReport.initialPoliceCount, 0, 'No police cars initial');
       assertEqual(policeReport.initialHudVisible, false, 'Wanted HUD hidden initially');
+      assertEqual(policeReport.reportPending, true, 'A shooting nobody in uniform saw must be called in first');
+      assertEqual(policeReport.wantedWhileReported, 0, 'No wanted level until the police are dispatched');
       assert(policeReport.shotWanted >= 1, `Wanted level must increase when shooting someone (got ${policeReport.shotWanted})`);
       assert(policeReport.shotPoliceCount >= 1, `Police car must be dispatched on shooting (got ${policeReport.shotPoliceCount})`);
       assertEqual(policeReport.shotHudVisible, true, 'Wanted HUD must become visible after shooting');
@@ -1998,9 +2008,15 @@ async function runFunctionalTests(options = {}) {
         window.__GAME__.simulation.step(1 / 60);
 
         const frontDriverDead = window.__GAME__.vehicles.isDriverDead(targetCar1);
-        const frontHasBlood = window.__GAME__.vehicles.hasWindowBlood(targetCar1, 'front');
+        // The windshield shatters; the blood lands on the rear glass behind the driver
         const frontWinMesh = targetCar1.mesh.getObjectByName('windshield');
-        const frontDecalMesh = frontWinMesh ? frontWinMesh.getObjectByName('window_blood_decal') : null;
+        const frontGlassBroken = !!frontWinMesh && !frontWinMesh.visible;
+        const frontHasBlood = window.__GAME__.vehicles.hasWindowBlood(targetCar1, 'back');
+        const frontRearGlass = targetCar1.mesh.getObjectByName('rear_glass');
+        const frontDecalMesh = frontRearGlass ? frontRearGlass.getObjectByName('window_blood_decal') : null;
+        const frontDriver = targetCar1.mesh.getObjectByName('vehicle_driver_npc');
+        const frontDriverVisible = !!frontDriver && frontDriver.visible;
+        const frontCabinOpen = !targetCar1.mesh.getObjectByName('cabin_roof').visible;
 
         // 2. Spawn second target car and shoot its back window
         const targetCar2 = new (window.__GAME__.vehicles.getPlayerVehicle().constructor)('target_sedan_rear', 0, 0, 8);
@@ -2022,9 +2038,12 @@ async function runFunctionalTests(options = {}) {
         window.__GAME__.simulation.step(1 / 60);
 
         const backDriverDead = window.__GAME__.vehicles.isDriverDead(targetCar2);
-        const backHasBlood = window.__GAME__.vehicles.hasWindowBlood(targetCar2, 'back');
+        // The rear glass shatters; the blood lands on the windshield
         const rearWinMesh = targetCar2.mesh.getObjectByName('rear_glass');
-        const rearDecalMesh = rearWinMesh ? rearWinMesh.getObjectByName('window_blood_decal') : null;
+        const backGlassBroken = !!rearWinMesh && !rearWinMesh.visible;
+        const backHasBlood = window.__GAME__.vehicles.hasWindowBlood(targetCar2, 'front');
+        const backWindshield = targetCar2.mesh.getObjectByName('windshield');
+        const rearDecalMesh = backWindshield ? backWindshield.getObjectByName('window_blood_decal') : null;
 
         // 3. Shoot Police Cruiser window and verify wanted level escalation
         window.__GAME__.police.setWantedLevel(1);
@@ -2045,7 +2064,8 @@ async function runFunctionalTests(options = {}) {
         window.__GAME__.simulation.step(1 / 60);
 
         const policeDriverDead = window.__GAME__.vehicles.isDriverDead(pCruiser);
-        const policeHasBlood = window.__GAME__.vehicles.hasWindowBlood(pCruiser, 'front');
+        const policeHasBlood = window.__GAME__.vehicles.hasWindowBlood(pCruiser, 'back');
+        const policeGlassBroken = !pCruiser.mesh.getObjectByName('windshield').visible;
         const wantedAfter = window.__GAME__.police.getWantedLevel();
 
         // Cleanup
@@ -2055,6 +2075,11 @@ async function runFunctionalTests(options = {}) {
 
         return {
           frontDriverDead,
+          frontGlassBroken,
+          frontDriverVisible,
+          frontCabinOpen,
+          backGlassBroken,
+          policeGlassBroken,
           frontHasBlood,
           hasFrontDecal: !!frontDecalMesh,
           backDriverDead,
@@ -2068,15 +2093,20 @@ async function runFunctionalTests(options = {}) {
       });
 
       assertEqual(windowReport.frontDriverDead, true, 'Shooting front windshield must kill the driver');
-      assertEqual(windowReport.frontHasBlood, true, 'Front windshield must have blood splatter flag');
-      assertEqual(windowReport.hasFrontDecal, true, 'Front windshield must mount blood splatter decal');
+      assertEqual(windowReport.frontGlassBroken, true, 'Shot windshield must shatter');
+      assertEqual(windowReport.frontCabinOpen, true, 'Cabin must open up once a window is broken');
+      assertEqual(windowReport.frontDriverVisible, true, 'Dead driver must be visible inside');
+      assertEqual(windowReport.frontHasBlood, true, 'Rear glass must have blood splatter flag after a windshield shot');
+      assertEqual(windowReport.hasFrontDecal, true, 'Rear glass must mount blood splatter decal after a windshield shot');
 
       assertEqual(windowReport.backDriverDead, true, 'Shooting rear window must kill the driver');
-      assertEqual(windowReport.backHasBlood, true, 'Rear window must have blood splatter flag');
-      assertEqual(windowReport.hasBackDecal, true, 'Rear window must mount blood splatter decal');
+      assertEqual(windowReport.backGlassBroken, true, 'Shot rear window must shatter');
+      assertEqual(windowReport.backHasBlood, true, 'Windshield must have blood splatter flag after a rear window shot');
+      assertEqual(windowReport.hasBackDecal, true, 'Windshield must mount blood splatter decal after a rear window shot');
 
       assertEqual(windowReport.wantedBefore, 1, 'Initial police wanted level is 1');
       assertEqual(windowReport.policeDriverDead, true, 'Police cruiser driver must die when window is shot');
+      assertEqual(windowReport.policeGlassBroken, true, 'Police cruiser windshield must shatter');
       assertEqual(windowReport.policeHasBlood, true, 'Police cruiser window must have blood splatters');
       assert(
         windowReport.wantedAfter > windowReport.wantedBefore,

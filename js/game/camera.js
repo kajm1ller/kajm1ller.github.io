@@ -357,9 +357,11 @@ export class CameraController {
             const lean = Math.max(-0.05, Math.min(0.05, -(this.targetVehicle.steerAngle || 0) * Math.abs(speed) * 0.006));
             this.lean += (this.leanTarget - this.lean) * (1.0 - Math.exp(-dt * 6.0));
             const out = this.lean * this.lean * (3.0 - 2.0 * this.lean);
-            const ox = this.cockpitOffset.x + lean - out * 0.8;
-            const oy = this.cockpitOffset.y + out * 0.07 + Math.sin(this._shakeTime * 7.3) * Math.min(0.004, Math.abs(speed) * 0.0002);
-            const oz = this.cockpitOffset.z - out * 0.12;
+            // Each car model seats the driver differently (vehicle.driverEye)
+            const eye = this.targetVehicle.driverEye || this.cockpitOffset;
+            const ox = eye.x + lean - out * 0.8;
+            const oy = eye.y + out * 0.07 + Math.sin(this._shakeTime * 7.3) * Math.min(0.004, Math.abs(speed) * 0.0002);
+            const oz = eye.z - out * 0.12;
             this._cockpitPos.set(
                 vp.x + ox * cosY + oz * sinY,
                 (vp.y || 0) + oy,

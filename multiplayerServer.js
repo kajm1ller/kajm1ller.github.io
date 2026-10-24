@@ -6,7 +6,7 @@
  *
  * Client -> server messages (JSON):
  *   join   { name, x, y, z, yaw }
- *   update { x, y, z, yaw, pitch, roll, state: 'foot'|'car'|'plane', color }
+ *   update { x, y, z, yaw, pitch, roll, state: 'foot'|'car'|'plane', color, model }
  *   chat   { text }
  *   fire   { weapon, ox, oy, oz, dx, dy, dz }        relayed to the other players as 'shot'
  *   shoot  { targetId, weapon, damage }              PvP hit on one player -> 'hit' to the target
@@ -74,6 +74,7 @@ function attachMultiplayer(server, options = {}) {
       roll: p.roll,
       state: p.state,
       color: p.color,
+      model: p.model,
       ragdoll: p.ragdoll || false
     }));
   }
@@ -125,6 +126,7 @@ function attachMultiplayer(server, options = {}) {
             roll: 0,
             state: 'foot',
             color: 0x888888,
+            model: 'civic',
             ragdoll: false
           });
           send(ws, { type: 'welcome', id: playerId });
@@ -144,6 +146,8 @@ function attachMultiplayer(server, options = {}) {
           player.roll = num(msg.roll, -4, 4, 0);
           player.state = STATES.has(msg.state) ? msg.state : 'foot';
           player.color = Math.floor(num(msg.color, 0, 0xffffff, player.color));
+          // Car model id (carModels.js): a short lowercase word, anything else falls back to the Civic
+          player.model = (typeof msg.model === 'string' && /^[a-z0-9_]{1,16}$/.test(msg.model)) ? msg.model : 'civic';
           dirty = true;
         } else if (msg.type === 'chat') {
           const text = cleanText(msg.text);
