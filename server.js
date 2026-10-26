@@ -27,6 +27,43 @@ const staticOptions = isLocalDevelopment
   : undefined;
 
 app.use(express.json());
+
+// The map is ~1 GB of OBJ text. Serve it gzipped (compressed once, kept in .cache/) and let the browser
+// keep it, so a first load downloads a fraction of it and a reload (e.g. applying graphics) downloads none.
+const zlib = require('zlib');
+const MAP_DIR = path.join(__dirname, 'mapfinal');
+const GZ_DIR = path.join(__dirname, '.cache', 'mapfinal-gz');
+const gzJobs = new Map();
+function gzipped(name) {
+  const src = path.join(MAP_DIR, name);
+  const dst = path.join(GZ_DIR, name + '.gz');
+  let job = gzJobs.get(name);
+  if (!job) {
+    job = (async () => {
+      try {
+        const [s, d] = [fs.statSync(src), fs.existsSync(dst) ? fs.statSync(dst) : null];
+        if (d && d.mtimeMs >= s.mtimeMs) return dst;
+      } catch (e) { return null; }
+      fs.mkdirSync(GZ_DIR, { recursive: true });
+      const tmp = dst + '.' + process.pid + '.tmp';
+      await require('stream/promises').pipeline(fs.createReadStream(src), zlib.createGzip({ level: 5 }), fs.createWriteStream(tmp));
+      fs.renameSync(tmp, dst);
+      return dst;
+    })().catch(() => null);
+    gzJobs.set(name, job);
+    job.then(() => gzJobs.delete(name));
+  }
+  return job;
+}
+app.get(/^\/mapfinal\/([\w.-]+\.obj)$/, async (req, res, next) => {
+  if (!/gzip/.test(req.headers['accept-encoding'] || '')) return next();
+  const file = await gzipped(req.params[0]);
+  if (!file) return next();
+  res.set({ 'Content-Type': 'text/plain; charset=utf-8', 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding', 'Cache-Control': 'public, max-age=86400' });
+  res.sendFile(file, (err) => { if (err && !res.headersSent) next(); });
+});
+app.use('/mapfinal', (req, res, next) => { res.set('Cache-Control', 'public, max-age=86400'); next(); });
+
 app.use(express.static(path.join(__dirname), staticOptions));
 
 app.get('/api/bedroom-voice', async (req, res) => {
@@ -328,4 +365,13 @@ server.listen(PORT, HOST, () => {
   console.log(`WebSocket server running on ${wsProtocol}://${PUBLIC_HOST}${needsExplicitPort ? `:${PUBLIC_PORT}` : ''}`);
   console.log(`Listening on ${HOST}:${PORT}`);
   console.log(`Visit ${PUBLIC_ORIGIN}/api/spotify/login to authenticate`);
+
+  // Compress the map parts in the background so the first player does not wait on it
+  (async () => {
+    let names = [];
+    try { names = fs.readdirSync(MAP_DIR).filter((n) => n.endsWith('.obj')); } catch (e) { return; }
+    const worker = async () => { while (names.length) await gzipped(names.pop()); };
+    await Promise.all([worker(), worker(), worker()]);
+    console.log('Map parts gzipped in .cache/mapfinal-gz');
+  })();
 });

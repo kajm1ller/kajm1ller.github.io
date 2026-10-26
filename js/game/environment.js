@@ -49,7 +49,13 @@ export function createSkyMaterial(sunDirection) {
             uHorizonColor: { value: new THREE.Color(SKY_COLORS.horizon) },
             uHazeColor: { value: new THREE.Color(SKY_COLORS.haze) },
             uGroundColor: { value: new THREE.Color(SKY_COLORS.ground) },
-            uSunColor: { value: new THREE.Color(SKY_COLORS.sun) }
+            uSunColor: { value: new THREE.Color(SKY_COLORS.sun) },
+            // Day/night cycle (dayNight.js): solar disc strength, star field, moon disc and its direction
+            uSunDisc: { value: 1 },
+            uStars: { value: 0 },
+            uMoon: { value: 0 },
+            uMoonDir: { value: new THREE.Vector3(0, -1, 0) },
+            uTime: { value: 0 }
         },
         vertexShader: `
             varying vec3 vWorldDir;
@@ -66,7 +72,17 @@ export function createSkyMaterial(sunDirection) {
             uniform vec3 uHazeColor;
             uniform vec3 uGroundColor;
             uniform vec3 uSunColor;
+            uniform float uSunDisc;
+            uniform float uStars;
+            uniform float uMoon;
+            uniform vec3 uMoonDir;
+            uniform float uTime;
             varying vec3 vWorldDir;
+            float hash13(vec3 p) {
+                p = fract(p * 0.1031);
+                p += dot(p, p.zyx + 31.32);
+                return fract((p.x + p.y) * p.z);
+            }
             void main() {
                 vec3 dir = normalize(vWorldDir);
                 float y = dir.y;
@@ -86,7 +102,26 @@ export function createSkyMaterial(sunDirection) {
                 float mie = pow(sunDot, 10.0) * 0.28 + pow(sunDot, 90.0) * 0.55;
                 skyCol += uSunColor * mie;
                 // Solar disc
-                skyCol += vec3(1.0, 0.98, 0.92) * smoothstep(0.9988, 0.9997, sunDot) * 2.0;
+                skyCol += vec3(1.0, 0.98, 0.92) * smoothstep(0.9988, 0.9997, sunDot) * 2.0 * uSunDisc;
+                if (y > 0.0) {
+                    // Stars: one candidate per small cell of the dome, a few of which are lit and twinkle
+                    if (uStars > 0.001) {
+                        vec3 sp = dir * 420.0;
+                        vec3 cell = floor(sp);
+                        float h = hash13(cell);
+                        if (h > 0.9965) {
+                            float d = length(fract(sp) - 0.5);
+                            float twinkle = 0.7 + 0.3 * sin(uTime * (1.5 + h * 40.0) + h * 600.0);
+                            float mag = (h - 0.9965) / 0.0035;
+                            skyCol += vec3(0.85, 0.9, 1.0) * smoothstep(0.42, 0.0, d) * (0.35 + mag * 1.2) * twinkle
+                                * uStars * smoothstep(0.0, 0.18, y);
+                        }
+                    }
+                    // Moon: pale disc with a soft halo
+                    float moonDot = max(dot(dir, normalize(uMoonDir)), 0.0);
+                    skyCol += vec3(0.9, 0.93, 1.0) * smoothstep(0.99979, 0.99987, moonDot) * 1.4 * uMoon;
+                    skyCol += vec3(0.35, 0.42, 0.6) * pow(moonDot, 400.0) * 0.45 * uMoon;
+                }
                 gl_FragColor = vec4(skyCol, 1.0);
             }
         `

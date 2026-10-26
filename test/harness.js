@@ -421,6 +421,10 @@ class CDPHarness {
       const cleanPath = target.startsWith('/') ? target.slice(1) : target;
       url = `${this.staticServer.url}/${cleanPath}`;
     }
+    // game.html asks for a graphics setting on the loading screen unless ?quality= is given
+    if (/(^|\/)game\.html(\?|$)/.test(url) && !/[?&]quality=/.test(url)) {
+      url += (url.includes('?') ? '&' : '?') + 'quality=high';
+    }
 
     this.loadEventFired = false;
     this.log(`Navigating to ${url}...`);

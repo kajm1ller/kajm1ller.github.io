@@ -3,3 +3,6 @@ node_modules/
 *.exe
 *.msi
 *.rar
+
+# gzipped copies of the map parts, made by server.js
+.cache/

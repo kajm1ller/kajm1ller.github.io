@@ -6,14 +6,46 @@
  * - MultiplayerClient: WebSocket wrapper with join-on-connect, capped auto-reconnect and a status callback.
  * - RemotePlayers: turns the server's player list into interpolated avatars / cars / planes with name tags.
  *
- * Every player owns their own world (traffic, pedestrians, police stay local); only players, their
- * vehicles, chat, gunfire, hits and plane explosions are shared.
+ * The shared world on top of this lives in netWorld.js (regions, owners, replicas); this file is the
+ * connection and the other players themselves: walking and aiming bodies (the pedestrian rigs, when
+ * a PedestrianSystem is given), cars with their drivers and passengers, planes, name tags with health.
  */
 
 import * as THREE from 'three';
+
 import { createHondaCivic } from './vehicle.js';
 import { createPlaneMesh } from './plane.js';
 import { lerpAngle } from './camera.js';
+import { poseWalk, poseAim, poseIdle, poseUse, poseSeated, poseStagger, poseHold } from './avatarPose.js';
+
+const _tmpV = new THREE.Vector3();
+
+/**
+ * What a player has in their hand, as sent in `held`: 'g_<gun category>' or 'd_<how a drug is
+ * taken>' (game.html mpExtras; older clients send 'pistol'). -> [prop part, colour, pose kind, long gun]
+ */
+const LONG_GUNS = new Set(['rifle', 'shotgun', 'sniper', 'heavy']);
+const DRUG_PROPS = {
+    cigarette: ['cigarette', 0xf2f2f2], joint: ['cigarette', 0xe8e0c0], vape: ['cigarette', 0x29b6f6], dabpen: ['cigarette', 0x43a047],
+    bong: ['pipe', 0x26a69a], stem: ['pipe', 0xe8dcc0], bulb: ['pipe', 0xb3e5fc], foil: ['baggie', 0xc0c8d0],
+    syringe: ['syringe', 0xd8e8f0], line: ['baggie', 0xf5f5f5], key: ['baggie', 0xeeeeee], tab: ['baggie', 0xff7043],
+    mushrooms: ['baggie', 0xa1887f], bottle: ['bottle', 0x8a5a1a], shot: ['cup', 0xc89a3a], cup: ['cup', 0x8e24aa]
+};
+/** Drugs you breathe out (smoke puffs from other players while they take a hit). */
+export const SMOKED = new Set(['d_cigarette', 'd_joint', 'd_vape', 'd_dabpen', 'd_bong', 'd_stem', 'd_bulb', 'd_foil']);
+export function heldProp(held) {
+    if (!held) return null;
+    if (held === 'pistol') return ['pistol', 0x1e1e1e, 'gun', false];
+    if (held.startsWith('g_')) {
+        const cat = held.slice(2);
+        return LONG_GUNS.has(cat) ? ['rifle', 0x1e1e1e, 'gun', true] : ['pistol', 0x1e1e1e, 'gun', false];
+    }
+    if (held.startsWith('d_')) {
+        const p = DRUG_PROPS[held.slice(2)];
+        return p ? [p[0], p[1], 'item', false] : null;
+    }
+    return null;
+}
 
 export const MP_SEND_INTERVAL = 1 / 15; // seconds between position updates
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 15000];
@@ -189,25 +221,38 @@ function createAvatar(id) {
     return group;
 }
 
-function createNameTag(name) {
-    if (typeof document === 'undefined') return null;
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 64;
+function drawNameTag(canvas, name, hp) {
     const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.font = 'bold 30px Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     const width = Math.min(250, ctx.measureText(name).width + 24);
-    ctx.fillRect(128 - width / 2, 8, width, 48);
+    ctx.fillRect(128 - width / 2, 6, width, 40);
     ctx.fillStyle = '#ffffff';
-    ctx.fillText(name, 128, 33);
+    ctx.fillText(name, 128, 27);
+    // Health under the name
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(78, 48, 100, 12);
+    ctx.fillStyle = hp > 50 ? '#5cd65c' : hp > 25 ? '#f0c040' : '#e04848';
+    ctx.fillRect(80, 50, Math.max(0, Math.min(96, hp * 0.96)), 8);
+}
+
+function createNameTag(name, hp = 100) {
+    if (typeof document === 'undefined') return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 64;
+    drawNameTag(canvas, name, hp);
     const texture = new THREE.CanvasTexture(canvas);
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
     sprite.renderOrder = 999;
     sprite.scale.set(2.8, 0.7, 1);
     sprite.name = 'remote_name_tag';
+    sprite.userData.canvas = canvas;
+    sprite.userData.name = name;
+    sprite.userData.hp = hp;
     return sprite;
 }
 
@@ -215,10 +260,38 @@ const TAG_HEIGHT = { foot: 2.35, car: 2.8, plane: 4.4 };
 const HIT_RADIUS = { foot: 0.9, car: 1.8, plane: 3.5 };
 
 export class RemotePlayers {
-    constructor(scene) {
+    /**
+     * @param {THREE.Scene} scene
+     * @param {Object} [options]
+     * @param {Object} [options.peds] PedestrianSystem: players on foot are drawn as full people
+     *   (walking, aiming, sitting at a table) through its renderer; without it they are boxes
+     */
+    constructor(scene, options = {}) {
         this.scene = scene;
+        this.peds = options.peds || null;
         this.players = new Map(); // id -> entry
         this.selfId = null;
+        this.time = 0;
+    }
+
+    _makeBody(entry) {
+        const peds = this.peds;
+        const h = hashId(entry.id);
+        const mesh = peds.createPedestrianMesh(h, { style: 'adult' });
+        const rig = mesh.userData.rig;
+        // Each player has their own shirt colour
+        const shirt = SHIRT_COLORS[h % SHIRT_COLORS.length];
+        for (const b of rig.bindings) if (b.part === 'torso' || b.part === 'upperArm') b.color.setHex(shirt);
+        const body = { mesh, position: mesh.position, rig, held: '' };
+        peds.extraRigs.push(body);
+        entry.body = body;
+    }
+
+    _dropBody(entry) {
+        if (!entry.body || !this.peds) return;
+        const i = this.peds.extraRigs.indexOf(entry.body);
+        if (i >= 0) this.peds.extraRigs.splice(i, 1);
+        entry.body = null;
     }
 
     get count() {
@@ -234,9 +307,15 @@ export class RemotePlayers {
             visual = createHondaCivic(entry.color, `remote_${entry.id}`, entry.model);
         } else if (entry.state === 'plane') {
             visual = createPlaneMesh(entry.color, `remote_${entry.id}`).root;
+        } else if (this.peds) {
+            // A person drawn by the pedestrian renderer; the group just holds the name tag
+            visual = new THREE.Group();
+            visual.name = `remote_body_${entry.id}`;
+            if (!entry.body) this._makeBody(entry);
         } else {
             visual = createAvatar(entry.id);
         }
+        if (entry.state !== 'foot') this._dropBody(entry);
         entry.visual = visual;
         entry.visualState = entry.state;
         entry.visualColor = entry.color;
@@ -256,9 +335,14 @@ export class RemotePlayers {
             root,
             visual: null,
             visualState: null,
-            tag: createNameTag(p.name),
+            tag: createNameTag(p.name, p.hp === undefined ? 100 : p.hp),
+            hp: p.hp === undefined ? 100 : p.hp,
+            anim: 'idle', held: '', ride: null, sit: null, riders: [], body: null, walkClock: 0,
             pos: new THREE.Vector3(p.x, p.y, p.z),
             target: new THREE.Vector3(p.x, p.y, p.z),
+            aim: new THREE.Vector3(p.x, p.y, p.z),
+            vel: new THREE.Vector3(),
+            moveT: 0,
             yaw: p.yaw || 0, targetYaw: p.yaw || 0,
             pitch: 0, targetPitch: 0,
             roll: 0, targetRoll: 0,
@@ -277,6 +361,7 @@ export class RemotePlayers {
     _remove(id) {
         const e = this.players.get(id);
         if (!e) return;
+        this._dropBody(e);
         this.scene.remove(e.root);
         if (e.tag) {
             e.tag.material.map.dispose();
@@ -295,10 +380,27 @@ export class RemotePlayers {
             let e = this.players.get(p.id);
             if (!e) e = this._add(p);
             e.name = p.name;
-            e.target.set(p.x, p.y, p.z);
+            this._track(e, p);
             e.targetYaw = p.yaw || 0;
             e.targetPitch = p.pitch || 0;
             e.targetRoll = p.roll || 0;
+            e.anim = p.anim || 'idle';
+            e.region = p.region || null;
+            e.held = p.held || '';
+            e.ride = p.ride || null;
+            e.sit = p.sit === undefined ? null : p.sit;
+            e.riders = Array.isArray(p.riders) ? p.riders : [];
+            e.steer = p.steer || 0;
+            e.netSpeed = p.speed || 0;
+            e.radio = p.radio === undefined ? -1 : p.radio;
+            e.radioT = p.radioT || 0;
+            if (p.hp !== undefined && p.hp !== e.hp) {
+                e.hp = p.hp;
+                if (e.tag && e.tag.userData.canvas) {
+                    drawNameTag(e.tag.userData.canvas, e.tag.userData.name, e.hp);
+                    e.tag.material.map.needsUpdate = true;
+                }
+            }
             const state = p.state || 'foot';
             if (state !== e.state || p.color !== e.color || p.model !== e.model) {
                 e.state = state;
@@ -312,14 +414,41 @@ export class RemotePlayers {
         }
     }
 
+    /**
+     * Takes a reported position as the new target and works out how fast the player is going, so the
+     * drawn one can carry on between reports (they come ~15 times a second) instead of stepping.
+     */
+    _track(e, p) {
+        const now = performance.now();
+        const moved = p.x !== e.target.x || p.y !== e.target.y || p.z !== e.target.z;
+        if (moved) {
+            const dts = (now - (e.moveT || 0)) / 1000;
+            const fast = e.state === 'car' || e.state === 'plane';
+            if (fast && e.moveT && dts > 0.02 && dts < 0.4 && Math.hypot(p.x - e.target.x, p.z - e.target.z) < 30) {
+                _tmpV.set((p.x - e.target.x) / dts, (p.y - e.target.y) / dts, (p.z - e.target.z) / dts);
+                e.vel.lerp(_tmpV, 0.6);
+            } else {
+                e.vel.set(0, 0, 0);
+            }
+            e.moveT = now;
+            e.target.set(p.x, p.y, p.z);
+        } else if (now - (e.moveT || 0) > 400) {
+            e.vel.set(0, 0, 0);
+        }
+    }
+
     /** Smooths each remote player toward its latest reported pose. */
     update(dt) {
         const alpha = 1 - Math.exp(-dt * 14);
+        this.time += dt;
         for (const e of this.players.values()) {
-            const dist = e.pos.distanceTo(e.target);
+            // Where they should be now: the last report, carried on at their speed (for at most a moment)
+            const age = Math.min(0.25, (performance.now() - (e.moveT || 0)) / 1000);
+            e.aim.copy(e.target).addScaledVector(e.vel, age);
+            const dist = e.pos.distanceTo(e.aim);
             const before = e.pos.clone();
             if (dist > 40) e.pos.copy(e.target); // teleport (respawn)
-            else e.pos.lerp(e.target, alpha);
+            else e.pos.lerp(e.aim, alpha);
             e.yaw = lerpAngle(e.yaw, e.targetYaw, alpha);
             e.pitch += (e.targetPitch - e.pitch) * alpha;
             e.roll += (e.targetRoll - e.roll) * alpha;
@@ -335,6 +464,7 @@ export class RemotePlayers {
                 e.root.rotation.z = 0;
             }
 
+            if (e.body) this._poseBody(e, dt);
             if (e.state === 'foot' && e.visual && e.visual.userData.legL) {
                 e.walkPhase += e.speed * dt * 2.4;
                 const swing = Math.min(1, e.speed / 4) * Math.sin(e.walkPhase) * 0.7;
@@ -346,6 +476,112 @@ export class RemotePlayers {
                 if (prop) prop.rotation.z += dt * 50;
             }
         }
+    }
+
+    /** Poses and places the person drawn for a player on foot. Riders and drivers are CarRiders' job. */
+    _poseBody(e, dt) {
+        const b = e.body;
+        const rig = b.rig;
+        const riding = !!e.ride;
+        b.mesh.visible = !riding;
+        if (riding) {
+            b.mesh.position.set(0, -500, 0);
+            return;
+        }
+        b.mesh.position.set(e.pos.x, e.pos.y, e.pos.z);
+        b.mesh.rotation.set(0, e.yaw, 0);
+        const h = b.mesh.scale.y || 1;
+        // What's in their hand: the gun they have out, the drink, the joint, the needle...
+        const prop = heldProp(e.held);
+        if (b.held !== e.held) {
+            b.held = e.held;
+            this.peds.setProp({ mesh: b.mesh }, 'R', prop ? prop[0] : null, prop ? prop[1] : 0x1e1e1e);
+        }
+        if (e.sit !== null) {
+            poseSeated(rig, 0.66, h, 'table', this.time);
+        } else if (e.anim === 'aim') {
+            poseAim(rig, e.pitch);
+            // Kick of the last shot
+            if (e.recoil > 0) {
+                rig.shoulderR.rotation.x -= e.recoil * 0.6;
+                rig.shoulderL.rotation.x -= e.recoil * 0.4;
+                rig.torso.rotation.x -= e.recoil * 0.12;
+            }
+        } else if (e.anim === 'use') {
+            poseUse(rig, this.time);
+        } else if (e.anim === 'stagger' || e.anim === 'sway') {
+            e.walkClock += Math.max(e.speed, 0.4) * dt * 1.8;
+            poseStagger(rig, e.walkClock, e.anim === 'sway' ? 0 : e.speed, this.time + hashId(e.id) % 10);
+            if (prop) poseHold(rig, prop[2], prop[3]);
+        } else if (e.speed > 0.15 || e.anim === 'walk' || e.anim === 'run') {
+            e.walkClock += e.speed * dt * 2.1;
+            poseWalk(rig, e.walkClock, Math.max(e.speed, e.anim === 'run' ? 4 : 0));
+            if (prop && e.anim !== 'run') poseHold(rig, prop[2], prop[3]);
+        } else {
+            poseIdle(rig, this.time);
+            if (prop) poseHold(rig, prop[2], prop[3]);
+        }
+        if (e.recoil > 0) e.recoil = Math.max(0, e.recoil - dt * 6);
+    }
+
+    /** A shot from player `id`: they're drawn aiming for a moment, with the kick. */
+    shotBy(id) {
+        const e = this.players.get(id);
+        if (!e) return null;
+        e.recoil = 1;
+        e.shots = (e.shots || 0) + 1;
+        if (e.state === 'foot') e.anim = 'aim';
+        return e;
+    }
+
+    /** Where the right hand of player `id` is in the world (their gun's muzzle, near enough), or null. */
+    handOf(id, out) {
+        const e = this.players.get(id);
+        if (!e || !e.body || e.state !== 'foot') return null;
+        const rig = e.body.rig;
+        e.body.mesh.updateMatrixWorld(true);
+        rig.handR.getWorldPosition(out);
+        return out;
+    }
+
+    /**
+     * Who sits in the cars of players: [{ key, car, seat, seed, style, kind, look }] for CarRiders.sync.
+     * Drivers are the players themselves; passengers are players who board, and the NPCs they carry.
+     */
+    getRiderSpecs(out = []) {
+        out.length = 0;
+        for (const e of this.players.values()) {
+            if (e.state === 'car') {
+                const car = { position: e.pos, yaw: e.yaw, modelId: e.model || 'civic' };
+                out.push({ key: `p${e.id}`, car, seat: 0, seed: hashId(e.id), style: 'adult', kind: 'drive', shirt: SHIRT_COLORS[hashId(e.id) % SHIRT_COLORS.length] });
+                for (const r of e.riders) {
+                    if (Array.isArray(r)) out.push({ key: `n${e.id}:${r[0]}`, car, seat: r[0], seed: r[1], style: r[2] || 'adult', kind: 'ride' });
+                }
+            } else if (e.ride) {
+                const d = this.players.get(e.ride.of);
+                if (d && d.state === 'car') {
+                    const car = { position: d.pos, yaw: d.yaw, modelId: d.model || 'civic' };
+                    out.push({ key: `p${e.id}`, car, seat: e.ride.seat, seed: hashId(e.id), style: 'adult', kind: 'ride', shirt: SHIRT_COLORS[hashId(e.id) % SHIRT_COLORS.length] });
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Players riding in MY car (I'm `selfId`, driving `car`): specs for CarRiders like getRiderSpecs. */
+    getRidersOf(selfId, car, out) {
+        for (const e of this.players.values()) {
+            if (!e.ride || e.ride.of !== selfId) continue;
+            out.push({ key: `p${e.id}`, car, seat: e.ride.seat, seed: hashId(e.id), style: 'adult', kind: 'ride', shirt: SHIRT_COLORS[hashId(e.id) % SHIRT_COLORS.length] });
+        }
+        return out;
+    }
+
+    /** The car of a player (or null), for boarding: { id, x, z, yaw, model, seatsFree }. */
+    getCar(id) {
+        const e = this.players.get(id);
+        if (!e || e.state !== 'car') return null;
+        return { id: e.id, name: e.name, x: e.pos.x, z: e.pos.z, yaw: e.yaw, model: e.model, entry: e };
     }
 
     /** Hit-test volumes for PvP: { id, x, y, z, radius, height }. */

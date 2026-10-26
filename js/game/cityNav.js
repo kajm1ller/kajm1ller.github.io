@@ -233,6 +233,45 @@ export class CityNav {
             this.hangoutGrid.insert(i, this.hangX[i], this.hangZ[i]);
         }
 
+        // ---- Building doors (kind: districts.js DOOR_KIND) ----
+        const d = data.doors || [];
+        const dc = d.length / 4;
+        this.doorCount = dc;
+        this.doorX = new Float32Array(dc);
+        this.doorZ = new Float32Array(dc);
+        this.doorAccess = new Int32Array(dc);
+        this.doorKind = new Uint8Array(dc);
+        this.doorGrid = new PointGrid(32);
+        for (let i = 0; i < dc; i++) {
+            this.doorX[i] = d[i * 4] * DM;
+            this.doorZ[i] = d[i * 4 + 1] * DM;
+            this.doorAccess[i] = d[i * 4 + 2];
+            this.doorKind[i] = d[i * 4 + 3];
+            this.doorGrid.insert(i, this.doorX[i], this.doorZ[i]);
+        }
+
+        // ---- Parking stalls (car centre and heading) ----
+        const p = data.parking || [];
+        const pc = p.length / 3;
+        this.stallCount = pc;
+        this.stallX = new Float32Array(pc);
+        this.stallZ = new Float32Array(pc);
+        this.stallYaw = new Float32Array(pc);
+        this.stallGrid = new PointGrid(32);
+        for (let i = 0; i < pc; i++) {
+            this.stallX[i] = p[i * 3] * DM;
+            this.stallZ[i] = p[i * 3 + 1] * DM;
+            this.stallYaw[i] = p[i * 3 + 2] * MR;
+            this.stallGrid.insert(i, this.stallX[i], this.stallZ[i]);
+        }
+
+        // ---- Drive-through lanes (points in driving order) ----
+        this.driveThrus = (data.driveThrus || []).map((flat) => {
+            const pts = new Float32Array(flat.length);
+            for (let k = 0; k < flat.length; k++) pts[k] = flat[k] * DM;
+            return pts;
+        });
+
         // A* scratch (stamped so nothing is cleared between searches)
         this._g = new Float32Array(n);
         this._from = new Int32Array(n);
@@ -287,6 +326,48 @@ export class CityNav {
             const dx = this.hangX[i] - x, dz = this.hangZ[i] - z;
             const d = dx * dx + dz * dz;
             if (d >= min2 && d <= max2) out.push(i);
+        });
+        return out;
+    }
+
+    /**
+     * Moves door `i` to (x, z) (and its kind), re-linking it to the nearest walk node. Used when a
+     * building is rebuilt with its door somewhere else (bars.js).
+     */
+    moveDoor(i, x, z, kind = this.doorKind[i]) {
+        this.doorX[i] = x;
+        this.doorZ[i] = z;
+        this.doorKind[i] = kind;
+        const node = this.nearestWalkNode(x, z, 40);
+        if (node >= 0) this.doorAccess[i] = node;
+        this._doorsMoved = true;
+    }
+
+    /** Re-files the doors in the lookup grid after moveDoor. */
+    refreshDoors() {
+        if (!this._doorsMoved) return;
+        this._doorsMoved = false;
+        this.doorGrid = new PointGrid(32);
+        for (let i = 0; i < this.doorCount; i++) this.doorGrid.insert(i, this.doorX[i], this.doorZ[i]);
+    }
+
+    doorsInRing(x, z, minR, maxR, out) {
+        out.length = 0;
+        const min2 = minR * minR, max2 = maxR * maxR;
+        this.doorGrid.forEachNear(x, z, maxR, (i) => {
+            const dx = this.doorX[i] - x, dz = this.doorZ[i] - z;
+            const d = dx * dx + dz * dz;
+            if (d >= min2 && d <= max2) out.push(i);
+        });
+        return out;
+    }
+
+    stallsNear(x, z, r, out) {
+        out.length = 0;
+        const r2 = r * r;
+        this.stallGrid.forEachNear(x, z, r, (i) => {
+            const dx = this.stallX[i] - x, dz = this.stallZ[i] - z;
+            if (dx * dx + dz * dz <= r2) out.push(i);
         });
         return out;
     }

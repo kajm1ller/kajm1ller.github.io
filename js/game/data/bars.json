@@ -1,0 +1,305 @@
+{
+ "buildings": [
+  {
+   "id": "182429810",
+   "minX": -1817.1,
+   "maxX": -1777.9,
+   "minZ": -740.5,
+   "maxZ": -727.2,
+   "levels": 3
+  },
+  {
+   "id": "322514985",
+   "minX": -1749,
+   "maxX": -1741.1,
+   "minZ": -667.7,
+   "maxZ": -633.1,
+   "levels": 2
+  },
+  {
+   "id": "322514986",
+   "minX": -1742,
+   "maxX": -1732.1,
+   "minZ": -655.2,
+   "maxZ": -632.9,
+   "levels": 2
+  },
+  {
+   "id": "322514858",
+   "minX": -1814.1,
+   "maxX": -1784.5,
+   "minZ": -613.4,
+   "maxZ": -591.7,
+   "levels": 3
+  },
+  {
+   "id": "232683795",
+   "minX": -1883.2,
+   "maxX": -1840.5,
+   "minZ": -721.9,
+   "maxZ": -693.7,
+   "levels": 2
+  },
+  {
+   "id": "322697380",
+   "minX": -1893.6,
+   "maxX": -1840.5,
+   "minZ": -694.8,
+   "maxZ": -685.6,
+   "levels": 3
+  },
+  {
+   "id": "633993219",
+   "minX": -1813.2,
+   "maxX": -1775.6,
+   "minZ": -826.8,
+   "maxZ": -810.5,
+   "levels": 1
+  },
+  {
+   "id": "322514983",
+   "minX": -1815.6,
+   "maxX": -1794.1,
+   "minZ": -657.1,
+   "maxZ": -641.5,
+   "levels": 2
+  },
+  {
+   "id": "322696997",
+   "minX": -1869.6,
+   "maxX": -1841.2,
+   "minZ": -666,
+   "maxZ": -660.6,
+   "levels": 2
+  },
+  {
+   "id": "322696994",
+   "minX": -1893.6,
+   "maxX": -1840.7,
+   "minZ": -687,
+   "maxZ": -672.7,
+   "levels": 2
+  },
+  {
+   "id": "335615210",
+   "minX": -1779.5,
+   "maxX": -1772,
+   "minZ": -771.7,
+   "maxZ": -756.5,
+   "levels": 2
+  },
+  {
+   "id": "322698095",
+   "minX": -1814,
+   "maxX": -1784.6,
+   "minZ": -787,
+   "maxZ": -756.7,
+   "levels": 2
+  }
+ ],
+ "bars": [
+  {
+   "name": "liquid bar",
+   "building": 6,
+   "level": 0,
+   "levels": 1,
+   "face": "W",
+   "minX": -1813.2,
+   "maxX": -1775.6,
+   "minZ": -826.8,
+   "maxZ": -810.5,
+   "shares": false
+  },
+  {
+   "name": "Howard's Club H",
+   "building": 11,
+   "level": 0,
+   "levels": 2,
+   "face": "W",
+   "minX": -1814,
+   "maxX": -1784.7,
+   "minZ": -787,
+   "maxZ": -770.7,
+   "shares": false
+  },
+  {
+   "name": "Brathaus",
+   "building": 10,
+   "level": 0,
+   "levels": 2,
+   "face": "S",
+   "minX": -1779.5,
+   "maxX": -1772,
+   "minZ": -771.7,
+   "maxZ": -756.5,
+   "shares": false
+  },
+  {
+   "name": "DownTown Sports Grill",
+   "building": 0,
+   "level": 0,
+   "levels": 3,
+   "face": "W",
+   "minX": -1817.1,
+   "maxX": -1777.9,
+   "minZ": -740.5,
+   "maxZ": -727.2,
+   "shares": true
+  },
+  {
+   "name": "Uptown Nightclub",
+   "building": 0,
+   "level": 1,
+   "levels": 3,
+   "face": "W",
+   "minX": -1817.1,
+   "maxX": -1777.9,
+   "minZ": -740.5,
+   "maxZ": -727.2,
+   "shares": true
+  },
+  {
+   "name": "Vice & Video",
+   "building": 4,
+   "level": 0,
+   "levels": 2,
+   "face": "E",
+   "minX": -1883.2,
+   "maxX": -1840.5,
+   "minZ": -721.9,
+   "maxZ": -710.4,
+   "shares": true
+  },
+  {
+   "name": "Bar 149",
+   "building": 4,
+   "level": 0,
+   "levels": 2,
+   "face": "E",
+   "minX": -1883.2,
+   "maxX": -1840.5,
+   "minZ": -710.4,
+   "maxZ": -701.8,
+   "shares": true
+  },
+  {
+   "name": "Doc Holliday's Bar & Grill",
+   "building": 4,
+   "level": 0,
+   "levels": 2,
+   "face": "E",
+   "minX": -1883.2,
+   "maxX": -1840.5,
+   "minZ": -701.8,
+   "maxZ": -694.2,
+   "shares": true
+  },
+  {
+   "name": "Tubby's Tavern",
+   "building": 5,
+   "level": 0,
+   "levels": 3,
+   "face": "E",
+   "minX": -1893.6,
+   "maxX": -1840.5,
+   "minZ": -694.2,
+   "maxZ": -686.3,
+   "shares": false
+  },
+  {
+   "name": "Cla-Zel",
+   "building": 9,
+   "level": 0,
+   "levels": 2,
+   "face": "E",
+   "minX": -1893.6,
+   "maxX": -1840.7,
+   "minZ": -686.3,
+   "maxZ": -672.7,
+   "shares": false
+  },
+  {
+   "name": "Nate & Wallys Fishbowl",
+   "building": 1,
+   "level": 0,
+   "levels": 2,
+   "face": "S",
+   "minX": -1749,
+   "maxX": -1741.5,
+   "minZ": -667.7,
+   "maxZ": -633.1,
+   "shares": false
+  },
+  {
+   "name": "Trotters Tavern",
+   "building": 8,
+   "level": 0,
+   "levels": 2,
+   "face": "E",
+   "minX": -1869.6,
+   "maxX": -1841.2,
+   "minZ": -666,
+   "maxZ": -660.6,
+   "shares": false
+  },
+  {
+   "name": "City Tap",
+   "building": 7,
+   "level": 0,
+   "levels": 2,
+   "face": "W",
+   "minX": -1815.6,
+   "maxX": -1794.1,
+   "minZ": -657.1,
+   "maxZ": -641.5,
+   "shares": true
+  },
+  {
+   "name": "The Attic",
+   "building": 7,
+   "level": 1,
+   "levels": 2,
+   "face": "W",
+   "minX": -1815.6,
+   "maxX": -1794.1,
+   "minZ": -657.1,
+   "maxZ": -641.5,
+   "shares": true
+  },
+  {
+   "name": "Shots Inc.",
+   "building": 2,
+   "level": 0,
+   "levels": 2,
+   "face": "S",
+   "minX": -1741.5,
+   "maxX": -1732.1,
+   "minZ": -655.2,
+   "maxZ": -632.9,
+   "shares": false
+  },
+  {
+   "name": "The R.O.W.",
+   "building": 3,
+   "level": 0,
+   "levels": 3,
+   "face": "N",
+   "minX": -1814.1,
+   "maxX": -1784.5,
+   "minZ": -613.4,
+   "maxZ": -591.7,
+   "shares": false
+  }
+ ],
+ "fillers": [
+  {
+   "building": 11,
+   "face": "S",
+   "levels": 2,
+   "minX": -1814,
+   "maxX": -1784.6,
+   "minZ": -770.7,
+   "maxZ": -756.7
+  }
+ ]
+}

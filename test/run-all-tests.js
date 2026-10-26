@@ -122,7 +122,7 @@ Options:
   const frames = framesArg ? parseInt(framesArg.split('=')[1], 10) : 1000;
   const targetArg = args.find(a => a.startsWith('--target='));
   const isMock = args.includes('--mock');
-  const targetPage = isMock ? 'test/mock-game.html' : (targetArg ? targetArg.split('=')[1] : 'game.html');
+  const targetPage = isMock ? 'test/mock-game.html' : (targetArg ? targetArg.slice(targetArg.indexOf('=') + 1) : 'game.html?time=12'); // noon: the day/night cycle otherwise follows the wall clock
   const isSelfTest = args.includes('--self-test');
   const verbose = args.includes('--verbose');
 

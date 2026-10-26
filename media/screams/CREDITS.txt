@@ -1,0 +1,21 @@
+Scream recordings (media/screams), all released under CC0 1.0 (public domain,
+https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, loudness-levelled and converted to
+mp3 for Kaj Simulator. Credit isn't required, but here's where they came from.
+
+scream_01.mp3  "Girl_Two_Screams.wav" by tcrocker68
+               https://freesound.org/people/tcrocker68/sounds/235595/
+scream_02.mp3  "Girl_Scream.wav" by tcrocker68
+               https://freesound.org/people/tcrocker68/sounds/235592/
+scream_03.mp3  "pandoramachineannalisaloefflerscreams_03.flac" by pushkin
+               https://freesound.org/people/pushkin/sounds/241591/
+scream_04.mp3  "WomanScream.wav" by Archeos
+               https://freesound.org/people/Archeos/sounds/261419/
+               (01-04 via "Female screams", congusbongus, https://opengameart.org/content/female-screams)
+scream_05.mp3 - scream_08.mp3
+               "human male scream multi" by JohnsonBrandEditing
+               https://freesound.org/people/JohnsonBrandEditing/sounds/173944/
+               (via "Aargh male screams", congusbongus, https://opengameart.org/content/aargh-male-screams;
+               only its CC0 clips are used here)
+scream_09.mp3 - scream_11.mp3
+               "Female high-pitched scream SFX" by WuxiaScrub
+               https://opengameart.org/node/131040

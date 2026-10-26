@@ -247,7 +247,9 @@ export class EngineSound {
         this.wind.gain.gain.setTargetAtTime(Math.min(0.09, spd * spd * 0.00009), t, 0.1);
 
         // From the driver's seat the cabin muffles the outside world
-        this.cabin.frequency.setTargetAtTime(s.inside ? 2600 : 9000, t, 0.15);
+        this.cabin.frequency.setTargetAtTime(s.inside ? 1800 : 9000, t, 0.15);
+        // ...and in first person the whole car (engine, tyres, wind) sits well back in the mix
+        this.output.gain.setTargetAtTime(s.inside ? 0.28 : 1, t, 0.15);
     }
 
     /** Silences everything (player out of the car). */

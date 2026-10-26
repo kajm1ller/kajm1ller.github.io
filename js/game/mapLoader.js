@@ -349,6 +349,72 @@ function resolveObjIndex(token, count) {
     return n > 0 ? n - 1 : count + n;
 }
 
+// Allocation-free OBJ line readers (the map is ~1 GB of text, so split(/\s+/) per line is the load time)
+const _num3 = [0, 0, 0];
+// Up to three numbers after the keyword of `line` into _num3 (NaN when missing)
+function readNumbers(line) {
+    const len = line.length;
+    let i = 0;
+    let n = 0;
+    while (i < len && line.charCodeAt(i) > 32) i++;
+    while (n < 3) {
+        while (i < len && line.charCodeAt(i) <= 32) i++;
+        if (i >= len) break;
+        const start = i;
+        while (i < len && line.charCodeAt(i) > 32) i++;
+        _num3[n++] = parseFloat(line.substring(start, i));
+    }
+    for (; n < 3; n++) _num3[n] = NaN;
+}
+
+// resolveObjIndex for the digits in line[a, b)
+function readObjIndex(line, a, b, count) {
+    if (a >= b) return -1;
+    let neg = false;
+    if (line.charCodeAt(a) === 45) { neg = true; a++; }
+    let n = 0;
+    let digits = 0;
+    for (; a < b; a++, digits++) {
+        const d = line.charCodeAt(a) - 48;
+        if (d < 0 || d > 9) break;
+        n = n * 10 + d;
+    }
+    if (digits === 0 || n === 0) return -1;
+    return neg ? count - n : n - 1;
+}
+
+const _face = [];
+// Corners of an 'f' line as (v, vt, vn) 0-based triples in _face; returns the corner count
+function readFace(line, vCount, tCount, nCount) {
+    const len = line.length;
+    let i = 1;
+    let corners = 0;
+    for (;;) {
+        while (i < len && line.charCodeAt(i) <= 32) i++;
+        if (i >= len) break;
+        const start = i;
+        while (i < len && line.charCodeAt(i) > 32) i++;
+        const s1 = line.indexOf('/', start);
+        let vEnd = i, vtA = -1, vtB = -1, vnA = -1, vnB = -1;
+        if (s1 >= 0 && s1 < i) {
+            vEnd = s1;
+            const s2 = line.indexOf('/', s1 + 1);
+            if (s2 >= 0 && s2 < i) {
+                vtA = s1 + 1; vtB = s2;
+                vnA = s2 + 1; vnB = i;
+            } else {
+                vtA = s1 + 1; vtB = i;
+            }
+        }
+        const o = corners * 3;
+        _face[o] = readObjIndex(line, start, vEnd, vCount);
+        _face[o + 1] = vtA < 0 ? -1 : readObjIndex(line, vtA, vtB, tCount);
+        _face[o + 2] = vnA < 0 ? -1 : readObjIndex(line, vnA, vnB, nCount);
+        corners++;
+    }
+    return corners;
+}
+
 export class AnothermapoLoader {
     constructor(options = {}) {
         this.basePath = options.basePath || ANOTHERMAPO_CONFIG.PATHS.MAP_DIR;
@@ -878,10 +944,10 @@ export class AnothermapoLoader {
             if (c0 === 118) {
                 // 'v ' / 'vt' / 'vn'
                 if (c1 === 32) {
-                    const p = line.trim().split(/\s+/);
-                    const vx = parseFloat(p[1]) + ox;
-                    const vy = parseFloat(p[2]) + oy;
-                    const vz = parseFloat(p[3]) + oz;
+                    readNumbers(line);
+                    const vx = _num3[0] + ox;
+                    const vy = _num3[1] + oy;
+                    const vz = _num3[2] + oz;
                     positions.push(vx, vy, vz);
                     if (isTerrainPart) {
                         const tb = this.terrainBounds;
@@ -900,39 +966,29 @@ export class AnothermapoLoader {
                         blockVertexCount++;
                     }
                 } else if (c1 === 116) {
-                    const p = line.trim().split(/\s+/);
-                    uvs.push(parseFloat(p[1]) || 0, parseFloat(p[2]) || 0);
+                    readNumbers(line);
+                    uvs.push(_num3[0] || 0, _num3[1] || 0);
                 } else if (c1 === 110) {
-                    const p = line.trim().split(/\s+/);
-                    normals.push(parseFloat(p[1]) || 0, parseFloat(p[2]) || 0, parseFloat(p[3]) || 0);
+                    readNumbers(line);
+                    normals.push(_num3[0] || 0, _num3[1] || 0, _num3[2] || 0);
                 }
             } else if (c0 === 102 && c1 === 32) {
                 // 'f ' - triangulated as a fan (OSM2World only emits triangles)
-                const p = line.trim().split(/\s+/);
-                if (p.length < 4) continue;
+                const vCount = positions.length / 3;
+                const tCount = uvs.length / 2;
+                const nCount = normals.length / 3;
+                const cornerCount = readFace(line, vCount, tCount, nCount);
+                if (cornerCount < 3) continue;
                 if (currentSlot < 0) {
                     currentSlot = slotNames.length;
                     slotNames.push('');
                     slotByName.set('', currentSlot);
                 }
-                const vCount = positions.length / 3;
-                const tCount = uvs.length / 2;
-                const nCount = normals.length / 3;
-                const resolved = [];
-                for (let k = 1; k < p.length; k++) {
-                    const idx = p[k].split('/');
-                    resolved.push(
-                        resolveObjIndex(idx[0], vCount),
-                        idx.length > 1 ? resolveObjIndex(idx[1], tCount) : -1,
-                        idx.length > 2 ? resolveObjIndex(idx[2], nCount) : -1
-                    );
-                }
-                const cornerCount = resolved.length / 3;
                 for (let k = 1; k < cornerCount - 1; k++) {
                     corners.push(
-                        resolved[0], resolved[1], resolved[2],
-                        resolved[k * 3], resolved[k * 3 + 1], resolved[k * 3 + 2],
-                        resolved[(k + 1) * 3], resolved[(k + 1) * 3 + 1], resolved[(k + 1) * 3 + 2]
+                        _face[0], _face[1], _face[2],
+                        _face[k * 3], _face[k * 3 + 1], _face[k * 3 + 2],
+                        _face[(k + 1) * 3], _face[(k + 1) * 3 + 1], _face[(k + 1) * 3 + 2]
                     );
                     triangleSlots.push(currentSlot);
                 }
@@ -968,6 +1024,11 @@ export class AnothermapoLoader {
         const normalCount = normals.length / 3;
         const tilePrefix = isTerrainPart ? 'T' : 'M';
         const accumulators = new Map();
+        // Corner key as one number (cheaper than a string) while v/vt/vn fit in a double
+        const uvSpan = uvCount + 1;
+        const nrmSpan = normalCount + 1;
+        let lastAcc = null;
+        const numericKeys = (posCount + 1) * uvSpan * nrmSpan < 9e15;
 
         for (let t = 0, triCount = triangleSlots.length; t < triCount; t++) {
             const base = t * 9;
@@ -986,15 +1047,21 @@ export class AnothermapoLoader {
             const cz = (positions[v0 * 3 + 2] + positions[v1 * 3 + 2] + positions[v2 * 3 + 2]) / 3;
             const ix = Math.floor(cx / tileSize);
             const iz = Math.floor(cz / tileSize);
-            const tileKey = tilePrefix + ix + ',' + iz;
             const slot = triangleSlots[t];
-            const accKey = tileKey + '|' + slot;
-
-            let acc = accumulators.get(accKey);
+            // (the last accumulator is reused while consecutive triangles share a tile and material)
+            let acc = lastAcc && lastAcc.ix === ix && lastAcc.iz === iz && lastAcc.slot === slot ? lastAcc : null;
             if (!acc) {
-                acc = { tileKey, ix, iz, info: slotInfo[slot], pos: [], nrm: [], uv: [], idx: [], lookup: new Map() };
+                const tileKey = tilePrefix + ix + ',' + iz;
+                const accKey = tileKey + '|' + slot;
+                acc = accumulators.get(accKey);
+            }
+            if (!acc) {
+                const tileKey = tilePrefix + ix + ',' + iz;
+                const accKey = tileKey + '|' + slot;
+                acc = { tileKey, ix, iz, slot, info: slotInfo[slot], pos: [], nrm: [], uv: [], idx: [], lookup: new Map() };
                 accumulators.set(accKey, acc);
             }
+            lastAcc = acc;
 
             // Flat face normal, only used for corners without a 'vn'
             let fnx = 0, fny = 1, fnz = 0;
@@ -1005,7 +1072,9 @@ export class AnothermapoLoader {
                 const ti = corners[base + c * 3 + 1];
                 const ni = corners[base + c * 3 + 2];
                 const hasNormal = ni >= 0 && ni < normalCount;
-                const key = hasNormal ? (vi + '/' + ti + '/' + ni) : (vi + '/' + ti + '/f' + t);
+                const key = hasNormal
+                    ? (numericKeys ? (vi * uvSpan + ti + 1) * nrmSpan + ni : vi + '/' + ti + '/' + ni)
+                    : (vi + '/' + ti + '/f' + t);
                 let index = acc.lookup.get(key);
                 if (index === undefined) {
                     index = acc.pos.length / 3;

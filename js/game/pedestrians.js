@@ -12,6 +12,10 @@
  * - Population: people stream in around the player (out of view) anywhere on the map and are
  *   removed once far away, so every neighbourhood has life without simulating the whole city.
  *
+ * - Districts (districts.js): who is out, how many and what they're up to depends on the part of
+ *   town and the time of day; the scenes themselves (picnics, beer pong, bar lines, fights,
+ *   arrests, dog walks...) live in pedestrianScenes.js.
+ *
  * Ped objects keep the fields the rest of the game relies on (mesh, position, state, hp, isDead,
  * velocity, speed, fleeTimer, talkTimer, walkPhase, index, mesh.userData.leftLeg/rightLeg), so
  * shooting, ragdolls, carjacking and dialog work unchanged. `ped.mesh` is a transform rig that
@@ -21,14 +25,30 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WALK_EDGE, FURNITURE } from './cityNav.js';
+import { DOOR_KIND, districtAt, districtProfile, pickTable, pickWeighted } from './districts.js';
+import { SceneDirector, PROP_PARTS, PartyMusic } from './pedestrianScenes.js';
+import { lerpAngle } from './camera.js';
+
+/** The numbers of a hit worth sending over the network. */
+export function pickHit(hit) {
+    const out = {};
+    for (const k of ['x', 'y', 'z', 'dirX', 'dirY', 'dirZ', 'damage']) if (Number.isFinite(hit[k])) out[k] = Math.round(hit[k] * 100) / 100;
+    if (hit.explosive) out.explosive = true;
+    return out;
+}
 
 export const PED_CONFIG = Object.freeze({
     // Population targets around the player (scaled down on phones/tablets)
     WALKERS: 34,
     SITTERS: 14,
     GROUP_PEOPLE: 16,
+    STREET_SCENE_PEOPLE: 14,    // people in sidewalk scenes (smoking, bar lines, fights...) at density 1
     LOW_SPEC_SCALE: 0.55,
-    CAPACITY: 140,
+    CAPACITY: 190,
+    DENSITY_MIN: 0.12,          // district population multipliers are clamped to this range
+    DENSITY_MAX: 4.2,
+    PATROL_CHANCE: 0.004,       // per population tick, scaled by the district's `patrol`
+    DOOR_RANGE: 220,
 
     SPAWN_MIN: 45,
     SPAWN_MAX: 150,
@@ -62,6 +82,7 @@ export const PED_CONFIG = Object.freeze({
 });
 
 const TWO_PI = Math.PI * 2;
+const ALL_DOORS = Object.values(DOOR_KIND);
 
 function mulberry32(seed) {
     let a = seed >>> 0;
@@ -98,43 +119,114 @@ const PANTS_COLORS = [0x1f2a44, 0x2c3e50, 0x3b3b3b, 0x5a4632, 0x7d6b4f, 0xc2b280
 const SHOE_COLORS = [0x1a1a1a, 0xf2f2f2, 0x5a3a22, 0x8b0000, 0x2a3d66, 0x777777];
 const ACCENT_COLORS = [0xc0392b, 0x2980b9, 0x27ae60, 0xf39c12, 0x8e44ad, 0x2c3e50, 0xe67e22, 0x16a085, 0xbdc3c7];
 
-function makeLook(seed) {
+// Who people are in each district (districts.js `looks`)
+const STYLE_SHIRTS = {
+    // BGSU orange and brown turn up a lot around campus
+    student: SHIRT_COLORS.concat([0xfe5000, 0xfe5000, 0x4f2c1d, 0x4f2c1d, 0x9a9a9a, 0x1c2e4a]),
+    partier: [0xff2d55, 0x111111, 0x111111, 0xffffff, 0xff9f0a, 0x5856d6, 0x34c759, 0xff375f, 0x0a84ff, 0xffd60a, 0xfe5000, 0xe8e2d0],
+    older: [0x8b7d6b, 0x556b2f, 0x6b5b95, 0x9e9e9e, 0xbfa58a, 0x2f4f4f, 0x7a6a5a, 0xd8cfc4, 0x9fb7cf, 0xc9b79c],
+    worker: [0xf2f2f2, 0xdfe8f2, 0x1f3a5f, 0x3b3b3b, 0x2b5797, 0xff7a00, 0x6a7b8c],
+    athlete: [0xff3b30, 0x00c7be, 0xffcc00, 0x5ac8fa, 0x111111, 0xaf52de, 0xf2f2f2, 0xfe5000]
+};
+const OLD_HAIR = [0x8c8c8c, 0xb0b0b0, 0xd0d0d0, 0xe8e8e8, 0x6b6b6b, 0x4a3020];
+
+function makeLook(seed, style = 'adult') {
     const rand = mulberry32(seed * 2654435761 + 17);
     const femme = rand() < 0.5;
     const skin = pick(rand, SKIN_TONES);
     const hairRoll = rand();
-    const hairStyle = femme
+    const old = style === 'older';
+    let hairStyle = femme
         ? (hairRoll < 0.72 ? 'long' : hairRoll < 0.95 ? 'short' : 'none')
         : (hairRoll < 0.12 ? 'none' : hairRoll < 0.9 ? 'short' : 'long');
-    const hat = rand() < (femme ? 0.1 : 0.22);
+    if (old && hairStyle === 'long' && rand() < 0.6) hairStyle = 'short';
+    if (old && !femme && rand() < 0.3) hairStyle = 'none';
+    let hat = rand() < (femme ? 0.1 : 0.22);
     const lowerRoll = rand();
-    const skirt = femme && lowerRoll < 0.3;
-    const shorts = !skirt && lowerRoll > 0.78;
-    const shirt = pick(rand, SHIRT_COLORS);
+    let skirt = femme && lowerRoll < 0.3;
+    let shorts = !skirt && lowerRoll > 0.78;
+    let shirt = pick(rand, STYLE_SHIRTS[style] || SHIRT_COLORS);
+    let pants = skirt ? pick(rand, ACCENT_COLORS.concat(PANTS_COLORS)) : pick(rand, PANTS_COLORS);
+    let shoes = pick(rand, SHOE_COLORS);
+    let longSleeves = rand() < 0.4;
+    let backpack = rand() < 0.14;
+    switch (style) {
+        case 'student':
+            backpack = rand() < 0.55;
+            longSleeves = rand() < 0.55; // hoodies
+            shorts = shorts || (!skirt && rand() < 0.2);
+            break;
+        case 'partier':
+            backpack = false;
+            hat = rand() < 0.15;
+            if (femme && rand() < 0.35) {
+                skirt = true;
+                shorts = false;
+            }
+            longSleeves = rand() < 0.2;
+            break;
+        case 'older':
+            backpack = false;
+            longSleeves = rand() < 0.75;
+            skirt = femme && rand() < 0.2;
+            shorts = !skirt && rand() < 0.12;
+            pants = pick(rand, [0x5a4632, 0x7d6b4f, 0xc2b280, 0x3b3b3b, 0x6a7b8c, 0x1f2a44]);
+            break;
+        case 'worker':
+            backpack = false;
+            longSleeves = rand() < 0.7;
+            skirt = false;
+            shorts = false;
+            pants = pick(rand, [0x1f2a44, 0x202020, 0x3b3b3b, 0x5a4632, 0xc2b280]);
+            shoes = pick(rand, [0x1a1a1a, 0x5a3a22]);
+            break;
+        case 'athlete':
+            backpack = false;
+            skirt = false;
+            shorts = true;
+            longSleeves = rand() < 0.15;
+            hat = rand() < 0.3;
+            shoes = pick(rand, [0xf2f2f2, 0xff3b30, 0x2a3d66, 0x1a1a1a]);
+            pants = pick(rand, [0x111111, 0x2c3e50, 0x31476b, 0x555555]);
+            break;
+        case 'bouncer':
+            shirt = 0x111111;
+            pants = 0x111111;
+            longSleeves = false;
+            skirt = false;
+            shorts = false;
+            backpack = false;
+            hat = false;
+            break;
+        default:
+            break;
+    }
     return {
+        style,
         skin,
-        hair: pick(rand, HAIR_COLORS),
+        hair: old ? pick(rand, OLD_HAIR) : pick(rand, HAIR_COLORS),
         hairStyle,
         hat,
-        cap: pick(rand, ACCENT_COLORS),
+        cap: style === 'student' && rand() < 0.4 ? 0xfe5000 : pick(rand, ACCENT_COLORS),
         shirt,
-        longSleeves: rand() < 0.4,
-        pants: skirt ? pick(rand, ACCENT_COLORS.concat(PANTS_COLORS)) : pick(rand, PANTS_COLORS),
+        longSleeves,
+        pants,
         skirt,
         shorts,
-        shoes: pick(rand, SHOE_COLORS),
-        backpack: rand() < 0.14,
+        shoes,
+        backpack,
         pack: pick(rand, ACCENT_COLORS),
-        height: (femme ? 0.93 : 0.98) + rand() * 0.1,
-        width: 0.9 + rand() * 0.22
+        height: ((femme ? 0.93 : 0.98) + rand() * 0.1) * (old ? 0.97 : 1) * (style === 'bouncer' ? 1.06 : 1),
+        width: (0.9 + rand() * 0.22) * (style === 'bouncer' ? 1.15 : 1)
     };
 }
 
-/** A uniformed police officer on the same body as everyone else. */
-function makePoliceLook(seed) {
+/** A uniformed police officer on the same body as everyone else (`armed`: gun in hand). */
+function makePoliceLook(seed, armed = true) {
     const look = makeLook(seed);
     return Object.assign(look, {
         police: true,
+        armed,
         hairStyle: look.hairStyle === 'long' ? 'none' : look.hairStyle, // tucked under the cap
         hat: false,
         shirt: 0x142542,
@@ -221,7 +313,9 @@ function buildPartGeometries() {
         pistol: mergeGeometries([
             box(0.045, 0.2, 0.07, 0, -0.06, 0.0),     // slide/barrel along the forearm
             box(0.04, 0.05, 0.1, 0, 0.02, 0.045)      // grip
-        ])
+        ]),
+        // Hand-held items and scene props (pedestrianScenes.js)
+        ...Object.fromEntries(Object.entries(PROP_PARTS).map(([k, v]) => [k, v.geo()]))
     };
 }
 
@@ -350,17 +444,24 @@ function buildRig(root, look) {
         b.push(['policeHat', neck, c(0x142542)]);
         b.push(['capBrim', neck, c(0x0c0c0c)]);
         b.push(['badge', torso, c(0xffd700)]);
-        // Named so game/test code can find the officer's gun
-        pistolJoint = joint(elbowR, 0, -0.3, 0.02);
-        pistolJoint.name = 'officer_pistol';
-        b.push(['pistol', pistolJoint, c(0x1e1e1e)]);
+        if (look.armed !== false) {
+            // Named so game/test code can find the officer's gun
+            pistolJoint = joint(elbowR, 0, -0.3, 0.02);
+            pistolJoint.name = 'officer_pistol';
+            b.push(['pistol', pistolJoint, c(0x1e1e1e)]);
+        }
     }
+    // Where hand-held items go (PedestrianSystem.setProp)
+    const handR = joint(elbowR, 0, -0.3, 0.02);
+    const handL = joint(elbowL, 0, -0.3, 0.02);
 
     return {
         body, hips, torso, neck,
         shoulderL, elbowL, shoulderR, elbowR,
         legL, kneeL, legR, kneeR,
+        handR, handL,
         pistol: pistolJoint,
+        props: {},
         bindings: b.map(([part, j, color]) => ({ part, joint: j, color }))
     };
 }
@@ -371,7 +472,8 @@ function buildRig(root, look) {
 const PART_SLOTS = {
     torso: 1, pelvis: 1, head: 1, eyes: 1, upperArm: 2, forearm: 2, hand: 2,
     thigh: 2, shin: 2, shoe: 2, hairShort: 1, hairLong: 1, cap: 1, skirt: 1, backpack: 1,
-    policeHat: 1, capBrim: 1, badge: 1, pistol: 1
+    policeHat: 1, capBrim: 1, badge: 1, pistol: 1,
+    ...Object.fromEntries(Object.entries(PROP_PARTS).map(([k, v]) => [k, v.slots]))
 };
 
 class PedestrianRenderer {
@@ -384,7 +486,7 @@ class PedestrianRenderer {
         this.meshes = {};
         this.counts = {};
         for (const part of Object.keys(PART_SLOTS)) {
-            const max = capacity * PART_SLOTS[part];
+            const max = Math.max(4, Math.ceil(capacity * PART_SLOTS[part]));
             const mesh = new THREE.InstancedMesh(geos[part], this.material, max);
             mesh.name = `pedestrian_${part}`;
             mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -428,6 +530,7 @@ class PedestrianRenderer {
         for (const k in this.meshes) {
             const mesh = this.meshes[k];
             mesh.count = counts[k];
+            mesh.visible = counts[k] > 0; // unused props cost no draw call
             if (counts[k] > 0) {
                 mesh.instanceMatrix.needsUpdate = true;
                 mesh.instanceColor.needsUpdate = true;
@@ -534,13 +637,17 @@ export class PedestrianSystem {
         this.nav = nav;
         this.pedestrians = pedestrians;
         this.lowSpec = lowSpec;
-        const scale = lowSpec ? PED_CONFIG.LOW_SPEC_SCALE : 1;
+        // lowSpec 'lowest' is the super low graphics mode: a thin crowd, drawn only when close
+        this.lowest = lowSpec === 'lowest';
+        this.renderDistance = this.lowest ? 70 : PED_CONFIG.RENDER_DISTANCE;
+        const scale = this.lowest ? 0.22 : lowSpec ? PED_CONFIG.LOW_SPEC_SCALE : 1;
         this.targets = {
             walkers: Math.round(PED_CONFIG.WALKERS * scale),
             sitters: Math.round(PED_CONFIG.SITTERS * scale),
             groupPeople: Math.round(PED_CONFIG.GROUP_PEOPLE * scale)
         };
-        this.renderer = new PedestrianRenderer(scene, PED_CONFIG.CAPACITY, lowSpec);
+        // (room beyond CAPACITY for other players, people in cars and police ghosts)
+        this.renderer = new PedestrianRenderer(scene, PED_CONFIG.CAPACITY + 270, lowSpec);   // + police, scene extras and the bar crowds (bars.js)
         this.furniture = nav ? new FurnitureRenderer(scene, nav, lowSpec) : null;
 
         this.seatOccupant = nav ? new Array(nav.seatCount).fill(null) : [];
@@ -559,19 +666,50 @@ export class PedestrianSystem {
         this._cars = [];
         this._carPool = [];
         this._ring = [];
+        this._ring2 = [];
         this._rand = Math.random;
+
+        // District life: scenes, props, party music. `parkedCars` (parkedCars.js) is set by the
+        // game so people can walk to their cars; `night` comes in with every update.
+        this.scenes = new SceneDirector(this);
+        this.music = new PartyMusic();
+        this.parkedCars = null;
+        // netWorld.js: in replica mode another player's game simulates the people here and we draw
+        // what it sends; `replicaExtras` are the scene props and dogs they have out
+        this.replicaMode = false;
+        this.replicaExtras = [];
+        // { emit(kind, data), cmd(kind, data) }: tells the other players what happens to people here
+        // (emit: we own them, everyone in the region sees it) and acts on people we only draw (cmd: the owner does it)
+        this.net = null;
+        // districtStreaming.js: people only live in the district the player is in (set by the game)
+        this.streamer = null;
+        this.night = 0;
+        this._lastCtx = null;
+        this._extras = [];
+        // Other rigs to draw with the people (the player's own body in third person)
+        this.extraRigs = [];
+        // Other music sources ({ x, z, gain, muffled }, e.g. the bars in bars.js), mixed in with the scenes'
+        this.extraMusic = [];
+    }
+
+    setAudioContext(ctx) {
+        this.music.setContext(ctx);
     }
 
     // --------------------------------------------------------------------------------------------
     // Creation
     // --------------------------------------------------------------------------------------------
-    /** A pedestrian rig (THREE.Group transform hierarchy) with a randomized look. */
+    /**
+     * A pedestrian rig (THREE.Group transform hierarchy) with a randomized look.
+     * options: { police (PoliceSystem officer), style (districts.js look), copOnFoot (unarmed beat cop) }
+     */
     createPedestrianMesh(seed = (Math.random() * 1e9) | 0, options = {}) {
         const group = new THREE.Group();
         group.name = options.police ? `police_officer_${seed}` : `pedestrian_${seed}`;
         group.userData.isPedestrian = !options.police;
         group.userData.isPoliceOfficer = !!options.police;
-        const look = options.police ? makePoliceLook(seed) : makeLook(seed);
+        const look = options.police ? makePoliceLook(seed)
+            : options.style === 'cop' ? makePoliceLook(seed, false) : makeLook(seed, options.style);
         const rig = buildRig(group, look);
         group.userData.rig = rig;
         group.userData.look = look;
@@ -587,9 +725,11 @@ export class PedestrianSystem {
         return this.createPedestrianMesh((seed * 104729 + 7) | 0, { police: true });
     }
 
-    _makePed(x, z, yaw) {
+    /** A new pedestrian at (x, z). `style` is who they are (districts.js looks; 'cop' for police on foot). */
+    _makePed(x, z, yaw, style = 'adult', fixedSeed = null) {
         const index = this._nextIndex++;
-        const mesh = this.createPedestrianMesh(index * 7919 + ((Math.random() * 1e6) | 0));
+        const lookSeed = fixedSeed !== null ? fixedSeed : index * 7919 + ((Math.random() * 1e6) | 0);
+        const mesh = this.createPedestrianMesh(lookSeed, { style });
         mesh.position.set(x, 0, z);
         mesh.rotation.set(0, yaw, 0);
         const ped = {
@@ -606,7 +746,9 @@ export class PedestrianSystem {
             walkPhase: Math.random() * TWO_PI,
             fleeTimer: 0,
             talkTimer: 0,
-            talkCount: 0
+            talkCount: 0,
+            style,
+            lookSeed
         };
         mesh.userData.pedestrian = ped;
         this._initAI(ped);
@@ -617,13 +759,23 @@ export class PedestrianSystem {
 
     _initAI(ped) {
         const r = Math.random();
-        const jogger = r < 0.07;
+        const style = ped.style || 'adult';
+        const jogger = style === 'athlete' ? r < 0.7 : (style === 'older' || style === 'partier' || style === 'cop') ? false : r < 0.07;
+        const speedScale = style === 'older' ? 0.72 : style === 'cop' ? 0.85 : 1;
         ped.ai = {
             yaw: ped.mesh.rotation.y,
             walkSpeed: jogger ? PED_CONFIG.JOG_SPEED * (0.9 + Math.random() * 0.2)
-                : PED_CONFIG.WALK_SPEED_MIN + Math.random() * (PED_CONFIG.WALK_SPEED_MAX - PED_CONFIG.WALK_SPEED_MIN),
+                : (PED_CONFIG.WALK_SPEED_MIN + Math.random() * (PED_CONFIG.WALK_SPEED_MAX - PED_CONFIG.WALK_SPEED_MIN)) * speedScale,
             jogger,
-            phone: !jogger && Math.random() < 0.15,
+            old: style === 'older',
+            cat: 'walker',
+            act: null,
+            leader: null,
+            followSlot: 0,
+            drunk: 0,
+            heading: 0,
+            vanish: false,
+            phone: !jogger && style !== 'cop' && Math.random() < (style === 'student' ? 0.25 : style === 'older' ? 0.04 : 0.15),
             laneOffset: 0.35 + Math.random() * 0.35,
             path: null,
             pathIdx: 0,
@@ -673,11 +825,18 @@ export class PedestrianSystem {
      * @param {{x:number,z:number}} [ctx.playerPos] On-foot player position (for talking/avoidance)
      * @param {boolean} [ctx.playerOnFoot]
      * @param {Array} [ctx.vehicles] Every car that pedestrians should watch out for
+     * @param {number} [ctx.night] 0 by day .. 1 at night (districts.js nightFactor)
      */
     update(dt, ctx) {
+        if (this.replicaMode) {
+            this._updateReplicaMode(dt, ctx);
+            return;
+        }
         this._time += dt;
         this._pathBudget = PED_CONFIG.PATHS_PER_FRAME;
         this._collectCars(ctx.vehicles, ctx.center);
+        this.night = ctx.night || 0;
+        this._lastCtx = ctx;
 
         if (this.nav) {
             this._popTimer -= dt;
@@ -686,6 +845,7 @@ export class PedestrianSystem {
                 this._maintainPopulation(ctx);
             }
             this.furniture.update(ctx.center.x, ctx.center.z);
+            this.scenes.update(dt, ctx);
         }
 
         const peds = this.pedestrians;
@@ -715,12 +875,19 @@ export class PedestrianSystem {
 
             // States set from outside (dialog, gunfire panic) interrupt whatever the ped was doing
             if (ped.state !== ai.lastState) {
+                // People in a bar (bars.js) get out by the door rather than running through walls
+                if (ped.barCtl && ped.state === 'fleeing') ped.barCtl.onPanic(ped);
                 if (ped.state === 'talking') {
-                    ai.resumeState = (ai.lastState === 'sitting' || ai.lastState === 'hanging_out') ? ai.lastState : 'walking';
+                    ai.resumeState = ai.lastState === 'bar' && ped.barCtl ? 'bar'
+                        : (ai.lastState === 'sitting' || ai.lastState === 'hanging_out' || (ai.lastState === 'activity' && ai.act))
+                            ? ai.lastState : (ai.lastState === 'following' && ai.leader ? 'following' : 'walking');
                 } else if (ped.state === 'fleeing') {
                     this._releaseActivity(ped);
                     ai.path = null;
                     ai.direct = null;
+                    ai.leader = null;
+                    ai.fleePath = null;
+                    ai.fleePlanned = false;
                 }
             }
 
@@ -732,22 +899,237 @@ export class PedestrianSystem {
                 case 'waiting_to_cross': this._updateWaiting(ped, dt); break;
                 case 'idle': this._updateIdle(ped, dt); break;
                 case 'fighting': this._updateFighting(ped, dt, ctx); break;
+                case 'activity': this.scenes.updatePed(ped, dt, ctx); break;
+                case 'bar': if (ped.barCtl) ped.barCtl.updatePed(ped, dt, ctx); break;
+                case 'following': this._updateFollowing(ped, dt); break;
                 default: this._updateWalking(ped, dt); break;
             }
-            if (ped.state !== 'fleeing' && ped.state !== 'sitting') this._dodgeCars(ped);
+            // People lying on the ground or kneeling in cuffs don't leap out of the way of cars
+            const grounded = ped.state === 'activity' && ai.act && ai.act.stay;
+            if (ped.state !== 'fleeing' && ped.state !== 'sitting' && ped.state !== 'bar' && !grounded && !ped.barCtl) this._dodgeCars(ped, dt);
+            // A heavy night out sometimes catches up with someone on the way home
+            if (ai.drunk > 0 && !ped.barCtl && (ped.state === 'walking' || ped.state === 'idle') && Math.random() < dt * 0.003 * ai.drunk) {
+                this.scenes.startVomit(ped);
+            }
             ai.lastState = ped.state;
+        }
+
+        // People who went indoors or got into their car
+        for (let i = peds.length - 1; i >= 0; i--) {
+            const ped = peds[i];
+            if (ped.ai && ped.ai.vanish && !ped.isDead) this._removePed(ped, i);
         }
 
         this._separate(ctx);
         for (let i = 0; i < peds.length; i++) {
             const ped = peds[i];
-            if (ped.ai && !ped.isDead && ped.state !== 'ragdoll' && ped.state !== 'carjacked' && !ped.isPoliceOfficer) {
+            if (ped.ai && !ped.isDead && ped.state !== 'ragdoll' && ped.state !== 'carjacked' && !ped.isPoliceOfficer && ped.state !== 'bar') {
                 this._animate(ped, dt);
             }
         }
         this._updateOfficers(ctx.officers, dt);
         this._collectCrossingObstacles();
-        this.renderer.render(peds, ctx.center.x, ctx.center.z, PED_CONFIG.RENDER_DISTANCE, ctx.officers);
+        // Officers, dogs, leashes and scene props are drawn with the people
+        const extras = this._extras;
+        extras.length = 0;
+        if (ctx.officers) for (let i = 0; i < ctx.officers.length; i++) extras.push(ctx.officers[i]);
+        const sceneExtras = this.scenes.extras;
+        for (let i = 0; i < sceneExtras.length; i++) extras.push(sceneExtras[i]);
+        for (let i = 0; i < this.extraRigs.length; i++) extras.push(this.extraRigs[i]);
+        this.renderer.render(peds, ctx.center.x, ctx.center.z, this.renderDistance, extras);
+        for (let i = 0; i < this.extraMusic.length; i++) this.scenes.music.push(this.extraMusic[i]);
+        this.music.update(this.scenes.music, ctx.playerPos || ctx.center);
+    }
+
+
+    // --------------------------------------------------------------------------------------------
+    // Replicas (another player's game simulates these people; see netWorld.js)
+    // --------------------------------------------------------------------------------------------
+    /** Switches between simulating the people here and drawing the owner's. */
+    setReplicaMode(on) {
+        on = !!on;
+        if (on === this.replicaMode) return;
+        // Whoever was here goes either way: the other mode starts from a clean street
+        for (let i = this.pedestrians.length - 1; i >= 0; i--) {
+            const ped = this.pedestrians[i];
+            if (ped.isPoliceOfficer || ped.keepOnModeChange) continue;
+            this._removePed(ped, i);
+        }
+        for (const s of [...this.scenes.scenes]) this.scenes._end(s);
+        this.scenes.dogs.length = 0;
+        this.replicaMode = on;
+        if (on) this._lastCenter = null;
+        else this.replicaExtras.length = 0;
+    }
+
+    /** A person drawn for someone else's simulation. `net` is its id there. */
+    makeReplicaPed(netId, style = 'adult', lookSeed = 1, options = {}) {
+        const mesh = this.createPedestrianMesh(lookSeed, Object.assign({ style }, options));
+        const ped = {
+            id: `net_${netId}`,
+            index: this._nextIndex++,
+            mesh,
+            position: mesh.position,
+            velocity: new THREE.Vector3(),
+            speed: 0,
+            state: 'walking',
+            hp: 100,
+            maxHp: 100,
+            isDead: false,
+            walkPhase: Math.random() * TWO_PI,
+            fleeTimer: 0, talkTimer: 0, talkCount: 0,
+            style, lookSeed,
+            net: { id: netId, x: 0, z: 0, yaw: 0, fresh: true }
+        };
+        mesh.userData.pedestrian = ped;
+        this._initAI(ped);
+        ped.ai.noThin = true;
+        this.pedestrians.push(ped);
+        return ped;
+    }
+
+    removeReplicaPed(ped) {
+        this._removePed(ped);
+    }
+
+    /** What the owner says this person is doing now. */
+    applyReplicaState(ped, s) {
+        const ai = ped.ai;
+        const n = ped.net;
+        n.x = s.x; n.z = s.z; n.yaw = s.yaw;
+        if (n.fresh) {
+            n.fresh = false;
+            ped.mesh.position.set(s.x, 0, s.z);
+            ai.yaw = s.yaw;
+        }
+        const f = s.flags | 0;
+        ai.pose = s.pose;
+        ai.moveSpeed = s.speed;
+        ai.phone = !!(f & 1);
+        ai.drunk = (f & 2) ? 1 : 0;
+        ai.old = !!(f & 4);
+        ai.cuffed = !!(f & 8);
+        ai.bags = !!(f & 16);
+        ai.flashlight = !!(f & 32);
+        ai.speaking = !!(f & 64);
+        ai.study = !!(f & 128);
+        ai.carry = !!(f & 2048);
+        ai.punching = (f & 4096) ? 0.2 : 0;
+        ai.seat = s.seat;
+        if ((f & 512) || (f & 1024) || (ai.act && ai.act.net)) ai.act = { net: true, write: !!(f & 512), snore: !!(f & 1024), role: null };
+        else if (ai.act && ai.act.net) ai.act = null;
+        // Held items
+        const want = s.props || [];
+        const rig = ped.mesh.userData.rig;
+        if (rig) {
+            const have = rig.props;
+            for (const slot of ['R', 'L', 'T']) {
+                let part = null, color = 0;
+                for (let i = 0; i < want.length; i += 3) if (want[i] === slot) { part = want[i + 1]; color = want[i + 2]; }
+                const cur = have[slot];
+                if ((cur ? cur.part : null) !== part || (cur && part && cur.color.getHex() !== color)) this.setProp(ped, slot, part, color);
+            }
+        }
+        const dead = !!(f & 256);
+        if (dead && !ped.isDead && ped.state !== 'dying' && ped.state !== 'ragdoll') {
+            // We never saw it happen (we arrived later): it is just lying there
+            ped.isDead = true;
+            ped.state = 'dead';
+            ai.deadPosed = false;
+        }
+        if (ped.isDead || ped.state === 'dying' || ped.state === 'ragdoll') {
+            // The fall itself plays out locally from the event; a body that came to rest is placed where the owner has it
+            if (ped.state === 'dead' && !ped.death && s.q) {
+                ped.mesh.position.set(s.x, s.q.py, s.z);
+                ped.mesh.quaternion.set(s.q.x, s.q.y, s.q.z, s.q.w);
+            }
+            return;
+        }
+        ped.state = s.state === 'dead' ? 'idle' : s.state;
+    }
+
+    /** Peds from another game: follow their targets and animate; no AI, no spawning. */
+    _updateReplicaMode(dt, ctx) {
+        this._time += dt;
+        this.night = ctx.night || 0;
+        this._lastCtx = ctx;
+        if (this.nav) this.furniture.update(ctx.center.x, ctx.center.z);
+        const peds = this.pedestrians;
+        const a = 1 - Math.exp(-dt * 12);
+        for (let i = 0; i < peds.length; i++) {
+            const ped = peds[i];
+            if (ped.isPoliceOfficer) continue;
+            if (!ped.ai) this._initAI(ped);
+            const ai = ped.ai;
+            if (ped.state === 'dying') { this._updateDying(ped, dt); continue; }
+            if (ped.state === 'ragdoll' || ped.isDead) {
+                if (ped.death) this._updateDeathMotion(ped, dt);
+                else if (ped.state === 'dead' && !ai.deadPosed) this._poseDead(ped);
+                continue;
+            }
+            const n = ped.net;
+            if (!n) {
+                // Ours alone (a driver who just got carjacked): runs off and is gone after a while
+                ai.localAge = (ai.localAge || 0) + dt;
+                if (ped.state === 'fleeing') this._updateFleeing(ped, dt);
+                if (ai.localAge > 15 && ped.state !== 'carjacked') ai.vanish = true;
+                this._animate(ped, dt);
+                continue;
+            }
+            const p = ped.mesh.position;
+            const dx = n.x - p.x, dz = n.z - p.z;
+            if (dx * dx + dz * dz > 196) { p.x = n.x; p.z = n.z; } else { p.x += dx * a; p.z += dz * a; }
+            ai.yaw = lerpAngle(ai.yaw, n.yaw, a);
+            ped.mesh.rotation.set(0, ai.yaw, 0);
+            this._animate(ped, dt);
+        }
+        for (let i = peds.length - 1; i >= 0; i--) if (peds[i].ai && peds[i].ai.vanish && !peds[i].isDead) this._removePed(peds[i], i);
+        this._updateOfficers(ctx.officers, dt);
+        const extras = this._extras;
+        extras.length = 0;
+        if (ctx.officers) for (let i = 0; i < ctx.officers.length; i++) extras.push(ctx.officers[i]);
+        for (let i = 0; i < this.replicaExtras.length; i++) extras.push(this.replicaExtras[i]);
+        for (let i = 0; i < this.extraRigs.length; i++) extras.push(this.extraRigs[i]);
+        this.renderer.render(peds, ctx.center.x, ctx.center.z, this.renderDistance, extras);
+    }
+
+    _removePed(ped, i = this.pedestrians.indexOf(ped)) {
+        this._releaseActivity(ped);
+        if (ped.ai) {
+            ped.ai.dog = null;
+            ped.ai.vanish = false;
+        }
+        if (ped.mesh.parent) ped.mesh.parent.remove(ped.mesh);
+        if (i >= 0) this.pedestrians.splice(i, 1);
+    }
+
+    /**
+     * Puts an item in a ped's hand ('R' / 'L') or against their chest ('T', a rake), or takes it
+     * away (part null). Parts are PROP_PARTS in pedestrianScenes.js.
+     */
+    setProp(ped, slot, part, color = 0xffffff) {
+        const rig = ped.mesh && ped.mesh.userData.rig;
+        if (!rig) return;
+        const old = rig.props[slot];
+        if (old) {
+            const i = rig.bindings.indexOf(old);
+            if (i >= 0) rig.bindings.splice(i, 1);
+            rig.props[slot] = null;
+        }
+        if (!part) return;
+        let j = slot === 'L' ? rig.handL : rig.handR;
+        if (slot === 'T') {
+            if (!rig.chest) {
+                rig.chest = new THREE.Object3D();
+                rig.chest.position.set(0, 0.36, 0.16);
+                rig.chest.rotation.x = 0.8;
+                rig.torso.add(rig.chest);
+            }
+            j = rig.chest;
+        }
+        const b = { part, joint: j, color: new THREE.Color(color) };
+        rig.bindings.push(b);
+        rig.props[slot] = b;
     }
 
     /** Police officers on foot (moved by police.js): running/aiming poses and procedural deaths. */
@@ -864,7 +1246,7 @@ export class PedestrianSystem {
         const step = Math.min(dist, speed * dt);
         p.x += (dx / dist) * step;
         p.z += (dz / dist) * step;
-        p.y = 0;
+        p.y = ped.floorY || 0;
         this._turnTowards(ped, Math.atan2(dx, dz), dt);
         ped.ai.moveSpeed = speed;
         return dist - step <= arrive;
@@ -921,6 +1303,253 @@ export class PedestrianSystem {
         return stop;
     }
 
+    /** Next stop for someone walking a long way east (+1) or west (-1) along the street. */
+    _headingStop(ped) {
+        const ai = ped.ai;
+        const nav = this.nav;
+        const p = ped.mesh.position;
+        const nodes = nav.walkNodesInRing(p.x, p.z, 80, 180, this._ring);
+        let best = -1, bestScore = -Infinity;
+        for (let i = 0; i < nodes.length; i += 3) {
+            const n = nodes[i];
+            const dx = (nav.nodeX[n] - p.x) * ai.heading, dz = Math.abs(nav.nodeZ[n] - p.z);
+            if (dx < 60 || dz > dx * 0.4) continue;
+            const score = dx - dz * 2 + Math.random() * 25;
+            if (score > bestScore) {
+                bestScore = score;
+                best = n;
+            }
+        }
+        if (best < 0) {
+            ai.heading = 0;
+            return this._nextStop(ped);
+        }
+        return best;
+    }
+
+    /** Sends a walker to the front door of a building of one of `kinds` (DOOR_KIND) nearby. */
+    _doorGoal(ped, kinds) {
+        const nav = this.nav;
+        if (!kinds || !kinds.length || !nav.doorCount) return false;
+        const p = ped.mesh.position;
+        const doors = nav.doorsInRing(p.x, p.z, 25, PED_CONFIG.DOOR_RANGE, this._ring2);
+        let pickDoor = -1, seen = 0;
+        for (let i = 0; i < doors.length; i++) {
+            const d = doors[i];
+            if (!kinds.includes(nav.doorKind[d])) continue;
+            // Reservoir pick: an even chance for every matching door
+            if (Math.random() * ++seen < 1) pickDoor = d;
+        }
+        if (pickDoor < 0) return false;
+        ped.ai.goal = { type: 'door', door: pickDoor, access: nav.doorAccess[pickDoor] };
+        ped.ai.path = null;
+        ped.ai.stops = null;
+        return true;
+    }
+
+    /** Sends a walker to a parked car nearby (they get in and are gone). */
+    _carGoal(ped) {
+        const pc = this.parkedCars;
+        if (!pc || !pc.active.size) return false;
+        const p = ped.mesh.position;
+        let best = null, seen = 0;
+        for (const v of pc.active.values()) {
+            if (!v.isParked || !v.driverGone || v._walkerTarget) continue;
+            const d = Math.hypot(v.position.x - p.x, v.position.z - p.z);
+            if (d < 20 || d > 170) continue;
+            if (Math.random() * ++seen < 1) best = v;
+        }
+        if (!best) return false;
+        const access = this.nav.nearestWalkNode(best.position.x, best.position.z, 45);
+        if (access < 0) return false;
+        best._walkerTarget = ped;
+        ped.ai.goal = { type: 'car', vehicle: best, access };
+        ped.ai.path = null;
+        ped.ai.stops = null;
+        return true;
+    }
+
+    // ---- Walking together ----
+    _spawnFollower(leader, slot, style) {
+        const lp = leader.mesh.position;
+        const y = leader.ai.yaw;
+        const side = slot % 2 === 0 ? 0.75 : -0.75;
+        const ped = this._makePed(lp.x + Math.cos(y) * side - Math.sin(y) * 0.4 * (1 + (slot >> 1)), lp.z - Math.sin(y) * side - Math.cos(y) * 0.4 * (1 + (slot >> 1)), y, style);
+        ped.ai.leader = leader;
+        ped.ai.followSlot = slot;
+        ped.ai.jogger = leader.ai.jogger;
+        ped.ai.walkSpeed = leader.ai.walkSpeed;
+        ped.state = 'following';
+        return ped;
+    }
+
+    /** Keeps formation with the group's leader; on their own once the leader's gone. */
+    _updateFollowing(ped, dt) {
+        const ai = ped.ai;
+        const L = ai.leader;
+        const leaderOk = L && !L.isDead && L.ai && this.pedestrians.includes(L) &&
+            (L.state === 'walking' || L.state === 'crossing' || L.state === 'waiting_to_cross' || L.state === 'idle' ||
+             L.state === 'following' || L.state === 'talking');
+        if (L && L.ai && L.ai.vanish) {
+            // Going in together
+            ai.vanish = true;
+            return;
+        }
+        const p = ped.mesh.position;
+        if (!leaderOk || Math.hypot(L.mesh.position.x - p.x, L.mesh.position.z - p.z) > 30) {
+            if (L && L.state === 'fleeing') {
+                ped.state = 'fleeing';
+                ped.fleeTimer = 200;
+                ped.speed = 0.15;
+                ped.velocity.copy(L.velocity);
+            } else {
+                ped.state = 'walking';
+            }
+            ai.leader = null;
+            ai.cuffed = false;
+            return;
+        }
+        const lp = L.mesh.position;
+        const y = L.ai.yaw;
+        const fx = Math.sin(y), fz = Math.cos(y), rx = Math.cos(y), rz = -Math.sin(y);
+        const s = ai.followSlot;
+        let side, back;
+        if (L.ai.jogger) {
+            // Running in pairs, one pair behind the other
+            side = s % 2 === 0 ? -0.55 : 0.55;
+            back = 1.1 * (1 + (s >> 1)) - (s % 2 === 0 ? 1.1 : 0);
+        } else {
+            // Abreast, spilling into a second row
+            side = (s % 2 === 0 ? 0.75 : -0.75) * (1 + ((s >> 1) % 2) * 0.4);
+            back = 0.15 + 0.6 * (s >> 1);
+        }
+        const tx = lp.x + rx * side - fx * back, tz = lp.z + rz * side - fz * back;
+        const d = Math.hypot(tx - p.x, tz - p.z);
+        const lMoving = L.ai.moveSpeed > 0.2;
+        const speed = Math.min((L.ai.jogger ? 4.2 : 2.4) * (1 - 0.2 * ai.drunk), Math.max(L.ai.moveSpeed, 0.6) * (1 + Math.min(1.2, d * 0.8)));
+        if (d > 0.12) {
+            this._moveTo(ped, tx, tz, speed, dt, 0.05);
+            ai.pose = (L.ai.jogger && lMoving) || speed > 2.4 ? 'run' : 'walk';
+            if (!lMoving && d < 0.6) this._turnTowards(ped, y, dt, 4);
+        } else {
+            ai.moveSpeed = 0;
+            ai.pose = 'stand';
+            this._turnTowards(ped, y, dt, 4);
+        }
+        // Chatting on the way
+        ai.look = lMoving ? (Math.sin(this._time * 0.5 + ai.seed * 7) > 0.4 ? (side > 0 ? -0.6 : 0.6) : 0) : 0;
+    }
+
+    /** Spawns a walker of district walker `kind` at walk node `node`. Returns people spawned. */
+    _spawnWalkerKind(kind, node, style, table) {
+        const nav = this.nav;
+        const night = this.night > 0.5;
+        const dressUp = (ped) => {
+            if (ped.style === 'shopper' && Math.random() < 0.6) {
+                this.setProp(ped, 'L', 'bag', pick(Math.random, [0xf5f0e1, 0xc8a165, 0x1565c0, 0xd32f2f, 0xffffff]));
+                this.setProp(ped, 'R', 'bag', pick(Math.random, [0xf5f0e1, 0xc8a165, 0xd32f2f]));
+                ped.ai.bags = true;
+            } else if (ped.style === 'partier' && Math.random() < 0.4) {
+                const smoke = Math.random() < 0.4;
+                this.setProp(ped, 'R', smoke ? 'cigarette' : 'cup', smoke ? 0xf4f4f4 : 0xd32f2f);
+                ped.ai.carry = true;
+                ped.ai.phone = false;
+            }
+            return ped;
+        };
+        switch (kind) {
+            case 'jog':
+            case 'jogGroup': {
+                const lead = this._spawnWalker(node, 'athlete');
+                lead.ai.jogger = true;
+                lead.ai.phone = false;
+                lead.ai.walkSpeed = PED_CONFIG.JOG_SPEED * (0.85 + Math.random() * 0.2);
+                if (kind === 'jog') return 1;
+                const n = 1 + ((Math.random() * 3) | 0);
+                for (let i = 0; i < n; i++) this._spawnFollower(lead, i, 'athlete');
+                return 1 + n;
+            }
+            case 'walkGroup': {
+                const lead = dressUp(this._spawnWalker(node, style));
+                const n = 1 + ((Math.random() * (night ? 4 : 2)) | 0);
+                if (style === 'partier') lead.ai.drunk = Math.random() < 0.5 ? 0.3 + Math.random() * 0.4 : 0;
+                lead.ai.walkSpeed = Math.min(lead.ai.walkSpeed, 1.3);
+                lead.ai.phone = false;
+                for (let i = 0; i < n; i++) {
+                    const f = dressUp(this._spawnFollower(lead, i, style));
+                    f.ai.drunk = lead.ai.drunk * Math.random();
+                    f.ai.phone = Math.random() < 0.1;
+                }
+                if (table && table.doors && Math.random() < 0.35) this._doorGoal(lead, table.doors);
+                return 1 + n;
+            }
+            case 'dog': {
+                const ped = this._spawnWalker(node, style === 'partier' || style === 'athlete' ? 'adult' : style);
+                ped.ai.jogger = false;
+                ped.ai.phone = false;
+                ped.ai.walkSpeed = Math.min(ped.ai.walkSpeed, 1.25);
+                this.scenes.addDog(ped);
+                return 1;
+            }
+            case 'drunk': {
+                const ped = dressUp(this._spawnWalker(node, 'partier'));
+                ped.ai.drunk = 0.5 + Math.random() * 0.5;
+                ped.ai.phone = false;
+                return 1;
+            }
+            case 'toDoor': {
+                const ped = dressUp(this._spawnWalker(node, style));
+                if (table) this._doorGoal(ped, table.doors);
+                return 1;
+            }
+            case 'fromDoor': {
+                const kinds = table && table.doors;
+                const doors = kinds ? nav.doorsInRing(nav.nodeX[node], nav.nodeZ[node], 0, 60, this._ring2) : [];
+                let door = -1, seen = 0;
+                for (let i = 0; i < doors.length; i++) {
+                    if (kinds.includes(nav.doorKind[doors[i]]) && Math.random() * ++seen < 1) door = doors[i];
+                }
+                if (door < 0) return this._spawnWalkerKind('walk', node, style, table);
+                // Steps out of the front door and heads off
+                const acc = nav.doorAccess[door];
+                const yaw = Math.atan2(nav.nodeX[acc] - nav.doorX[door], nav.nodeZ[acc] - nav.doorZ[door]);
+                const ped = dressUp(this._makePed(nav.doorX[door], nav.doorZ[door], yaw, style));
+                this._pickStops(ped, acc);
+                ped.ai.direct = { x: nav.nodeX[acc], z: nav.nodeZ[acc], then: 'resume' };
+                ped.state = 'walking';
+                if (style === 'partier') ped.ai.drunk = Math.random() < 0.5 ? 0.4 + Math.random() * 0.5 : 0;
+                let n = 1;
+                if (Math.random() < 0.25) {
+                    this._spawnFollower(ped, 0, style);
+                    n++;
+                }
+                return n;
+            }
+            case 'toCar': {
+                const ped = dressUp(this._spawnWalker(node, style));
+                if (style === 'partier') ped.ai.drunk = 0.3 + Math.random() * 0.6;
+                this._carGoal(ped);
+                return 1;
+            }
+            case 'headEast':
+            case 'headWest': {
+                const ped = dressUp(this._spawnWalker(node, style));
+                ped.ai.heading = kind === 'headEast' ? 1 : -1;
+                ped.ai.stops = null;
+                ped.ai.goal = null;
+                if (style === 'partier' && Math.random() < 0.4) {
+                    const n = 1 + ((Math.random() * 3) | 0);
+                    for (let i = 0; i < n; i++) dressUp(this._spawnFollower(ped, i, style));
+                    return 1 + n;
+                }
+                return 1;
+            }
+            default:
+                dressUp(this._spawnWalker(node, style));
+                return 1;
+        }
+    }
+
     // --------------------------------------------------------------------------------------------
     // States
     // --------------------------------------------------------------------------------------------
@@ -929,8 +1558,9 @@ export class PedestrianSystem {
         const nav = this.nav;
         if (ped.state === 'crossing' && ai.crossA < 0) ped.state = 'walking';
         const crossing = ped.state === 'crossing';
-        let speed = ai.walkSpeed * (crossing ? 1.1 : 1);
+        let speed = ai.walkSpeed * (crossing ? 1.1 : 1) * (1 - 0.3 * ai.drunk);
         if (crossing && ai.hurry) speed = Math.max(speed, 3.6);
+        ai.overlay = null;
         ai.pose = (ai.jogger || (crossing && ai.hurry)) ? 'run' : 'walk';
 
         if (!nav) {
@@ -945,13 +1575,20 @@ export class PedestrianSystem {
                 ai.direct = null;
                 if (d.then === 'sit') this._sit(ped, d.seat);
                 else if (d.then === 'join') this._arriveAtGroup(ped);
+                else if (d.then === 'enter') ai.vanish = true; // indoors / into the car
                 else ai.path = null;
             }
             return;
         }
 
+        // Drunk: weaving about and the odd stumble
+        if (ai.drunk > 0 && !crossing && Math.random() < dt * 0.04 * ai.drunk) {
+            this._becomeIdle(ped, 0.8 + Math.random() * 1.6);
+            return;
+        }
+
         if (!ai.path) {
-            if (!ai.goal) ai.goal = { type: 'stop', node: this._nextStop(ped) };
+            if (!ai.goal) ai.goal = { type: 'stop', node: ai.heading ? this._headingStop(ped) : this._nextStop(ped) };
             const goalNode = ai.goal.type === 'stop' ? ai.goal.node : ai.goal.access;
             if (goalNode < 0) {
                 this._becomeIdle(ped, 2 + Math.random() * 3);
@@ -984,8 +1621,9 @@ export class PedestrianSystem {
             // Keep to the right-hand side of the sidewalk
             const ex = tx - nav.nodeX[prev], ez = tz - nav.nodeZ[prev];
             const el = Math.hypot(ex, ez) || 1;
-            tx += (-ez / el) * ai.laneOffset;
-            tz += (ex / el) * ai.laneOffset;
+            const lane = ai.laneOffset + (ai.drunk > 0 ? Math.sin(this._time * 1.3 + ai.seed) * 0.8 * ai.drunk : 0);
+            tx += (-ez / el) * lane;
+            tz += (ex / el) * lane;
         }
 
         if (crossing) {
@@ -1038,6 +1676,34 @@ export class PedestrianSystem {
                 ai.direct = { x: slot.x, z: slot.z, then: 'join' };
                 return;
             }
+        } else if (goal && goal.type === 'door') {
+            // Up to the front door and inside
+            ai.direct = { x: nav.doorX[goal.door], z: nav.doorZ[goal.door], then: 'enter' };
+            return;
+        } else if (goal && goal.type === 'car') {
+            const v = goal.vehicle;
+            if (v && v.isParked && !v.isPlayer && v.driverGone && v._walkerTarget === ped &&
+                Math.hypot(v.position.x - nav.nodeX[goal.access], v.position.z - nav.nodeZ[goal.access]) < 45) {
+                // To the driver's door and in
+                const fx = -Math.sin(v.yaw), fz = -Math.cos(v.yaw);
+                ai.direct = { x: v.position.x - fz * 1.3 + fx * 0.3, z: v.position.z + fx * 1.3 + fz * 0.3, then: 'enter' };
+                return;
+            }
+        } else if (goal && goal.type === 'scene') {
+            if (this.scenes.arrived(ped, goal)) return;
+        }
+
+        // Heading somewhere along the street (E Wooster): keep going
+        if (ai.heading) {
+            const p = ped.mesh.position;
+            const district = districtAt(p.x, p.z);
+            if (ai.heading < 0 && district.type === 'BARS') {
+                // Made it downtown: into a bar (or just wander about)
+                ai.heading = 0;
+                if (this._doorGoal(ped, [DOOR_KIND.BAR, DOOR_KIND.FOOD])) return;
+            }
+            this._becomeIdle(ped, 0.3 + Math.random());
+            return;
         }
 
         // Reached a route stop: maybe sit down or join a group nearby, otherwise pause and move on
@@ -1146,29 +1812,115 @@ export class PedestrianSystem {
         }
     }
 
-    _dodgeCars(ped) {
-        // Jump out of the way of a car bearing down on us
+    /** The car (if any) about to run this ped down: { car, lateral } */
+    _carBearingDown(ped) {
         const p = ped.mesh.position;
         const cars = this._cars;
         for (let i = 0; i < cars.length; i++) {
             const c = cars[i];
             if (c.speed < 4) continue;
             const rx = p.x - c.x, rz = p.z - c.z;
-            if (Math.abs(rx) > 14 || Math.abs(rz) > 14) continue;
+            if (Math.abs(rx) > 20 || Math.abs(rz) > 20) continue;
             const along = rx * c.fx + rz * c.fz;
-            if (along < 0 || along / c.speed > 0.9) continue;
+            if (along < 0 || along / c.speed > 1.1) continue;
             const lateral = rx * c.fz - rz * c.fx;
-            if (Math.abs(lateral) > 1.8) continue;
-            const side = lateral >= 0 ? 1 : -1;
-            this._releaseActivity(ped);
-            ped.state = 'fleeing';
-            ped.fleeTimer = 50;
-            ped.speed = 0.13;
-            ped.velocity.set(c.fz * side * ped.speed, 0, -c.fx * side * ped.speed);
-            ped.ai.path = null;
-            ped.ai.direct = null;
+            if (Math.abs(lateral) > 1.6) continue;
+            return { car: c, lateral };
+        }
+        return null;
+    }
+
+    /**
+     * Getting out of the way of a car bearing down on us. People need a moment to notice and react
+     * (longer if they're busy), some freeze in the headlights, and a sidestep only covers a couple
+     * of metres, so a fast car usually gets them and a slow one usually doesn't.
+     */
+    _dodgeCars(ped, dt = 1 / 60) {
+        const ai = ped.ai;
+        const threat = this._carBearingDown(ped);
+        if (!threat) {
+            ai.dodgeReact = -1;
             return;
         }
+        if (!(ai.dodgeReact >= 0)) {
+            const busy = ped.state === 'talking' || ped.state === 'hanging_out' || ped.state === 'fighting';
+            ai.dodgeReact = 0.3 + Math.random() * 0.45 + (busy ? 0.25 : 0);
+            ai.dodgeFreeze = Math.random() < 0.22;
+            return;
+        }
+        ai.dodgeReact -= dt;
+        // Turn to look at it while it sinks in
+        const p = ped.mesh.position;
+        ai.look = Math.max(-1.3, Math.min(1.3, angleDiff(ai.yaw, Math.atan2(threat.car.x - p.x, threat.car.z - p.z))));
+        if (ai.dodgeReact > 0) return;
+
+        const c = threat.car;
+        const side = threat.lateral >= 0 ? 1 : -1;
+        this._releaseActivity(ped);
+        ped.state = 'fleeing';
+        ai.path = null;
+        ai.direct = null;
+        ai.dodgeReact = -1;
+        if (ai.dodgeFreeze) {
+            // Rooted to the spot
+            ped.fleeTimer = 45;
+            ped.speed = 0;
+            ped.velocity.set(0, 0, 0);
+            return;
+        }
+        // A quick lunge to the side: ~2.5 m
+        ped.fleeTimer = 34;
+        ped.speed = 0.075;
+        ped.velocity.set(c.fz * side * ped.speed, 0, -c.fx * side * ped.speed);
+    }
+
+    /**
+     * Fleeing on the walking graph: picks a far node away from the threat (the way `velocity` points)
+     * once per flight and runs the path to it. Returns false when there's no route (the caller then
+     * falls back to running in a straight line).
+     */
+    _fleeAlongNav(ped, dt) {
+        const ai = ped.ai;
+        const nav = this.nav;
+        const p = ped.mesh.position;
+        if (!ai.fleePath) {
+            if (ai.fleePlanned) return false;
+            if (this._pathBudget <= 0) { ai.moveSpeed = 0; ai.pose = 'run'; return true; }
+            this._pathBudget--;
+            ai.fleePlanned = true;
+            const start = this._currentNode(ped, 40);
+            if (start < 0) return false;
+            const vl = Math.hypot(ped.velocity.x, ped.velocity.z) || 1;
+            const fx = ped.velocity.x / vl, fz = ped.velocity.z / vl;
+            const ring = nav.walkNodesInRing(p.x, p.z, 50, 130, this._ring);
+            let best = -1, bestScore = -Infinity;
+            for (let i = 0; i < ring.length; i += 2) {
+                const n = ring[i];
+                const dx = nav.nodeX[n] - p.x, dz = nav.nodeZ[n] - p.z;
+                const score = (dx * fx + dz * fz) / (Math.hypot(dx, dz) || 1) + Math.random() * 0.7;
+                if (score > bestScore) { bestScore = score; best = n; }
+            }
+            if (best < 0) return false;
+            const path = nav.findPath(start, best);
+            if (!path || !path.length) return false;
+            ai.fleePath = path;
+            ai.fleeIdx = 0;
+        }
+        if (ai.fleeIdx >= ai.fleePath.length) {
+            ai.fleePath = null;
+            ped.fleeTimer = 0;      // got away: back to strolling
+            ai.moveSpeed = 0;
+            ped.state = 'walking';
+            ped.speed = 0.06;
+            ai.path = null; ai.goal = null; ai.stops = null; ai.direct = null;
+            return true;
+        }
+        const node = ai.fleePath[ai.fleeIdx];
+        ai.pose = 'run';
+        ped.fleeTimer = Math.max(ped.fleeTimer, 30);
+        if (this._moveTo(ped, nav.nodeX[node], nav.nodeZ[node], 6.5, dt, 0.8)) ai.fleeIdx++;
+        ai.pose = 'run';
+        return true;
     }
 
     _updateFleeing(ped, dt) {
@@ -1176,12 +1928,14 @@ export class PedestrianSystem {
         const stepScale = dt / (1 / 60);
         ped.fleeTimer -= stepScale;
         const p = ped.mesh.position;
+        // Run along the sidewalk graph (not straight through buildings)
+        if (this.nav && !ai.fleeStraight && this._fleeAlongNav(ped, dt)) return;
         p.x += ped.velocity.x * stepScale;
         p.z += ped.velocity.z * stepScale;
-        p.y = 0;
+        p.y = ped.floorY || 0;
         const vlen = Math.hypot(ped.velocity.x, ped.velocity.z);
         if (vlen > 1e-4) this._turnTowards(ped, Math.atan2(ped.velocity.x, ped.velocity.z), dt, 14);
-        ai.pose = 'run';
+        ai.pose = vlen > 1e-4 ? 'run' : 'stand'; // (frozen in the headlights)
         ai.moveSpeed = vlen * 60;
         if (ped.fleeTimer <= 0) {
             ped.state = 'walking';
@@ -1201,7 +1955,13 @@ export class PedestrianSystem {
         const p = ped.mesh.position;
         const toPlayer = Math.atan2(pp.x - p.x, pp.z - p.z);
         ai.moveSpeed = 0;
-        if (ai.resumeState === 'sitting' && ai.seat >= 0) {
+        const act = ai.resumeState === 'activity' ? ai.act : null;
+        if (act && act.stay) {
+            // Lying down / kneeling: stay put, just turn the head and answer
+            ai.pose = act.pose;
+            ai.speaking = true;
+            ai.look = Math.max(-1.2, Math.min(1.2, angleDiff(ai.yaw, toPlayer)));
+        } else if (ai.resumeState === 'sitting' && ai.seat >= 0) {
             // Stay seated, just turn to look at the player
             ai.yaw = this.nav.seatYaw[ai.seat];
             ped.mesh.rotation.set(0, ai.yaw, 0);
@@ -1219,6 +1979,9 @@ export class PedestrianSystem {
             const resume = ai.resumeState;
             if (resume === 'sitting' && ai.seat >= 0) ped.state = 'sitting';
             else if (resume === 'hanging_out' && ai.group) ped.state = 'hanging_out';
+            else if (resume === 'activity' && ai.act) ped.state = 'activity';
+            else if (resume === 'following' && ai.leader) ped.state = 'following';
+            else if (resume === 'bar' && ped.barCtl) ped.state = 'bar';
             else {
                 this._releaseActivity(ped);
                 ped.state = 'walking';
@@ -1440,6 +2203,7 @@ export class PedestrianSystem {
     _releaseActivity(ped) {
         const ai = ped.ai;
         if (!ai) return;
+        if (ai.act) this.scenes.release(ped);
         if (ai.seat >= 0) {
             if (this.seatOccupant[ai.seat] === ped) this.seatOccupant[ai.seat] = null;
             ai.seat = -1;
@@ -1464,7 +2228,8 @@ export class PedestrianSystem {
         const peds = this.pedestrians;
         const n = peds.length;
         const movable = (p) => p.ai && !p.isDead && !p.isPoliceOfficer &&
-            (p.state === 'walking' || p.state === 'crossing' || p.state === 'idle' || p.state === 'waiting_to_cross' || p.state === 'fighting');
+            (p.state === 'walking' || p.state === 'crossing' || p.state === 'idle' || p.state === 'waiting_to_cross' ||
+             p.state === 'fighting' || p.state === 'following');
         for (let i = 0; i < n; i++) {
             const a = peds[i];
             if (!movable(a)) continue;
@@ -1511,6 +2276,13 @@ export class PedestrianSystem {
         if (!ped || ped.isDead || ped.state === 'ragdoll' || ped.state === 'dying') return { knockedOut: false };
         if (!ped.ai) this._initAI(ped);
         const ai = ped.ai;
+        if (ped.net) {
+            // Someone else's person: they decide whether it lands; we just show the stagger
+            if (this.net) this.net.cmd('punch', { id: ped.net.id, hit: pickHit(hit) });
+            ai.flinch = 1;
+            ai.flinchSide = Math.random() < 0.5 ? 1 : -1;
+            return { knockedOut: false };
+        }
         ped.hp -= hit.damage;
         const p = ped.mesh.position;
         // Stagger back along the punch
@@ -1572,7 +2344,7 @@ export class PedestrianSystem {
             ai.moveSpeed = 0;
             ai.pose = 'fight';
         }
-        p.y = 0;
+        p.y = ped.floorY || 0;
 
         // Throw punches: wind up, strike, recover
         ai.punchCd -= dt;
@@ -1585,11 +2357,11 @@ export class PedestrianSystem {
             ai.punching += dt;
             if (!ai.hitThisSwing && ai.punching >= 0.24) {
                 ai.hitThisSwing = true;
-                if (dist < 1.55 && typeof ctx.onPlayerHit === 'function') ctx.onPlayerHit(ped, 7 + Math.random() * 6);
+                if (dist < 1.55 && typeof ctx.onPlayerHit === 'function') ctx.onPlayerHit(ped, (7 + Math.random() * 6) * (ai.punchSlow ? 0.75 : 1));
             }
             if (ai.punching >= 0.5) {
                 ai.punching = 0;
-                ai.punchCd = 0.6 + Math.random() * 1.0;
+                ai.punchCd = (0.6 + Math.random() * 1.0) * (ai.punchSlow || 1);
             }
         }
     }
@@ -1867,6 +2639,14 @@ export class PedestrianSystem {
     startShotDeath(ped, hit = {}) {
         if (!ped || !ped.mesh || ped.state === 'dying' || ped.state === 'ragdoll') return;
         if (!ped.ai) this._initAI(ped);
+        if (this.net && !ped.isPoliceOfficer && !ped.isGhostCop) {
+            if (ped.net) {
+                // Not ours: the owner kills them for everyone; we show it at once
+                if (!hit.fromNet) this.net.cmd('kill', { id: ped.net.id, hit: pickHit(hit) });
+            } else {
+                this.net.emit('kill', { id: ped.index, hit: pickHit(hit) });
+            }
+        }
         this._releaseActivity(ped);
         ped.isDead = true;
         ped.hp = 0;
@@ -1950,7 +2730,7 @@ export class PedestrianSystem {
         D.stepPhase += Math.hypot(D.vx, D.vz) * dt * 9;
         ped.mesh.position.x += D.vx * dt;
         ped.mesh.position.z += D.vz * dt;
-        ped.mesh.position.y = 0;
+        ped.mesh.position.y = ped.floorY || 0;
         ped.ai.yaw += D.spin * dt;
         ped.mesh.rotation.set(0, ped.ai.yaw, 0);
 
@@ -2011,7 +2791,7 @@ export class PedestrianSystem {
         if (!D || D.done || !ped.mesh.userData.rig) return;
         D.t += dt;
         const since = D.t - D.fallT;
-        const airborne = ped.state === 'ragdoll' && ped.ragdollCom && ped.ragdollCom.y > 0.55;
+        const airborne = ped.state === 'ragdoll' && ped.ragdollCom && ped.ragdollCom.y > 0.55 && !ped.ragdollContact;
         D.air = airborne;
         let agitation = D.prof.flail * (airborne ? 1 : 0.3) * Math.exp(-since * 0.9);
         if (ped.state === 'dead') {
@@ -2064,7 +2844,12 @@ export class PedestrianSystem {
 
         let headPitch = 0;
         const pose = ai.pose;
-        if ((pose === 'walk' || pose === 'run') && ai.moveSpeed > 0.05) {
+        // Scene poses (lying down, kneeling, dancing...) come from pedestrianScenes.js
+        const custom = (pose === 'walk' || pose === 'run' || pose === 'fight' || pose === 'sit' || pose === 'stand' || pose === 'talk')
+            ? null : this.scenes.pose(ped, rig, t, pose);
+        if (custom !== null) {
+            headPitch = custom;
+        } else if ((pose === 'walk' || pose === 'run') && ai.moveSpeed > 0.05) {
             const run = pose === 'run';
             const stride = run ? 2.2 : 1.45;
             ai.phase = (ai.phase || 0) + (ai.moveSpeed / stride) * Math.PI * dt * 2;
@@ -2127,7 +2912,14 @@ export class PedestrianSystem {
             rig.elbowL.rotation.x = atTable ? -0.6 : -0.75;
             rig.elbowR.rotation.x = atTable ? -0.6 : -0.75;
             rig.torso.rotation.x = -0.06;
-            if (ai.speaking) {
+            if (ai.study) {
+                // Notes on the lap
+                rig.shoulderL.rotation.set(-0.7, 0, -0.15);
+                rig.elbowL.rotation.x = -0.8;
+                rig.shoulderR.rotation.set(-0.65, 0, 0.2);
+                rig.elbowR.rotation.set(-0.9 + Math.sin(t * 9) * 0.08, Math.sin(t * 5.3) * 0.15, 0);
+                headPitch = 0.55;
+            } else if (ai.speaking) {
                 rig.shoulderR.rotation.x = -0.9 + Math.sin(t * 3.1) * 0.2;
                 rig.elbowR.rotation.x = -1.1 + Math.sin(t * 4.3) * 0.25;
                 headPitch = Math.sin(t * 2.2) * 0.06;
@@ -2160,6 +2952,8 @@ export class PedestrianSystem {
             }
             if (pose === 'talk' && !ai.speaking) headPitch += Math.max(0, Math.sin(t * 1.3)) * 0.05;
         }
+        // Dog leashes, shopping bags, drinks, stoops, staggers, handcuffs...
+        if (custom === null) headPitch += this.scenes.overlay(ped, rig, t);
 
         // Getting punched: head snaps back and the body rocks
         if (ai.flinch > 0) {
@@ -2175,15 +2969,16 @@ export class PedestrianSystem {
         rig.neck.rotation.set(headPitch, lookNow + (ai.look - lookNow) * Math.min(1, dt * 5), 0);
         // Keep the body facing its heading (ragdoll/kill code may have touched the root)
         ped.mesh.rotation.set(0, ai.yaw, 0);
-        if (ped.state !== 'sitting' && pose !== 'sit') ped.mesh.position.y = 0;
+        if (ped.state !== 'sitting' && pose !== 'sit') ped.mesh.position.y = ped.floorY || 0;
     }
 
     // --------------------------------------------------------------------------------------------
     // Population
     // --------------------------------------------------------------------------------------------
-    /** Fills the area around `center` right away (game start / teleport). */
-    populateInitial(center) {
+    /** Fills the area around `center` right away (game start / teleport). `night`: districts.js nightFactor. */
+    populateInitial(center, night = this.night) {
         if (!this.nav) return;
+        this.night = night;
         for (let i = 0; i < 40; i++) {
             const before = this.pedestrians.length;
             this._maintainPopulation({ center, viewDir: null }, true);
@@ -2218,10 +3013,26 @@ export class PedestrianSystem {
         }
         this._lastCenter = { x: c.x, z: c.z };
 
+        // How busy it is here, now (districts.js); spawns elsewhere are thinned to their own district
+        const night = this.night;
+        const here = districtAt(c.x, c.z);
+        const hereProfile = districtProfile(here, night);
+        const density = Math.max(PED_CONFIG.DENSITY_MIN, Math.min(PED_CONFIG.DENSITY_MAX, hereProfile.peds));
+        // Only the player's district is loaded (districtStreaming.js): nobody spawns outside it, and
+        // the numbers shrink with the share of the spawn ring it covers
+        const st = this.streamer;
+        const coverage = st ? Math.max(0.08, st.coverage(c.x, c.z, PED_CONFIG.SPAWN_MAX)) : 1;
+        const tryMul = Math.min(4, 1 / coverage);
+        const acceptAt = (x, z) => {
+            if (st && !st.contains(x, z)) return false;
+            const d = districtProfile(districtAt(x, z), night).peds;
+            return Math.random() < Math.min(1, d / density);
+        };
+
         // Remove people (and bodies) far from the player
         const desp2 = PED_CONFIG.DESPAWN_RADIUS * PED_CONFIG.DESPAWN_RADIUS;
         const body2 = PED_CONFIG.BODY_DESPAWN_RADIUS * PED_CONFIG.BODY_DESPAWN_RADIUS;
-        let walkers = 0, sitters = 0, groupPeople = 0;
+        let walkers = 0, sitters = 0, groupPeople = 0, scenePeople = 0, patrol = 0;
         for (let i = peds.length - 1; i >= 0; i--) {
             const ped = peds[i];
             if (ped.isPoliceOfficer || !ped.mesh) continue;
@@ -2229,39 +3040,63 @@ export class PedestrianSystem {
             const dx = p.x - c.x, dz = p.z - c.z;
             const d2 = dx * dx + dz * dz;
             if (ped.state === 'ragdoll' || ped.state === 'dying' || ped.state === 'carjacked' || ped.state === 'talking') continue;
+            if (ped.barCtl && !ped.isDead) continue;      // bars.js has them (and removes them)
             if ((ped.isDead && d2 > body2) || (!ped.isDead && d2 > desp2)) {
-                this._releaseActivity(ped);
-                if (ped.mesh.parent) ped.mesh.parent.remove(ped.mesh);
-                peds.splice(i, 1);
+                this._removePed(ped, i);
+                continue;
+            }
+            // Left behind in a district that isn't loaded any more: gone once out of sight
+            if (st && ped.state !== 'following' && !st.contains(p.x, p.z) &&
+                (initial || d2 > PED_CONFIG.SPAWN_MIN * PED_CONFIG.SPAWN_MIN || !this._inView(p.x, p.z, ctx))) {
+                this._removePed(ped, i);
                 continue;
             }
             if (ped.isDead || !ped.ai) continue;
             if (ped.ai.seat >= 0) sitters++;
-            else if (ped.ai.group) groupPeople++;
+            else if (ped.ai.group || ped.ai.cat === 'group') groupPeople++;
+            else if (ped.ai.cat === 'scene') scenePeople++;
             else walkers++;
+            if (ped.style === 'cop' && ped.ai.cat === 'walker') patrol++;
         }
 
-        let budget = initial ? 12 : PED_CONFIG.MAX_SPAWNS_PER_TICK;
-        const living = walkers + sitters + groupPeople;
-        if (living >= PED_CONFIG.CAPACITY - 8) return;
+        const scale = this.lowest ? 0.22 : this.lowSpec ? PED_CONFIG.LOW_SPEC_SCALE : 1;
+        const targetWalkers = Math.round(this.targets.walkers * density * coverage);
+        const targetSitters = Math.round(this.targets.sitters * Math.min(1.6, density) * coverage);
+        const targetGroups = Math.round(this.targets.groupPeople * density * coverage);
+
+        // Too many people for the time of day (the park after dark): some head home
+        if (!initial) this._thinOut(ctx, walkers - Math.round(targetWalkers * 1.25) - 2, sitters - targetSitters - 2, groupPeople - targetGroups - 3);
+
+        let budget = initial ? 14 : PED_CONFIG.MAX_SPAWNS_PER_TICK;
+        const living = walkers + sitters + groupPeople + scenePeople;
+        if (living >= PED_CONFIG.CAPACITY - 12) return;
 
         const minR = initial ? 0 : PED_CONFIG.SPAWN_MIN;
         const maxR = PED_CONFIG.SPAWN_MAX;
+        const streetHere = Object.keys(here.def.day.street).length + Object.keys(here.def.night.street).length;
+        const targetStreet = streetHere ? Math.round(PED_CONFIG.STREET_SCENE_PEOPLE * scale * density * coverage * (0.3 + 0.7 * night)) : 0;
 
-        // Sitters
-        if (sitters < this.targets.sitters && budget > 0) {
+        // Sitters on benches, lawn chairs and café patios
+        if (sitters < targetSitters && budget > 0) {
             const seats = nav.seatsInRing(c.x, c.z, minR, maxR, this._ring).slice();
-            for (let tries = 0; tries < 6 && sitters < this.targets.sitters && budget > 0 && seats.length; tries++) {
+            for (let tries = 0; tries < 6 * tryMul && sitters < targetSitters && budget > 0 && seats.length; tries++) {
                 const s = seats[(Math.random() * seats.length) | 0];
-                if (this.seatOccupant[s] || !this._spawnOk(nav.seatX[s], nav.seatZ[s], ctx, initial)) continue;
-                this._spawnSitter(s);
+                const x = nav.seatX[s], z = nav.seatZ[s];
+                if (this.seatOccupant[s] || !this._spawnOk(x, z, ctx, initial)) continue;
+                const district = districtAt(x, z);
+                const prof = districtProfile(district, night);
+                if (Math.random() > prof.seats || !acceptAt(x, z)) continue;
+                const table = pickTable(district, night);
+                const style = pickWeighted(table.looks) || 'adult';
+                const study = Math.random() < prof.seatStudy;
+                this._spawnSitter(s, study ? 'student' : style, study);
                 sitters++;
                 budget--;
                 // Friends at the same table or bench
                 if (Math.random() < 0.55) {
-                    nav.seatGrid.forEachNear(nav.seatX[s], nav.seatZ[s], 3, (o) => {
+                    nav.seatGrid.forEachNear(x, z, 3, (o) => {
                         if (o !== s && nav.seatCluster[o] === nav.seatCluster[s] && !this.seatOccupant[o] && Math.random() < 0.7) {
-                            this._spawnSitter(o);
+                            this._spawnSitter(o, style, study && Math.random() < 0.6);
                             sitters++;
                         }
                     });
@@ -2269,31 +3104,106 @@ export class PedestrianSystem {
             }
         }
 
-        // Groups on the grass
-        if (groupPeople < this.targets.groupPeople && budget > 0) {
+        // On the grass and in front yards: groups, picnics, beer pong, yard work...
+        if (groupPeople < targetGroups && budget > 0) {
             const spots = nav.hangoutsInRing(c.x, c.z, minR, maxR, this._ring).slice();
-            for (let tries = 0; tries < 6 && groupPeople < this.targets.groupPeople && budget > 0 && spots.length; tries++) {
+            for (let tries = 0; tries < 6 * tryMul && groupPeople < targetGroups && budget > 0 && spots.length; tries++) {
                 const h = spots[(Math.random() * spots.length) | 0];
-                if (this.hangoutGroup.has(h) || !this._spawnOk(nav.hangX[h], nav.hangZ[h], ctx, initial)) continue;
-                groupPeople += this._spawnGroup(h);
+                const x = nav.hangX[h], z = nav.hangZ[h];
+                if (this.hangoutGroup.has(h) || this.scenes.spotUsed.has(h) || !this._spawnOk(x, z, ctx, initial)) continue;
+                if (!acceptAt(x, z)) continue;
+                const table = pickTable(districtAt(x, z), night);
+                const what = pickWeighted(table.spots);
+                if (!what) continue;
+                const style = pickWeighted(table.looks) || 'adult';
+                groupPeople += what === 'hang' ? this._spawnGroup(h, style) : this.scenes.spawnSpot(what, h, style);
+                budget--;
+            }
+        }
+
+        // Sidewalk scenes: smokers, bar lines, fights, people being sick...
+        if (scenePeople < targetStreet && budget > 0) {
+            const nodes = nav.walkNodesInRing(c.x, c.z, minR, maxR, this._ring);
+            for (let tries = 0; tries < 6 * tryMul && scenePeople < targetStreet && budget > 0 && nodes.length; tries++) {
+                const n = nodes[(Math.random() * nodes.length) | 0];
+                const x = nav.nodeX[n], z = nav.nodeZ[n];
+                if (!this._spawnOk(x, z, ctx, initial) || !acceptAt(x, z)) continue;
+                const district = districtAt(x, z);
+                const table = pickTable(district, night);
+                const what = pickWeighted(table.street);
+                if (!what) continue;
+                const style = pickWeighted(table.looks) || 'adult';
+                scenePeople += this.scenes.spawnStreet(what, n, style, {
+                    arrests: !!table.arrests,
+                    sit: district.type === 'PARKING',
+                    doorKinds: [DOOR_KIND.BAR]
+                });
                 budget--;
             }
         }
 
         // Walkers on the sidewalks
-        if (walkers < this.targets.walkers && budget > 0) {
-            const nodes = nav.walkNodesInRing(c.x, c.z, minR, maxR, this._ring);
-            for (let tries = 0; tries < 12 && walkers < this.targets.walkers && budget > 0 && nodes.length; tries++) {
+        if (walkers < targetWalkers && budget > 0) {
+            const nodes = nav.walkNodesInRing(c.x, c.z, minR, maxR, this._ring).slice();
+            for (let tries = 0; tries < 12 * tryMul && walkers < targetWalkers && budget > 0 && nodes.length; tries++) {
                 const n = nodes[(Math.random() * nodes.length) | 0];
-                if (!this._spawnOk(nav.nodeX[n], nav.nodeZ[n], ctx, initial)) continue;
-                this._spawnWalker(n);
-                walkers++;
+                const x = nav.nodeX[n], z = nav.nodeZ[n];
+                if (!this._spawnOk(x, z, ctx, initial) || !acceptAt(x, z)) continue;
+                const table = pickTable(districtAt(x, z), night);
+                const kind = pickWeighted(table.walkers) || 'walk';
+                const style = kind === 'jog' || kind === 'jogGroup' ? 'athlete' : (pickWeighted(table.looks) || 'adult');
+                walkers += this._spawnWalkerKind(kind, n, style, table);
                 budget--;
+            }
+        }
+
+        // Now and then a cop walks the beat (the park at night)
+        if (hereProfile.patrol > 0 && patrol === 0 && budget > 0 && Math.random() < PED_CONFIG.PATROL_CHANCE * hereProfile.patrol * (initial ? 40 : 1)) {
+            const nodes = nav.walkNodesInRing(c.x, c.z, minR, maxR, this._ring);
+            for (let tries = 0; tries < 8 && nodes.length; tries++) {
+                const n = nodes[(Math.random() * nodes.length) | 0];
+                if (!this._spawnOk(nav.nodeX[n], nav.nodeZ[n], ctx, initial) || districtAt(nav.nodeX[n], nav.nodeZ[n]) !== here || (st && !st.contains(nav.nodeX[n], nav.nodeZ[n]))) continue;
+                const cop = this._spawnWalker(n, 'cop');
+                cop.ai.walkSpeed = 1.1;
+                if (night > 0.5) {
+                    this.setProp(cop, 'L', 'flashlight', 0x222222);
+                    cop.ai.flashlight = true;
+                }
+                break;
             }
         }
     }
 
-    _spawnWalker(node) {
+    /** Sends surplus walkers home (into the nearest building), and cuts sitting and group time short. */
+    _thinOut(ctx, extraWalkers, extraSitters, extraGroup) {
+        const peds = this.pedestrians;
+        let walkers = Math.min(2, extraWalkers), sitters = Math.min(2, extraSitters), groups = Math.min(2, extraGroup);
+        if (walkers <= 0 && sitters <= 0 && groups <= 0) return;
+        for (let i = peds.length - 1; i >= 0 && (walkers > 0 || sitters > 0 || groups > 0); i--) {
+            const ped = peds[i];
+            const ai = ped.ai;
+            if (!ai || ped.isDead || ped.isPoliceOfficer || ai.noThin) continue;
+            if (walkers > 0 && ped.state === 'walking' && ai.cat === 'walker' && !ai.direct && !(ai.goal && (ai.goal.type === 'door' || ai.goal.type === 'car' || ai.goal.type === 'scene'))) {
+                walkers--;
+                ai.heading = 0;
+                if (this._doorGoal(ped, ALL_DOORS)) continue;
+                const p = ped.mesh.position;
+                // Nowhere to go: just gone, once nobody can see
+                if (Math.hypot(p.x - ctx.center.x, p.z - ctx.center.z) > PED_CONFIG.SPAWN_MIN && !this._inView(p.x, p.z, ctx)) ai.vanish = true;
+            } else if (sitters > 0 && ped.state === 'sitting' && ai.timer > 3) {
+                sitters--;
+                ai.timer = 1 + Math.random() * 3;
+            } else if (groups > 0 && ped.state === 'hanging_out' && ai.timer > 3) {
+                groups--;
+                ai.timer = 1 + Math.random() * 3;
+            } else if (groups > 0 && ped.state === 'activity' && ai.act && ai.act.scene && ai.cat === 'group' && ai.act.scene.timer > 10) {
+                groups--;
+                ai.act.scene.timer = 3 + Math.random() * 5;
+            }
+        }
+    }
+
+    _spawnWalker(node, style = 'adult', lookSeed = null) {
         const nav = this.nav;
         let yaw = Math.random() * TWO_PI;
         const deg = nav.adjStart[node + 1] - nav.adjStart[node];
@@ -2301,29 +3211,68 @@ export class PedestrianSystem {
             const nb = nav.adjNode[nav.adjStart[node] + ((Math.random() * deg) | 0)];
             yaw = Math.atan2(nav.nodeX[nb] - nav.nodeX[node], nav.nodeZ[nb] - nav.nodeZ[node]);
         }
-        const ped = this._makePed(nav.nodeX[node], nav.nodeZ[node], yaw);
+        const ped = this._makePed(nav.nodeX[node], nav.nodeZ[node], yaw, style, lookSeed);
         this._pickStops(ped, node);
         ped.state = 'walking';
         return ped;
     }
 
-    _spawnSitter(seat) {
+    /** Somebody gets out of a car at (x, z) and walks off along the sidewalks (or null where there are none). */
+    /**
+     * A person run by someone else (bars.js): a full pedestrian (shootable, punchable, talks,
+     * fights back, dies) whose ordinary behaviour is `ctl.updatePed(ped, dt, ctx)` in state 'bar'.
+     */
+    spawnControlled(x, z, y, yaw, style, ctl) {
+        const ped = this._makePed(x, z, yaw, style);
+        ped.mesh.position.y = y;
+        ped.floorY = y;
+        ped.barCtl = ctl;
+        ped.state = 'bar';
+        ped.ai.cat = 'bar';
+        ped.ai.lastState = 'bar';
+        ped.ai.phone = false;
+        return ped;
+    }
+
+    /** Takes a controlled person out of the world (bars.js, when you walk away). */
+    removePed(ped) {
+        this._removePed(ped);
+    }
+
+    spawnPersonAt(x, z, style = 'adult', lookSeed = null) {
+        if (!this.nav) return null;
+        const node = this.nav.nearestWalkNode(x, z, 80);
+        if (node < 0) return null;
+        const ped = this._spawnWalker(node, style, lookSeed);
+        ped.mesh.position.set(x, 0, z);
+        return ped;
+    }
+
+    _spawnSitter(seat, style = 'adult', study = false) {
         const nav = this.nav;
-        const ped = this._makePed(nav.seatX[seat], nav.seatZ[seat], nav.seatYaw[seat]);
+        const ped = this._makePed(nav.seatX[seat], nav.seatZ[seat], nav.seatYaw[seat], style);
         this.seatOccupant[seat] = ped;
         ped.ai.seat = seat;
         this._sit(ped, seat);
         ped.ai.timer = 30 + Math.random() * 200;
+        if (study) {
+            ped.ai.study = true;
+            ped.ai.phone = false;
+            this.setProp(ped, 'L', 'notebook', 0xf5f5f0);
+        } else if (style === 'partier' && Math.random() < 0.6) {
+            this.setProp(ped, 'R', Math.random() < 0.7 ? 'cup' : 'bottle', 0xd32f2f);
+        }
         return ped;
     }
 
-    _spawnGroup(spot) {
+    _spawnGroup(spot, style = 'adult') {
         const g = this._createGroup(spot);
         const n = Math.min(g.maxSize, 2 + ((Math.random() * 3) | 0));
         for (let i = 0; i < n; i++) {
-            const ped = this._makePed(g.x, g.z, 0);
+            const ped = this._makePed(g.x, g.z, 0, style);
             g.members.push(ped);
             ped.ai.group = g;
+            if (style === 'partier' && Math.random() < 0.6) this.setProp(ped, 'R', 'cup', 0xd32f2f);
         }
         for (let i = 0; i < g.members.length; i++) {
             const ped = g.members[i];
@@ -2349,7 +3298,7 @@ export class PedestrianSystem {
     }
 
     getStats() {
-        let walking = 0, waiting = 0, crossing = 0, sitting = 0, hanging = 0;
+        let walking = 0, waiting = 0, crossing = 0, sitting = 0, hanging = 0, following = 0, activity = 0;
         for (const p of this.pedestrians) {
             if (p.isDead || p.isPoliceOfficer) continue;
             if (p.state === 'walking' || p.state === 'idle') walking++;
@@ -2357,7 +3306,17 @@ export class PedestrianSystem {
             else if (p.state === 'crossing') crossing++;
             else if (p.state === 'sitting') sitting++;
             else if (p.state === 'hanging_out') hanging++;
+            else if (p.state === 'following') following++;
+            else if (p.state === 'activity') activity++;
         }
-        return { total: this.pedestrians.length, walking, waiting, crossing, sitting, hanging, groups: this.groups.size };
+        const c = this._lastCenter;
+        const district = c ? districtAt(c.x, c.z) : null;
+        return {
+            total: this.pedestrians.length, walking, waiting, crossing, sitting, hanging, following, activity,
+            groups: this.groups.size,
+            district: district ? district.def.name : null,
+            night: this.night,
+            ...this.scenes.getStats()
+        };
     }
 }

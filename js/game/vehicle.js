@@ -113,6 +113,10 @@ export class Vehicle {
         this.yaw = yaw;                         // Heading angle in radians (0 = -Z)
         this.speed = 0;                         // Signed longitudinal speed (m/s)
         this.steerAngle = 0;                    // Current front wheel steer angle (radians)
+        this.bumpHeave = 0;                     // Visual-only suspension jolt (m), see bump()
+        this.bumpPitch = 0;                     // ... and nose-up pitch (radians)
+        this._bumpVel = 0;
+        this._pitchVel = 0;
 
         // Physical dimensions from the model (the Civic keeps CONFIG.VEHICLE's 4.5 x 2.2)
         this.length = model.length;
@@ -292,6 +296,9 @@ export class Vehicle {
         if (this.inputThrottle > 0 && this.inputBrake > 0) {
             this.inputThrottle = 0;
         }
+        // A smashed-up car (carCrash.js `damage`) has lost power; a wreck barely limps
+        const dmg = this.damage || 0;
+        if (dmg > 0.3) this.inputThrottle *= Math.max(0.2, 1 - (dmg - 0.3) * 0.8);
     }
 
     /**
@@ -787,12 +794,39 @@ export class Vehicle {
      * Updates visual mesh transformation and wheel spin/turn animations.
      * @param {number} dt Delta time
      */
+    /**
+     * A wheel rolling over something (a body in the road): the car jolts up and pitches, and the
+     * suspension soaks it up. Visual only (the mesh and the driver's eye), not the physics.
+     * @param {number} lift how hard (m/s of upward kick at the wheel)
+     * @param {boolean} front front axle (nose comes up) or rear (tail comes up)
+     */
+    bump(lift = 0.8, front = true) {
+        this._bumpVel += lift;
+        this._pitchVel += (front ? 1 : -1) * lift * 0.45;
+    }
+
+    _updateBump(dt) {
+        if (dt <= 0 || (!this._bumpVel && !this.bumpHeave && !this._pitchVel && !this.bumpPitch)) return;
+        const h = Math.min(dt, 1 / 30);
+        const k = 260, c = 22; // stiff and well damped: one firm bounce
+        this._bumpVel += (-k * this.bumpHeave - c * this._bumpVel) * h;
+        this.bumpHeave += this._bumpVel * h;
+        this._pitchVel += (-k * this.bumpPitch - c * this._pitchVel) * h;
+        this.bumpPitch += this._pitchVel * h;
+        if (Math.abs(this.bumpHeave) + Math.abs(this._bumpVel) + Math.abs(this.bumpPitch) + Math.abs(this._pitchVel) < 1e-4) {
+            this.bumpHeave = this.bumpPitch = this._bumpVel = this._pitchVel = 0;
+        }
+    }
+
     _updateMeshTransform(dt) {
         if (!this.mesh) return;
 
-        // Position & Heading rotation
-        this.mesh.position.set(this.position.x, this.position.y, this.position.z);
+        // Position & Heading rotation (plus any suspension jolt)
+        this._updateBump(dt);
+        this.mesh.position.set(this.position.x, this.position.y + this.bumpHeave, this.position.z);
+        this.mesh.rotation.order = 'YXZ'; // pitch about the car's own axis, after the heading
         this.mesh.rotation.y = this.yaw;
+        this.mesh.rotation.x = this.bumpPitch;
 
         // If this vehicle is rendered via InstancedVehicleFleet (not mounted directly in scene),
         // skip per-child group matrix updates to save CPU cycles.

@@ -19,20 +19,23 @@ import * as THREE from 'three';
 
 const DEFAULTS = Object.freeze({
     // Near field
-    // (Grass in the near field is gone beyond nearFadeOut, so its half size only needs to reach that far)
+    // (Grass in the near field is gone beyond nearFadeOut, so its half size only needs to reach that
+    // far, plus a margin: when you're driving fast the field must not run out ahead of the fade.)
+    // The bands overlap over long crossfades so clumps blend from one field to the next instead of
+    // visibly swapping (the popping you saw at speed when the crossfades were only ~4 m wide).
     nearSpacing: 0.24,
-    nearHalfSize: 18,
-    nearFadeOut: [13, 17.5],
+    nearHalfSize: 20,
+    nearFadeOut: [11, 18],
     // Mid field
     farSpacing: 0.6,
-    farHalfSize: 56,
-    farFadeIn: [12.5, 17],
-    farFadeOut: [44, 54],
+    farHalfSize: 60,
+    farFadeIn: [10, 17],
+    farFadeOut: [42, 54],
     // Distant field: sparse, wide clumps that carry the grass out to ~145 m
     distantSpacing: 1.3,
-    distantHalfSize: 150,
-    distantFadeIn: [44, 54],
-    distantFadeOut: [120, 145],
+    distantHalfSize: 154,
+    distantFadeIn: [41, 53],
+    distantFadeOut: [118, 146],
     // Mask window around the camera
     maskResolution: 0.5,      // metres per mask texel
     maskSize: 400,            // window width in metres (must exceed 2 * distantHalfSize + 2 * refreshDistance)
@@ -205,10 +208,10 @@ export class GrassSystem {
     constructor(mapTiles, options = {}) {
         const low = !!options.lowSpec;
         const lowDefaults = low ? {
-            nearSpacing: 0.36, nearHalfSize: 12, nearFadeOut: [8, 11.5],
-            farSpacing: 0.95, farHalfSize: 34, farFadeIn: [7.5, 11], farFadeOut: [25, 33],
-            distantSpacing: 2.0, distantHalfSize: 72, distantFadeIn: [25, 33], distantFadeOut: [55, 70],
-            maskSize: 200, refreshDistance: 22
+            nearSpacing: 0.36, nearHalfSize: 14, nearFadeOut: [7, 12],
+            farSpacing: 0.95, farHalfSize: 37, farFadeIn: [6.5, 11.5], farFadeOut: [24, 33],
+            distantSpacing: 2.0, distantHalfSize: 75, distantFadeIn: [23, 32], distantFadeOut: [54, 70],
+            maskSize: 210, refreshDistance: 22
         } : {};
         this.opts = Object.assign({}, DEFAULTS, lowDefaults, options);
         this.tiles = (mapTiles || []).filter((m) => m && m.isMesh && m.geometry && !m.userData.isTerrainTile && Array.isArray(m.material));
@@ -223,6 +226,8 @@ export class GrassSystem {
         this.maskTexture.minFilter = THREE.LinearFilter;
         this.maskTexture.generateMipmaps = false;
         this.maskTexture.needsUpdate = true;
+        // Extra rectangles where nothing grows (buildings the game adds itself)
+        this.blockRects = [];
         this.maskOrigin = new THREE.Vector2(Infinity, Infinity);
         this.maskCentre = new THREE.Vector2(Infinity, Infinity);
 
@@ -409,6 +414,12 @@ export class GrassSystem {
             }
         }
 
+        for (const [rx0, rz0, rx1, rz1] of this.blockRects) {
+            const ix0 = Math.max(0, Math.floor((rx0 - ox) / res)), ix1 = Math.min(n - 1, Math.ceil((rx1 - ox) / res));
+            const iz0 = Math.max(0, Math.floor((rz0 - oz) / res)), iz1 = Math.min(n - 1, Math.ceil((rz1 - oz) / res));
+            for (let iz = iz0; iz <= iz1; iz++) data.fill(0, iz * n + ix0, iz * n + ix1 + 1);
+        }
+
         this.maskOrigin.set(ox, oz);
         this.maskCentre.set(cx, cz);
         this.maskTexture.needsUpdate = true;
@@ -426,6 +437,12 @@ export class GrassSystem {
      * @param {THREE.Vector3} playerPosition feet position of the player on foot (pushes blades aside)
      * @param {number} timeSeconds
      */
+    /** Keeps grass out of the rectangle (world x / z); takes effect at the next mask rebuild. */
+    addBlocker(minX, minZ, maxX, maxZ) {
+        this.blockRects.push([minX, minZ, maxX, maxZ]);
+        this.maskCentre.set(Infinity, Infinity);
+    }
+
     update(cameraPosition, playerPosition, timeSeconds) {
         const o = this.opts;
         const visible = cameraPosition.y < o.maxCameraHeight;

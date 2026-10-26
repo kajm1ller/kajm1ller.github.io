@@ -799,6 +799,15 @@ export class TrafficManager {
         // Positions of pedestrians currently on a crosswalk ({x, z}); cars stop for them
         this.pedestrianObstacles = [];
         this._populationTimer = 0;
+        // Optional (x, z) -> 0..1 street busyness (districts.js); fewer cars around quiet places
+        this.densityAt = options.densityAt || null;
+        // Optional districtStreaming.js streamer: cars only drive in the player's district; the
+        // rest of the fleet sleeps (no AI, no rendering) until it's wanted there
+        this.streamer = options.streamer || null;
+        this.dormant = [];
+        // netWorld.js: another player's game drives the cars here and we draw what it sends
+        this.replicaMode = false;
+        this.replicas = [];
 
         this.metrics = {
             count: 0,
@@ -854,7 +863,8 @@ export class TrafficManager {
 
         if (this.scene && this.useInstancing) {
             this.instancedFleet = new InstancedVehicleFleet({
-                maxCapacity: Math.max(64, desiredCount + 16)
+                // (parked and drive-through cars share the fleet, see parkedCars.js)
+                maxCapacity: Math.max(64, desiredCount + 16 + (options.extraCapacity || 0))
             });
             this.instancedFleet.init(this.scene);
         }
@@ -898,6 +908,10 @@ export class TrafficManager {
      * @param {Vehicle} [playerVehicle=null] Active player vehicle reference
      */
     update(dt, playerVehicle = null) {
+        if (this.replicaMode) {
+            if (this.instancedFleet) this.instancedFleet.update(this.vehicles, dt);
+            return;
+        }
         const len = this.agents.length;
         if (!dt || dt <= 0 || len === 0) return;
         this.net.update(dt);
@@ -947,6 +961,7 @@ export class TrafficManager {
      * @param {{x:number, z:number}} [viewDir] Horizontal camera forward (unit length)
      */
     maintainPopulation(dt, center, viewDir = null) {
+        if (this.replicaMode) return;
         if (!center || typeof this.roadNetwork.getSpawnPointsNear !== 'function') return;
         this._populationTimer -= dt;
         if (this._populationTimer > 0) return;
@@ -955,7 +970,10 @@ export class TrafficManager {
         const cfg = TRAFFIC_CONFIG;
         const despawn2 = cfg.POPULATION_DESPAWN_RADIUS * cfg.POPULATION_DESPAWN_RADIUS;
         const inView2 = cfg.POPULATION_IN_VIEW_MIN * cfg.POPULATION_IN_VIEW_MIN;
+        const density = this.densityAt;
         const accept = (p) => {
+            if (this.streamer && !this.streamer.contains(p.x, p.z)) return false;
+            if (density && Math.random() > density(p.x, p.z)) return false;
             if (!viewDir) return true;
             const dx = p.x - center.x, dz = p.z - center.z;
             const d2 = dx * dx + dz * dz;
@@ -964,26 +982,138 @@ export class TrafficManager {
             return (dx * viewDir.x + dz * viewDir.z) / Math.sqrt(d2) < 0.35;
         };
 
-        let budget = cfg.POPULATION_MAX_PER_CHECK;
-        for (let i = 0; i < this.agents.length && budget > 0; i++) {
-            const agent = this.agents[i];
-            const v = agent.vehicle;
-            if (agent.retired || v.isPlayer || v.driverDead || v.hasWindowBlood || (v.mesh && v.mesh.parent)) continue;
-            const dx = v.position.x - center.x, dz = v.position.z - center.z;
-            const d2 = dx * dx + dz * dz;
-            const stuck = agent.stuckTime > cfg.STUCK_RECYCLE_TIME &&
-                d2 > cfg.STUCK_RECYCLE_MIN_DIST * cfg.STUCK_RECYCLE_MIN_DIST && accept(v.position);
-            if (d2 < despawn2 && !stuck) continue;
-
+        // Quiet districts (and the small hours) keep part of the fleet away from the player, and only
+        // the loaded district's share of the area around the player gets cars at all
+        const st = this.streamer;
+        const coverage = st ? Math.max(0.1, st.coverage(center.x, center.z, cfg.POPULATION_DESPAWN_RADIUS)) : 1;
+        const fleet = this.agents.length + this.dormant.length;
+        let nearCount = 0;
+        for (let i = 0; i < this.agents.length; i++) {
+            const p = this.agents[i].vehicle.position;
+            const dx = p.x - center.x, dz = p.z - center.z;
+            if (dx * dx + dz * dz < despawn2 && (!st || st.contains(p.x, p.z))) nearCount++;
+        }
+        const nearTarget = density || st
+            ? fleet * (density ? Math.max(0.25, Math.min(1, density(center.x, center.z) * 1.15)) : 1) * coverage
+            : Infinity;
+        const spawn = () => {
             const pts = this.roadNetwork.getSpawnPointsNear(
                 center.x, center.z,
                 cfg.POPULATION_SPAWN_MIN, cfg.POPULATION_SPAWN_MAX,
                 1, 16.0, this.vehicles, accept
             );
-            if (pts.length === 0) break;
-            this._placeAgent(agent, pts[0]);
+            return pts.length ? pts[0] : null;
+        };
+
+        let budget = cfg.POPULATION_MAX_PER_CHECK;
+        let noRoom = false;
+        for (let i = this.agents.length - 1; i >= 0 && budget > 0; i--) {
+            const agent = this.agents[i];
+            const v = agent.vehicle;
+            if (agent.retired || v.isPlayer || v.driverDead || v.hasWindowBlood || (v.mesh && v.mesh.parent)) continue;
+            const dx = v.position.x - center.x, dz = v.position.z - center.z;
+            const d2 = dx * dx + dz * dz;
+            // Left in a district that isn't loaded: moved or put to sleep once nobody can see it
+            const outside = st && !st.contains(v.position.x, v.position.z) &&
+                (d2 >= inView2 || !viewDir || (dx * viewDir.x + dz * viewDir.z) / Math.sqrt(d2 || 1) < 0.35);
+            const stuck = agent.stuckTime > cfg.STUCK_RECYCLE_TIME &&
+                d2 > cfg.STUCK_RECYCLE_MIN_DIST * cfg.STUCK_RECYCLE_MIN_DIST && accept(v.position);
+            const away = d2 >= despawn2 || outside;
+            if (!away && !stuck) continue;
+            if (away && nearCount >= nearTarget) {
+                if (st || density) this._sleep(i);
+                continue;
+            }
+            const sp = noRoom ? null : spawn();
+            if (!sp) {
+                noRoom = true;
+                if (away && st) this._sleep(i);
+                continue;
+            }
+            this._placeAgent(agent, sp);
+            if (away) nearCount++;
             budget--;
         }
+
+        // Wake sleeping cars into the loaded district while it's short of traffic
+        while (!noRoom && budget > 0 && this.dormant.length && nearCount < nearTarget) {
+            const sp = spawn();
+            if (!sp) break;
+            this._wake(sp);
+            nearCount++;
+            budget--;
+        }
+    }
+
+    /** Switches between driving the cars here and drawing another game's (netWorld.js). */
+    setReplicaMode(on) {
+        on = !!on;
+        if (on === this.replicaMode) return;
+        if (on) {
+            for (let i = this.agents.length - 1; i >= 0; i--) {
+                const a = this.agents[i];
+                if (a.retired || a.vehicle.isPlayer || (a.vehicle.mesh && a.vehicle.mesh.parent)) continue;
+                this._sleep(i);
+            }
+        } else {
+            for (const v of this.replicas.slice()) this.removeReplicaVehicle(v);
+        }
+        this.replicaMode = on;
+        this._populationTimer = 0;
+    }
+
+    /** A car somebody else drove off with: out of the fleet for good. */
+    forgetVehicle(v) {
+        for (let i = this.agents.length - 1; i >= 0; i--) {
+            if (this.agents[i].vehicle === v) {
+                this.agents[i].retire();
+                this.agents.splice(i, 1);
+            }
+        }
+        for (let i = this.dormant.length - 1; i >= 0; i--) if (this.dormant[i].vehicle === v) this.dormant.splice(i, 1);
+        const j = this.vehicles.indexOf(v);
+        if (j >= 0) this.vehicles.splice(j, 1);
+    }
+
+    addReplicaVehicle(v) {
+        if (this.replicas.indexOf(v) >= 0) return;
+        this.replicas.push(v);
+        if (this.vehicles.indexOf(v) < 0) this.vehicles.push(v);
+        this.spatialGrid.insertDynamic(v.id, v.position.x, v.position.z, v.radius, v);
+    }
+
+    removeReplicaVehicle(v) {
+        const i = this.replicas.indexOf(v);
+        if (i >= 0) this.replicas.splice(i, 1);
+        const j = this.vehicles.indexOf(v);
+        if (j >= 0) this.vehicles.splice(j, 1);
+    }
+
+    /** Takes agent i off the road: it isn't simulated, drawn or collided with until woken. */
+    _sleep(i) {
+        const agent = this.agents[i];
+        agent._leaveJunction();
+        agent.piece = null;
+        agent.prevPiece = null;
+        agent.plan.length = 0;
+        this.agents.splice(i, 1);
+        const vi = this.vehicles.indexOf(agent.vehicle);
+        if (vi >= 0) this.vehicles.splice(vi, 1);
+        agent.vehicle.speed = 0;
+        this.dormant.push(agent);
+    }
+
+    _wake(sp) {
+        const agent = this.dormant.pop();
+        this.agents.push(agent);
+        this.vehicles.push(agent.vehicle);
+        agent.vehicle.position.set(sp.x, 0, sp.z);
+        this._placeAgent(agent, sp);
+    }
+
+    /** Fleet numbers: driving, asleep (outside the loaded district) */
+    getStreamStats() {
+        return { active: this.agents.length, dormant: this.dormant.length };
     }
 
     _placeAgent(agent, sp) {
@@ -1007,6 +1137,7 @@ export class TrafficManager {
 
     destroy() {
         for (let i = 0; i < this.agents.length; i++) this.agents[i].retire();
+        this.dormant.length = 0;
         for (let i = 0; i < this.vehicles.length; i++) {
             this.vehicles[i].destroy();
         }

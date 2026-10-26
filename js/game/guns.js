@@ -17,6 +17,7 @@
 
 import * as THREE from 'three';
 import { registerItem, getItemDef, allItemDefs } from './items.js';
+import { drawDrugIcon } from './drugs.js';
 
 // ================================================================================================
 // Ammunition
@@ -504,6 +505,7 @@ export function itemIcon(id, w = 120, h = 48) {
     else if (def && def.kind === 'ammo') drawAmmoIcon(g, def, w, h);
     else if (def && def.id === 'spraycan') drawSprayIcon(g, w, h);
     else if (def && def.id === 'hands') drawFistIcon(g, w, h);
+    else if (def && def.kind === 'drug') drawDrugIcon(g, def, w, h);
     const url = c.toDataURL();
     _icons.set(key, url);
     return url;
@@ -592,6 +594,7 @@ export class GunAudio {
     constructor(ctx) {
         this.ctx = ctx;
         this.buffers = new Map();
+        this.onsets = new Map();
         this.out = ctx.createGain();
         this.out.gain.value = 0.9;
         this.out.connect(ctx.destination);
@@ -607,14 +610,68 @@ export class GunAudio {
         if (this.buffers.has(path)) return;
         this.buffers.set(path, null);
         fetch(encodeURI(path)).then((r) => r.arrayBuffer()).then((a) => this.ctx.decodeAudioData(a))
-            .then((b) => this.buffers.set(path, b)).catch(() => {});
+            .then((b) => {
+                this.onsets.set(path, GunAudio.onset(b));
+                this.buffers.set(path, b);
+            }).catch(() => {});
     }
 
     /**
-     * A shot of `gun`. `distance` (m) muffles and quietens it (other players' shots).
+     * Seconds of silence before the sound starts (MP3 encoder padding, and some recordings have
+     * ~0.2 s of dead air): playback skips it so the bang lands on the trigger pull.
+     */
+    static onset(buf) {
+        const d = buf.getChannelData(0);
+        let peak = 0;
+        for (let i = 0; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]));
+        const threshold = peak * 0.03;
+        for (let i = 0; i < d.length; i++) {
+            if (Math.abs(d[i]) > threshold) return Math.max(0, i / buf.sampleRate - 0.002);
+        }
+        return 0;
+    }
+
+    /**
+     * Reverb of a hard-walled room (a bar, a store): a convolver on a made-up impulse, a burst of
+     * early reflections off the walls and then a dense tail dying away over ~1.3 s. Made once.
+     */
+    _roomVerb() {
+        if (this._verb) return this._verb;
+        const ctx = this.ctx;
+        const rate = ctx.sampleRate;
+        const len = Math.floor(rate * 1.6);
+        const ir = ctx.createBuffer(2, len, rate);
+        for (let c = 0; c < 2; c++) {
+            const d = ir.getChannelData(c);
+            let lp = 0;
+            for (let i = 0; i < len; i++) {
+                const t = i / rate;
+                // Darker as it decays (each bounce eats the highs): a one-pole low-pass on the noise
+                const k = 0.55 + 0.4 * Math.min(1, t / 1.2);
+                lp = lp * k + (Math.random() * 2 - 1) * (1 - k);
+                d[i] = lp * Math.pow(1 - t / 1.6, 3) * 2.2;
+            }
+            // Early reflections: the walls, ceiling and floor of a small room
+            for (const [ms, g] of [[7, 0.7], [11, 0.55], [17, 0.5], [23, 0.4], [31, 0.35], [43, 0.28], [58, 0.2]]) {
+                const i = Math.floor((ms + c * 1.7 + Math.random() * 2) * rate / 1000);
+                if (i < len) d[i] += (Math.random() < 0.5 ? -1 : 1) * g;
+            }
+        }
+        const conv = ctx.createConvolver();
+        conv.buffer = ir;
+        const wet = ctx.createGain();
+        wet.gain.value = 0.8;
+        conv.connect(wet).connect(this.out);
+        this._verb = conv;
+        return conv;
+    }
+
+    /**
+     * A shot of `gun`. `distance` (m) muffles and quietens it (other players' shots). `room` 0..1
+     * is how much it rings round the room it was fired in (0 outdoors).
      * @returns {boolean} false if the recording isn't loaded yet (the caller can fall back)
      */
-    shot(gun, distance = 0) {
+    shot(gun, distance = 0, room = 0) {
         const ctx = this.ctx;
         const v = gun.voice || { rate: 1, gain: 0.6, body: 'pistol' };
         const t0 = ctx.currentTime + 0.002;
@@ -625,6 +682,11 @@ export class GunAudio {
         lp.type = 'lowpass';
         lp.frequency.value = v.body === 'suppressed' ? 1800 : 16000 - far * 14000;
         bus.connect(lp).connect(this.out);
+        if (room > 0) {
+            const send = ctx.createGain();
+            send.gain.value = room * (v.body === 'suppressed' ? 0.4 : 1);
+            lp.connect(send).connect(this._roomVerb());
+        }
         const buf = this.buffers.get(gun.sound);
         let played = false;
         if (buf) {
@@ -634,8 +696,9 @@ export class GunAudio {
             const g = ctx.createGain();
             g.gain.value = v.gain;
             src.connect(g).connect(bus);
-            src.start(t0);
-            src.stop(t0 + Math.min(buf.duration / src.playbackRate.value, 2.5));
+            const offset = this.onsets.get(gun.sound) || 0;
+            src.start(t0, offset);
+            src.stop(t0 + Math.min((buf.duration - offset) / src.playbackRate.value, 2.5));
             played = true;
         }
         this._body(v.body, bus, t0, v.gain);
@@ -731,6 +794,20 @@ export class GunAudio {
         }
     }
 
+    /** A body against a car: a dull thump (heavier = harder hit), with a crunch when run over. */
+    thud(strength = 1, distance = 0, crunch = false) {
+        const t0 = this.ctx.currentTime + 0.002;
+        const far = Math.max(0, Math.min(1, distance / 120));
+        const g = Math.min(1.2, strength) * (1 - far * 0.9);
+        if (g <= 0.01) return;
+        this._tone(this.out, t0, 85, 38, 0.16, 0.5 * g);
+        this._noise(this.out, t0, 0.09, 'lowpass', 520, 0.8, 0.45 * g);
+        if (crunch) {
+            this._noise(this.out, t0 + 0.01, 0.05, 'bandpass', 1900, 2.5, 0.22 * g);
+            this._noise(this.out, t0 + 0.05, 0.04, 'bandpass', 1300, 3, 0.18 * g);
+        }
+    }
+
     /** Rocket / grenade blast at a distance. */
     explosion(distance = 0) {
         const ctx = this.ctx;
@@ -748,7 +825,7 @@ export class GunAudio {
             const g = ctx.createGain();
             g.gain.value = 0.5;
             src.connect(g).connect(bus);
-            src.start(t0);
+            src.start(t0, this.onsets.get(S.boom) || 0);
         }
     }
 }

@@ -1031,6 +1031,18 @@ export class PoliceSystem {
         for (let i = this.policeProjectiles.length - 1; i >= 0; i--) {
             const p = this.policeProjectiles[i];
             const stepVec = p.velocity.clone().multiplyScalar(dt);
+            // Walls and cars stop the bullet (and keep the hole)
+            const stepLen = stepVec.length();
+            if (this.bulletRaycast && stepLen > 0) {
+                const dir = stepVec.clone().divideScalar(stepLen);
+                const hit = this.bulletRaycast(p.mesh.position, dir, stepLen);
+                if (hit) {
+                    if (typeof this.onBulletImpact === 'function') this.onBulletImpact(hit, dir);
+                    this.scene.remove(p.mesh);
+                    this.policeProjectiles.splice(i, 1);
+                    continue;
+                }
+            }
             p.mesh.position.add(stepVec);
             p.distanceTraveled += stepVec.length();
 
@@ -1070,6 +1082,7 @@ export class PoliceSystem {
                     this.hudElements.busted.style.display = 'block';
                 }
                 this.clearWantedLevel();
+                if (this.onBusted) this.onBusted();
                 return;
             }
         } else {

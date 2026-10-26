@@ -4,7 +4,7 @@
  * Weapon wheel and weapon HUD.
  *
  * - Hold Tab: the wheel opens at the top of the screen with one segment per kind of weapon
- *   (fists, pistols, SMGs, rifles, shotguns, snipers, heavy, spray can). Point the mouse at a
+ *   (fists, pistols, SMGs, rifles, shotguns, snipers, heavy, spray can, drugs). Point the mouse at a
  *   segment, scroll to change which weapon of that kind it offers, and let go of Tab (or click)
  *   to hold it. The game keeps the pointer locked, so the wheel follows mouse movement with its
  *   own cursor; with a free mouse (or on a touch screen) the segments are simply clicked.
@@ -25,7 +25,8 @@ export const WHEEL_SEGMENTS = Object.freeze([
     { label: 'Shotguns', match: (d) => d.category === 'Shotgun' },
     { label: 'Snipers', match: (d) => d.category === 'Sniper' },
     { label: 'Heavy', match: (d) => d.category === 'Heavy' },
-    { label: 'Spray Can', match: (d) => d.kind === 'tool' }
+    { label: 'Spray Can', match: (d) => d.kind === 'tool' },
+    { label: 'Drugs', match: (d) => d.kind === 'drug' }
 ]);
 
 const R_OUT = 230, R_IN = 82;
@@ -186,7 +187,8 @@ export class WeaponWheel {
         const held = this.inv.selectedItem();
         const def = held ? getItemDef(held.id) : getItemDef('hands');
         const isGun = def && def.kind === 'gun';
-        const key = `${def ? def.id : ''}|${isGun ? this._ammoText(held, def) : ''}|${held ? held.data.mode : ''}|${this.help}`;
+        const isDrug = def && def.kind === 'drug';
+        const key = `${def ? def.id : ''}|${isGun ? this._ammoText(held, def) : ''}|${isDrug ? held.count : ''}|${held ? held.data.mode : ''}|${this.help}`;
         if (!force && key === this._key) return;
         this._key = key;
         const row = document.createElement('div');
@@ -206,6 +208,11 @@ export class WeaponWheel {
             mode.className = 'ww-mode';
             mode.textContent = held.data.mode || def.mode;
             row.append(ammo, mode);
+        } else if (isDrug) {
+            const left = document.createElement('span');
+            left.className = 'ww-ammo';
+            left.textContent = `× ${held.count}`;
+            row.appendChild(left);
         }
         const reload = document.createElement('div');
         reload.id = 'ww-reload';
@@ -457,6 +464,14 @@ export class WeaponWheel {
             cs.className = 'ww-cstats';
             cs.textContent = `${def.damage}${def.pellets > 1 ? '×' + def.pellets : ''} dmg · ${Math.round(60000 / def.fireRate)} rpm · ${def.mode}`;
             this.centerEl.append(ca, cs);
+        } else if (def.kind === 'drug') {
+            const ca = document.createElement('div');
+            ca.className = 'ww-cammo';
+            ca.textContent = `× ${st.count}`;
+            const cs = document.createElement('div');
+            cs.className = 'ww-cstats';
+            cs.textContent = def.desc || '';
+            this.centerEl.append(ca, cs);
         }
 
         // Inventory along the bottom: every weapon (click to hold), then the ammo
@@ -476,7 +491,7 @@ export class WeaponWheel {
             img.src = itemIcon(d.id, 112, 48);
             img.alt = '';
             el.appendChild(img);
-            const count = ammo ? s.count : (d.kind === 'gun' ? s.data.mag : null);
+            const count = ammo || d.kind === 'drug' ? s.count : (d.kind === 'gun' ? s.data.mag : null);
             if (count !== null) {
                 const c = document.createElement('span');
                 if (!ammo && count === 0) c.className = 'empty';

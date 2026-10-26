@@ -1146,6 +1146,219 @@ console.timeEnd('places');
 console.log(`furniture ${furniture.length} (lawn sets ${lawnSets}, patios ${patios}, benches ${benches}), seats ${seats.length}, hangouts ${hangouts.length} (yards ${yardHangouts}, greens ${greenHangouts})`);
 
 // ---------------------------------------------------------------------------------------------
+// 6f. Building doors (typed by what the building is), parking stalls and drive-through lanes
+// ---------------------------------------------------------------------------------------------
+console.time('doors & parking');
+const DOOR = { HOUSE: 0, APARTMENT: 1, SHOP: 2, FOOD: 3, BAR: 4, CAMPUS: 5, OTHER: 6 };
+const DOOR_RANK = [1, 2, 4, 5, 6, 3, 0]; // which kind wins when a building has several uses
+const NO_DOOR_BUILDINGS = new Set(['garage', 'garages', 'shed', 'carport', 'roof', 'hangar', 'greenhouse', 'barn',
+    'farm_auxiliary', 'storage_tank', 'silo', 'service', 'transformer_tower', 'water_tower', 'ruins', 'construction']);
+const BAR_AMENITIES = new Set(['bar', 'pub', 'nightclub', 'biergarten']);
+const FOOD_AMENITIES = new Set(['restaurant', 'cafe', 'fast_food', 'ice_cream', 'food_court']);
+function kindFromTags(t) {
+    if (BAR_AMENITIES.has(t.amenity)) return DOOR.BAR;
+    if (FOOD_AMENITIES.has(t.amenity)) return DOOR.FOOD;
+    if (t.shop) return DOOR.SHOP;
+    if (t.amenity === 'university' || t.amenity === 'college') return DOOR.CAMPUS;
+    return -1;
+}
+function betterKind(a, b) {
+    if (a < 0) return b;
+    if (b < 0) return a;
+    return DOOR_RANK[b] > DOOR_RANK[a] ? b : a;
+}
+function buildingAt(x, z) {
+    const s = nextStamp();
+    for (const b of buildingGrid.query(x, z, x, z, _q, s)) {
+        if (x < b.bb.minX || x > b.bb.maxX || z < b.bb.minZ || z > b.bb.maxZ) continue;
+        if (pointInRing(x, z, b.ring)) return b;
+    }
+    return null;
+}
+for (const b of buildings) {
+    const t = b.way.tags;
+    let k = kindFromTags(t);
+    const bt = t.building;
+    if (bt === 'apartments' || bt === 'dormitory' || bt === 'terrace') k = betterKind(k, DOOR.APARTMENT);
+    else if (bt === 'retail' || bt === 'commercial' || bt === 'supermarket' || bt === 'kiosk') k = betterKind(k, DOOR.SHOP);
+    else if (bt === 'university' || bt === 'college' || bt === 'school') k = betterKind(k, DOOR.CAMPUS);
+    else if (HOUSE_TYPES.has(bt) && bt !== 'yes') k = betterKind(k, DOOR.HOUSE);
+    b.kind = k;
+    b.entrances = [];
+}
+// Shops, bars and restaurants mapped as points inside a building
+for (const n of taggedNodes) {
+    const k = kindFromTags(n.tags);
+    if (k < 0) continue;
+    const b = buildingAt(NX[n.idx], NZ[n.idx]);
+    if (b) b.kind = betterKind(b.kind, k);
+}
+// Mapped entrances on building outlines
+const buildingOfRingNode = new Map();
+for (const b of buildings) for (const r of b.way.refs) buildingOfRingNode.set(r, b);
+for (const n of taggedNodes) {
+    if (!n.tags.entrance || n.tags.entrance === 'emergency' || n.tags.entrance === 'no') continue;
+    const b = buildingOfRingNode.get(n.idx);
+    if (b) {
+        b.entrances.push(n.idx);
+        const k = kindFromTags(n.tags);
+        if (k >= 0) b.kind = betterKind(b.kind, k);
+    }
+}
+function nearestWalkNodeAny(x, z, maxD) {
+    let best = -1, bestD = maxD;
+    const cx = Math.floor(x / FCELL), cz = Math.floor(z / FCELL), r = Math.ceil(maxD / FCELL);
+    for (let i = cx - r; i <= cx + r; i++) for (let j = cz - r; j <= cz + r; j++) {
+        const arr = finalGrid.get(wkey(i, j));
+        if (arr) for (const q of arr) { const d = Math.hypot(outX[q] - x, outZ[q] - z); if (d < bestD) { bestD = d; best = q; } }
+    }
+    return best;
+}
+/** Closest point on a ring to (px, pz), with the outward direction there. */
+function nearestOnRing(ring, px, pz) {
+    let best = null, bestD = Infinity;
+    for (let i = 0; i + 3 < ring.length; i += 2) {
+        const ax = ring[i], az = ring[i + 1], bx = ring[i + 2], bz = ring[i + 3];
+        const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz;
+        if (l2 < 0.25) continue;
+        const t = Math.max(0.15, Math.min(0.85, ((px - ax) * dx + (pz - az) * dz) / l2));
+        const x = ax + dx * t, z = az + dz * t;
+        const d = Math.hypot(px - x, pz - z);
+        if (d < bestD) { bestD = d; best = { x, z, ex: dx, ez: dz }; }
+    }
+    return best;
+}
+const doors = []; // [x, z, access, kind]
+const doorCounts = [0, 0, 0, 0, 0, 0, 0];
+function pushDoor(x, z, kind) {
+    const acc = accessNode(x, z, 35);
+    if (acc < 0) return false;
+    doors.push([x, z, acc, kind]);
+    doorCounts[kind]++;
+    return true;
+}
+for (const b of buildings) {
+    const bt = b.way.tags.building;
+    if (NO_DOOR_BUILDINGS.has(bt) || b.area < 30 || b.way.tags.access === 'private' && b.kind < 0) continue;
+    let kind = b.kind;
+    if (kind < 0) kind = bt === 'yes' && b.area < 320 ? DOOR.HOUSE : DOOR.OTHER;
+    const placed = [];
+    for (const e of b.entrances.slice(0, 3)) {
+        // Step out of the wall along the outline's outward normal
+        const hit = nearestOnRing(b.ring, NX[e], NZ[e]);
+        if (!hit) continue;
+        const el = Math.hypot(hit.ex, hit.ez) || 1;
+        let nx = -hit.ez / el, nz = hit.ex / el;
+        if (pointInRing(NX[e] + nx * 0.6, NZ[e] + nz * 0.6, b.ring)) { nx = -nx; nz = -nz; }
+        const x = NX[e] + nx * 0.6, z = NZ[e] + nz * 0.6;
+        if (inBuilding(x, z, 0.2)) continue;
+        if (pushDoor(x, z, kind)) placed.push(1);
+    }
+    if (placed.length) continue;
+    // No mapped entrance: the middle of the wall that faces the nearest sidewalk
+    const n = nearestWalkNodeAny(b.c.x, b.c.z, 45);
+    if (n < 0) continue;
+    const hit = nearestOnRing(b.ring, outX[n], outZ[n]);
+    if (!hit) continue;
+    const dx = outX[n] - hit.x, dz = outZ[n] - hit.z, dl = Math.hypot(dx, dz) || 1;
+    const x = hit.x + (dx / dl) * 0.6, z = hit.z + (dz / dl) * 0.6;
+    if (inBuilding(x, z, 0.2)) continue;
+    pushDoor(x, z, kind);
+}
+
+// Parking: mapped parking_space outlines, then stalls synthesized along parking aisles inside lots
+const parkingLots = [];
+const lotGrid = new BoxGrid(60);
+for (const w of ways) {
+    if (w.tags.amenity !== 'parking' || (w.tags.parking && w.tags.parking !== 'surface')) continue;
+    const ring = ringOf(w);
+    if (!ring) continue;
+    const lot = { ring, bb: bboxOfRing(ring) };
+    parkingLots.push(lot);
+    lotGrid.insert(lot, lot.bb.minX, lot.bb.minZ, lot.bb.maxX, lot.bb.maxZ);
+}
+function inLot(x, z) {
+    const s = nextStamp();
+    for (const l of lotGrid.query(x, z, x, z, _q, s)) {
+        if (x < l.bb.minX || x > l.bb.maxX || z < l.bb.minZ || z > l.bb.maxZ) continue;
+        if (pointInRing(x, z, l.ring)) return true;
+    }
+    return false;
+}
+const stalls = []; // [x, z, yaw] with yaw = the parked car's heading (yaw 0 faces -Z)
+const stallGrid = new BoxGrid(8);
+function stallFree(x, z, r) {
+    const s = nextStamp();
+    for (const p of stallGrid.query(x - r, z - r, x + r, z + r, _q, s)) if (Math.hypot(p.x - x, p.z - z) < r) return false;
+    return true;
+}
+function addStall(x, z, yaw) {
+    stalls.push([x, z, yaw]);
+    stallGrid.insert({ x, z }, x, z, x, z);
+}
+const carYaw = (fx, fz) => Math.atan2(-fx, -fz);
+let mappedStalls = 0;
+for (const w of ways) {
+    if (w.tags.amenity !== 'parking_space') continue;
+    const ring = ringOf(w);
+    if (!ring) continue;
+    const area = ringArea(ring);
+    if (area < 7 || area > 30) continue;
+    let lx = 0, lz = 0, best = 0;
+    for (let i = 0; i + 3 < ring.length; i += 2) {
+        const dx = ring[i + 2] - ring[i], dz = ring[i + 3] - ring[i + 1], l = Math.hypot(dx, dz);
+        if (l > best) { best = l; lx = dx / l; lz = dz / l; }
+    }
+    const c = ringCentroid(ring);
+    if (inBuilding(c.x, c.z, 0.5) || !stallFree(c.x, c.z, 2.0)) continue;
+    const flip = hash32(w.id) < 0.5 ? 1 : -1;
+    addStall(c.x, c.z, carYaw(lx * flip, lz * flip));
+    mappedStalls++;
+}
+let aisleStalls = 0;
+for (const w of serviceWays) {
+    if (w.tags.service !== 'parking_aisle') continue;
+    let carry = 0;
+    for (let i = 0; i + 1 < w.refs.length; i++) {
+        const ax = NX[w.refs[i]], az = NZ[w.refs[i]], bx = NX[w.refs[i + 1]], bz = NZ[w.refs[i + 1]];
+        const L = Math.hypot(bx - ax, bz - az);
+        if (L < 3) { carry += L; continue; }
+        const ux = (bx - ax) / L, uz = (bz - az) / L;
+        for (let s = 2.6 - (carry % 2.75); s < L - 1.4; s += 2.75) {
+            if (s < 1.4) continue;
+            const px = ax + ux * s, pz = az + uz * s;
+            for (const side of [1, -1]) {
+                const nx = -uz * side, nz = ux * side;
+                const x = px + nx * 5.4, z = pz + nz * 5.4;
+                // The whole footprint has to sit in the lot, off buildings, other aisles and streets
+                const ok = inLot(x, z) && inLot(x + nx * 2.2, z + nz * 2.2) && inLot(x - nx * 1.6, z - nz * 1.6) &&
+                    inLot(x + ux * 1.0, z + uz * 1.0) && inLot(x - ux * 1.0, z - uz * 1.0) &&
+                    !inBuilding(x, z, 2.6) && !nearService(x, z, 3.9) && clearOfRoads(x, z, 3.2) && stallFree(x, z, 2.5);
+                if (!ok) continue;
+                // Nose in towards the curb, the odd one reversed in
+                const fwd = hash32(Math.floor(x * 11 + z * 7)) < 0.8 ? 1 : -1;
+                addStall(x, z, carYaw(nx * fwd, nz * fwd));
+                aisleStalls++;
+            }
+        }
+        carry = 0;
+    }
+}
+// Drive-through lanes, in the direction cars use them
+const driveThrus = [];
+for (const w of serviceWays) {
+    if (w.tags.service !== 'drive-through') continue;
+    const pts = w.refs.map((r) => [NX[r], NZ[r]]);
+    if (w.tags.oneway === '-1') pts.reverse();
+    let len = 0;
+    for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    if (len >= 15) driveThrus.push(pts);
+}
+console.timeEnd('doors & parking');
+console.log(`doors ${doors.length} (houses ${doorCounts[0]}, apartments ${doorCounts[1]}, shops ${doorCounts[2]}, food ${doorCounts[3]}, bars ${doorCounts[4]}, campus ${doorCounts[5]}, other ${doorCounts[6]}), ` +
+    `parking stalls ${stalls.length} (mapped ${mappedStalls}, along aisles ${aisleStalls}), drive-throughs ${driveThrus.length}`);
+
+// ---------------------------------------------------------------------------------------------
 // 6e. Traffic control: the junctions OSM maps with traffic signals, and the street approaches
 //     that have a stop sign (highway=stop; stop=all makes the whole junction an all-way stop)
 // ---------------------------------------------------------------------------------------------
@@ -1252,6 +1465,12 @@ const out = {
     seats: seats.map(([x, z, y, a, c, t]) => [dm(x), dm(z), mr(y), a, c, t]).flat(),
     // [x, z, accessNode]
     hangouts: hangouts.map(([x, z, a]) => [dm(x), dm(z), a]).flat(),
+    // [x, z, accessNode, kind]  kind 0 house, 1 apartments/dorm, 2 shop, 3 restaurant/café, 4 bar, 5 campus, 6 other
+    doors: doors.map(([x, z, a, k]) => [dm(x), dm(z), a, k]).flat(),
+    // [x, z, yaw] parked car centre and heading
+    parking: stalls.map(([x, z, y]) => [dm(x), dm(z), mr(y)]).flat(),
+    // [[x, z, ...], ...] drive-through lanes in driving order
+    driveThrus: driveThrus.map((pts) => pts.map(([x, z]) => [dm(x), dm(z)]).flat()),
     control: {
         // Road graph nodes of junctions with traffic signals / all-way stops
         signals: [...signalNodes].sort((p, q) => p - q),

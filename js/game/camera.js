@@ -360,7 +360,8 @@ export class CameraController {
             // Each car model seats the driver differently (vehicle.driverEye)
             const eye = this.targetVehicle.driverEye || this.cockpitOffset;
             const ox = eye.x + lean - out * 0.8;
-            const oy = eye.y + out * 0.07 + Math.sin(this._shakeTime * 7.3) * Math.min(0.004, Math.abs(speed) * 0.0002);
+            const oy = eye.y + out * 0.07 + Math.sin(this._shakeTime * 7.3) * Math.min(0.004, Math.abs(speed) * 0.0002) +
+                (this.targetVehicle.bumpHeave || 0) - eye.z * (this.targetVehicle.bumpPitch || 0);
             const oz = eye.z - out * 0.12;
             this._cockpitPos.set(
                 vp.x + ox * cosY + oz * sinY,
@@ -370,7 +371,7 @@ export class CameraController {
 
             // Where the driver looks: ahead plus mouse look (seat view), or the drive-by aim
             const lookYaw = vy + (wantCockpit ? this.orbitYaw : 0);
-            const lookPitch = wantCockpit ? this.orbitPitch - 0.06 : -0.06;
+            const lookPitch = (wantCockpit ? this.orbitPitch - 0.06 : -0.06) + (this.targetVehicle.bumpPitch || 0);
             this._seatLook.set(
                 this._cockpitPos.x - Math.sin(lookYaw) * Math.cos(lookPitch) * 25.0,
                 this._cockpitPos.y + Math.sin(lookPitch) * 25.0,

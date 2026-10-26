@@ -100,7 +100,8 @@ function assertFiniteNumber(value, name) {
  */
 async function runFunctionalTests(options = {}) {
   const browserType = options.browser || 'auto';
-  const targetPage = options.targetPage || 'game.html';
+  // Noon: the day/night cycle otherwise follows the wall clock
+  const targetPage = options.targetPage || 'game.html?time=12';
   console.log(`\n======================================================`);
   console.log(`Running E2E Functional Test Suite (Target: ${targetPage}, Browser: ${browserType})`);
   console.log(`======================================================\n`);

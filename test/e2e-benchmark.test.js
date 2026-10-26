@@ -40,7 +40,8 @@ async function runBenchmark(options = {}) {
   const targetFrames = options.frames || 1000;
   const minEntities = options.minEntities || 50;
 
-  const targetPage = options.targetPage || 'game.html';
+  // Noon: the day/night cycle otherwise follows the wall clock
+  const targetPage = options.targetPage || 'game.html?time=12';
 
   console.log(`\n======================================================`);
   console.log(`Running E2E Scalability Benchmark (${targetFrames} frames, 50+ entities)`);

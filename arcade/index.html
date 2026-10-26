@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+    <title>Kaj Arcade</title>
+    <meta name="theme-color" content="#0c0a12">
+    <meta name="description" content="16 play-money games for your phone: slots, blackjack, poker, crash, plinko, mines and more.">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="icons/icon-192.png">
+    <link rel="apple-touch-icon" href="icons/icon-180.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Kaj Arcade">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <style>
+        html, body { margin: 0; height: 100%; background: #0c0a12; overflow: hidden; }
+        #install { position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 900; display: none;
+            align-items: center; gap: 10px; background: #2a2240; color: #f4effc; border-radius: 14px; padding: 10px 12px;
+            font: 600 14px "Segoe UI", Roboto, Helvetica, Arial, sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,0.6); }
+        #install span { flex: 1; }
+        #install button { font: inherit; border: none; border-radius: 10px; padding: 9px 14px; font-weight: 800; background: #f6c544; color: #2a1a00; }
+        #install button.x { background: transparent; color: #a99fc0; padding: 9px 6px; }
+    </style>
+</head>
+<body>
+<div id="install"><span id="install-text">Install Kaj Arcade on your phone</span><button id="install-btn">Install</button><button class="x" id="install-x" aria-label="Dismiss">✕</button></div>
+<script type="module">
+    import { Wallet } from './wallet.js';
+    import { ARCADE_GAMES, ArcadeUI } from './index.js';
+
+    // ?embed=1: running inside Kaj Simulator's in-game phone, paid from the game's own wallet
+    const embedded = new URLSearchParams(location.search).has('embed');
+    let host = null;
+    try { host = embedded && window.parent !== window ? window.parent : null; } catch (e) { /* cross-origin parent */ }
+    const wallet = (host && host.__KAJ_WALLET__) || new Wallet();
+    const ui = host
+        ? new ArcadeUI({ wallet, games: ARCADE_GAMES, title: 'CASINO', onClose: () => host.__KAJ_PHONE__ && host.__KAJ_PHONE__.closeApp() })
+        : new ArcadeUI({ wallet, games: ARCADE_GAMES });
+    window.__ARCADE__ = { wallet, games: ARCADE_GAMES, ui };
+    if (host) ui.show();
+
+    // ---- Installable app -------------------------------------------------------------------------------
+    if (!host) {
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+    const bar = document.getElementById('install');
+    const text = document.getElementById('install-text');
+    const btn = document.getElementById('install-btn');
+    const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+    let dismissed = false;
+    try { dismissed = localStorage.getItem('kajarcade.install.dismissed') === '1'; } catch (e) { /* no storage */ }
+    document.getElementById('install-x').onclick = () => {
+        bar.style.display = 'none';
+        try { localStorage.setItem('kajarcade.install.dismissed', '1'); } catch (e) { /* no storage */ }
+    };
+    let deferred = null;
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferred = e;
+        if (!standalone && !dismissed) bar.style.display = 'flex';
+    });
+    btn.onclick = async () => {
+        if (!deferred) return;
+        deferred.prompt();
+        await deferred.userChoice.catch(() => {});
+        deferred = null;
+        bar.style.display = 'none';
+    };
+    // iPhone Safari has no install prompt: point at Share > Add to Home Screen
+    if (!standalone && !dismissed && /iphone|ipad|ipod/i.test(navigator.userAgent)) {
+        text.textContent = 'Install: tap Share, then “Add to Home Screen”';
+        btn.style.display = 'none';
+        bar.style.display = 'flex';
+    }
+    }
+</script>
+</body>
+</html>
