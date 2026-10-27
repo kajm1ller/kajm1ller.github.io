@@ -1,6 +1,6 @@
 // Kaj Arcade service worker: files are cached as they load, so the games work offline after the first visit.
 // Bump VERSION when files change so installed copies drop the old ones.
-const VERSION = 'kaj-arcade-v3';
+const VERSION = 'kaj-arcade-v4';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './wallet.js', './index.js', './arcadeUI.js', './cards.js', './sfx.js'];
 
 self.addEventListener('install', (e) => {

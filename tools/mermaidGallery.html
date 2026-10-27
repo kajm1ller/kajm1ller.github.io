@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mermaid gallery</title>
+<style>
+    html, body { margin: 0; height: 100%; background: #0b4f78; overflow: hidden; font-family: Arial, sans-serif; }
+    #ui { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.55); color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; }
+</style>
+<script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+</script>
+</head>
+<body>
+<div id="ui"></div>
+<script type="module">
+    // Dev gallery: mermaids and creatures side by side.
+    //   ?set=presets|random|close|male|creatures   ?i=<preset index>   ?manual=1
+    import * as THREE from 'three';
+    import { buildMermaid, animateMermaid } from '../js/game/mermaid/mermaidModel.js';
+    import { PRESETS, defaultLook, randomLook, normalizeLook } from '../js/game/mermaid/mermaidData.js';
+
+    const params = new URLSearchParams(location.search);
+    const set = params.get('set') || 'presets';
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(1);
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.body.appendChild(renderer.domElement);
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0e6a96);
+    scene.fog = new THREE.FogExp2(0x0e6a96, 0.02);
+    scene.add(new THREE.HemisphereLight(0xa8ecff, 0x0a2a48, 1.5));
+    const sun = new THREE.DirectionalLight(0xe4f8ff, 2.0);
+    sun.position.set(3, 8, 6);
+    scene.add(sun);
+    const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 200);
+
+    const mers = [];
+    function addMermaid(look, x, z = 0, ry = 0) {
+        const m = buildMermaid(look);
+        m.root.position.set(x, 0, z);
+        m.root.rotation.y = ry;
+        scene.add(m.root);
+        mers.push(m);
+        return m;
+    }
+    window.__G__ = { scene, camera, mers, addMermaid, THREE };
+
+    if (set === 'presets') {
+        PRESETS.forEach((p, i) => addMermaid(normalizeLook({ ...p.look }), (i - 2.5) * 1.5));
+        camera.position.set(0, 0.1, 6.5);
+        camera.lookAt(0, -0.2, 0);
+    } else if (set === 'close') {
+        const i = +(params.get('i') || 0);
+        addMermaid(normalizeLook({ ...PRESETS[i].look }), 0);
+        camera.position.set(0, 0.62, 1.15);
+        camera.lookAt(0, 0.52, 0);
+        camera.fov = 38;
+        camera.updateProjectionMatrix();
+    } else if (set === 'random') {
+        for (let i = 0; i < 6; i++) addMermaid(randomLook(), (i - 2.5) * 1.5);
+        camera.position.set(0, 0.1, 6.5);
+        camera.lookAt(0, -0.2, 0);
+    } else if (set === 'styles') {
+        // every hair style, front view
+        import('../js/game/mermaid/mermaidData.js').then(({ HAIR_STYLES }) => {
+            HAIR_STYLES.forEach((h, i) => addMermaid(normalizeLook({ hairStyle: h.id, hairColor: 0x8e5bd6, hairTip: 0xff9ff3, tail: i % 16 }), (i % 6 - 2.5) * 1.3, -Math.floor(i / 6) * 1.6));
+            camera.position.set(0, 0.9, 7);
+            camera.lookAt(0, 0, -0.8);
+        });
+    }
+    const anim = [];
+    if (set === 'creatures') {
+        import('../js/game/mermaid/mermaidCreatures.js').then((C) => {
+            const list = [
+                ['clown', () => C.buildFish(0xff7f27, 0xffffff, 1.6, false, 'clown')], ['angel', () => C.buildFish(0xf9e79f, 0x2e86c1, 1.6, false, 'angel')],
+                ['tang', () => C.buildFish(0x2874f0, 0xf4d03f, 1.6, false, 'tang')], ['grouper', () => C.buildFish(0x7b7a5c, 0xb6b38a, 1.6, false, 'grouper')],
+                ['lantern', () => C.buildFish(0x34495e, 0x48dbfb, 1.6, true, 'lantern')], ['puffer', () => C.buildPuffer(1.4, 0.8)],
+                ['dolphin', () => C.buildDolphin(1)], ['turtle', () => C.buildTurtle(1)], ['manta', () => C.buildManta(1.2)],
+                ['jelly', () => C.buildJelly(0xff9ff3, 1)], ['octopus', () => C.buildOctopus(0x9b59b6, 0.8)], ['seahorse', () => C.buildSeahorse(0xfeca57, 1)],
+                ['crab', () => C.buildCrab(0xe74c3c, 1)], ['shark', () => C.buildShark(0.8)], ['angler', () => C.buildAngler(0.8)], ['whale', () => C.buildWhale(0.25)]
+            ];
+            list.forEach(([name, make], i) => {
+                const g = make();
+                const wrap = new THREE.Group();
+                wrap.add(g);
+                const bb = new THREE.Box3().setFromObject(g);
+                const sz = bb.getSize(new THREE.Vector3());
+                const k = 2.6 / Math.max(sz.x, sz.y, sz.z);
+                wrap.scale.setScalar(k);
+                const c = bb.getCenter(new THREE.Vector3());
+                g.position.sub(c);
+                wrap.position.set((i % 4 - 1.5) * 3.4, -Math.floor(i / 4) * 3.2 + 4.5, 0);
+                wrap.rotation.y = 0.75;
+                scene.add(wrap);
+                anim.push(g);
+            });
+            camera.position.set(0, 3, 17);
+            camera.lookAt(0, 3, 0);
+        });
+    }
+    let t = 0;
+    function frame(dt) {
+        t += dt;
+        for (const g of anim) g.userData.update && g.userData.update(t, 0.4);
+        for (const m of mers) animateMermaid(m, t, { swim: 0, action: params.get('action') || null, dt });
+        renderer.render(scene, camera);
+    }
+    window.__STEP__ = (sec = 1, n = 1) => { for (let i = 0; i < n; i++) frame(sec / n); };
+    if (!params.get('manual')) {
+        let last = performance.now();
+        const loop = (now) => { requestAnimationFrame(loop); frame(Math.min(0.1, (now - last) / 1000)); last = now; };
+        requestAnimationFrame(loop);
+    }
+</script>
+</body>
+</html>

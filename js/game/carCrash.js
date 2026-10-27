@@ -26,6 +26,7 @@ import * as THREE from 'three';
 export const CRASH_CONFIG = Object.freeze({
     RANGE: 140,              // cars further than this from the listener aren't checked
     MIN_IMPACT: 2.0,         // m/s closing speed for a crash at all
+    MAX_TRACK_SPEED: 70,     // m/s; a bigger jump between frames is a teleport, not driving
     WRECK_IMPACT: 6.5,       // a traffic car hit this hard loses its driver's control
     MASS: 1400,
     RESTITUTION: 0.18,
@@ -302,13 +303,17 @@ export class CrashSystem {
             // Velocity from how far it moved (works for every kind of car); keep last frame's too:
             // by the time we look, the push-apart of a collision has already eaten the closing speed
             let tr = this.track.get(v);
-            if (!tr) { tr = { x: v.position.x, z: v.position.z, vx: 0, vz: 0, pvx: 0, pvz: 0 }; this.track.set(v, tr); }
+            if (!tr) { tr = { x: v.position.x, z: v.position.z, vx: 0, vz: 0, pvx: 0, pvz: 0, at: this.time }; this.track.set(v, tr); }
             const mx = v.position.x - tr.x, mz = v.position.z - tr.z;
             tr.pvx = tr.vx; tr.pvz = tr.vz;
-            if (mx * mx + mz * mz > 100) {
+            // Teleported, re-parked into a stall, or back in range after a while: not a real speed
+            // (these read as 300 m/s rams and wrecked whole rows of parked cars)
+            const stale = this.time - tr.at > dt * 1.5;
+            tr.at = this.time;
+            if (stale || mx * mx + mz * mz > 100 || mx * mx + mz * mz > (C.MAX_TRACK_SPEED * dt) ** 2) {
                 // Teleported (respawned / recycled): forget the old dents
                 tr.vx = tr.vz = tr.pvx = tr.pvz = 0;
-                if (this.mounted.has(v) && !this.wrecks.has(v)) this._restore(v);
+                if (mx * mx + mz * mz > 100 && this.mounted.has(v) && !this.wrecks.has(v)) this._restore(v);
             } else {
                 tr.vx = mx / dt;
                 tr.vz = mz / dt;

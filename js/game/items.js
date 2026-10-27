@@ -73,6 +73,8 @@ export class Inventory {
         this.slots = new Array(this.hotbarSize + this.bagSize).fill(null);
         this.selected = 0;
         this._listeners = [];
+        // () => true while the held item can't be put away (a shotgun half pumped); set by the game
+        this.lock = null;
     }
 
     /** Called with (inventory) after anything changes. */
@@ -105,6 +107,7 @@ export class Inventory {
 
     /** Holds whatever is in slot i (any slot; an empty one means bare hands). */
     select(i) {
+        if (this.lock && this.lock()) return this.selectedItem();
         const n = this.slots.length;
         this.selected = ((i % n) + n) % n;
         this._changed();
@@ -113,6 +116,7 @@ export class Inventory {
 
     /** Next / previous slot holding something that can be held (guns, tools, fists). */
     cycle(delta = 1) {
+        if (this.lock && this.lock()) return this.selectedItem();
         const n = this.slots.length;
         for (let k = 1; k <= n; k++) {
             const i = ((this.selected + delta * k) % n + n) % n;

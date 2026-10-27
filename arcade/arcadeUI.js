@@ -148,7 +148,7 @@ const CSS = `
 @media (max-width: 760px) {
   .cz-game { flex-direction: column-reverse; height: auto; min-height: 0; padding: 10px; }
   .cz-side { width: 100%; }
-  .cz-stage { min-height: 380px; }
+  .cz-stage { min-height: min(380px, 42vh); }   /* (leaves the bet and play buttons on a short screen) */
   .cz-crumb { display: none; }
   .cz-logo { font-size: 17px; letter-spacing: 1px; } .cz-logo span { letter-spacing: 2px; font-size: 11px; }
   .cz-top { padding: 8px 10px; gap: 8px; }

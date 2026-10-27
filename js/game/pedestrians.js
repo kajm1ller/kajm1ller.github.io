@@ -28,12 +28,35 @@ import { WALK_EDGE, FURNITURE } from './cityNav.js';
 import { DOOR_KIND, districtAt, districtProfile, pickTable, pickWeighted } from './districts.js';
 import { SceneDirector, PROP_PARTS, PartyMusic } from './pedestrianScenes.js';
 import { lerpAngle } from './camera.js';
+import { resetRig } from './avatarPose.js';
+
+const HELD_MODES = ['', 'drag', 'neck', 'pin', 'mount'];
+const DOWN_POSES = ['back', 'front', 'side', 'wall'];
+
+/**
+ * A person's fight state for the network (netWorld.js): [held mode, lying, down pose, down age,
+ * getting up, face damage, head gone, hp, slumped against a wall] or 0 when there's nothing to tell.
+ */
+export function brawlRecord(ped) {
+    const ai = ped.ai || {};
+    const held = ped.state === 'held' && ai.held;
+    const down = ped.state === 'downed';
+    const face = ped.faceDmg || 0;
+    if (!held && !down && !face && !ped.headGone && !ai.wallSlump && !ped.limbsGone) return 0;
+    return [
+        held ? Math.max(0, HELD_MODES.indexOf(ai.held.mode)) : 0, held && ai.held.lying ? 1 : 0,
+        Math.max(0, DOWN_POSES.indexOf(ai.downPose || 'back')), Math.round(Math.min(1, ai.downAge || 0) * 10),
+        Math.round((ai.getUp || 0) * 10), Math.round(face * 10), ped.headGone ? 1 : 0, Math.max(0, Math.round(ped.hp || 0)),
+        ai.wallSlump ? 1 : 0, ped.limbsGone || 0
+    ];
+}
 
 /** The numbers of a hit worth sending over the network. */
 export function pickHit(hit) {
     const out = {};
-    for (const k of ['x', 'y', 'z', 'dirX', 'dirY', 'dirZ', 'damage']) if (Number.isFinite(hit[k])) out[k] = Math.round(hit[k] * 100) / 100;
+    for (const k of ['x', 'y', 'z', 'dirX', 'dirY', 'dirZ', 'damage', 'side', 'knock']) if (Number.isFinite(hit[k])) out[k] = Math.round(hit[k] * 100) / 100;
     if (hit.explosive) out.explosive = true;
+    if (typeof hit.move === 'string' && /^[a-z]{1,10}$/.test(hit.move)) out.move = hit.move;
     return out;
 }
 
@@ -97,6 +120,11 @@ function mulberry32(seed) {
 
 function pick(rand, arr) {
     return arr[Math.floor(rand() * arr.length) % arr.length];
+}
+
+function smooth01(x) {
+    x = Math.max(0, Math.min(1, x));
+    return x * x * (3 - 2 * x);
 }
 
 function angleDiff(a, b) {
@@ -264,6 +292,9 @@ function taper(geo, yCut, sx, sz = 1) {
     return geo;
 }
 
+const _BRUISED = new THREE.Color(0x8a2c3a);
+const LIMB_BITS = { armL: 1, armR: 2, legL: 4, legR: 8 };
+
 function buildPartGeometries() {
     return {
         torso: taper(box(0.42, 0.56, 0.23, 0, 0.28, 0), 0.12, 0.86, 0.95),
@@ -303,6 +334,53 @@ function buildPartGeometries() {
         shoe: box(0.125, 0.075, 0.25, 0, -0.4225, 0.035),
         skirt: taper(box(0.46, 0.42, 0.31, 0, -0.2, 0), -0.05, 1.0, 1.0),
         backpack: box(0.3, 0.36, 0.13, 0, 0.3, -0.18),
+        // A beaten face, in stages (PedestrianSystem.bruiseFace): a bloody nose and mouth, swelling,
+        // split brow and cheek, then a smashed face with the nose knocked sideways
+        faceBlood: mergeGeometries([
+            box(0.03, 0.06, 0.008, 0, 0.13, 0.121),
+            box(0.09, 0.018, 0.008, 0, 0.115, 0.12),
+            box(0.02, 0.04, 0.008, 0.015, 0.095, 0.119)
+        ]),
+        faceSwell: mergeGeometries([
+            box(0.065, 0.05, 0.03, 0.052, 0.232, 0.12),
+            box(0.08, 0.03, 0.025, -0.045, 0.272, 0.115),
+            box(0.055, 0.06, 0.035, -0.075, 0.165, 0.11)
+        ]),
+        faceGash: mergeGeometries([
+            box(0.07, 0.014, 0.006, -0.045, 0.27, 0.13),
+            box(0.02, 0.08, 0.006, -0.04, 0.22, 0.125),
+            box(0.014, 0.05, 0.006, 0.085, 0.18, 0.12)
+        ]),
+        faceMash: mergeGeometries([
+            box(0.2, 0.1, 0.008, 0, 0.135, 0.122),
+            box(0.05, 0.045, 0.05, 0.028, 0.175, 0.135),
+            box(0.21, 0.03, 0.01, 0, 0.232, 0.127)
+        ]),
+        shirtBlood: mergeGeometries([                   // on the torso
+            box(0.16, 0.3, 0.008, 0.02, 0.38, 0.12),
+            box(0.08, 0.12, 0.008, -0.06, 0.22, 0.115)
+        ]),
+        // What a point-blank shot leaves of a head: a ragged stump, the back of the skull and the jaw
+        headGore: mergeGeometries([
+            box(0.13, 0.07, 0.13, 0, 0.075, 0),
+            box(0.06, 0.05, 0.05, 0.04, 0.12, 0.03),
+            box(0.05, 0.07, 0.04, -0.05, 0.11, -0.02),
+            box(0.035, 0.04, 0.03, 0, 0.13, 0.05)
+        ]),
+        skullStub: mergeGeometries([
+            box(0.2, 0.1, 0.07, 0, 0.15, -0.08),
+            box(0.14, 0.045, 0.09, 0, 0.1, 0.05)
+        ]),
+        // An arm or leg torn off (goreLimb): a ragged stump at the shoulder / hip with the bone sticking out
+        limbStub: mergeGeometries([
+            box(0.14, 0.08, 0.15, 0, -0.04, 0),
+            box(0.06, 0.05, 0.07, 0.03, -0.09, 0.02),
+            box(0.05, 0.04, 0.05, -0.04, -0.085, -0.03)
+        ]),
+        boneStub: mergeGeometries([
+            box(0.045, 0.1, 0.045, 0, -0.12, 0),
+            box(0.06, 0.03, 0.055, 0, -0.17, 0)
+        ]),
         // Police kit: peaked cap (crown + black visor), gold badge, service pistol in the right hand
         policeHat: mergeGeometries([
             box(0.26, 0.1, 0.27, 0, 0.36, 0),
@@ -473,6 +551,8 @@ const PART_SLOTS = {
     torso: 1, pelvis: 1, head: 1, eyes: 1, upperArm: 2, forearm: 2, hand: 2,
     thigh: 2, shin: 2, shoe: 2, hairShort: 1, hairLong: 1, cap: 1, skirt: 1, backpack: 1,
     policeHat: 1, capBrim: 1, badge: 1, pistol: 1,
+    faceBlood: 1, faceSwell: 1, faceGash: 1, faceMash: 1, shirtBlood: 1, headGore: 1, skullStub: 1,
+    limbStub: 1.5, boneStub: 1.5,
     ...Object.fromEntries(Object.entries(PROP_PARTS).map(([k, v]) => [k, v.slots]))
 };
 
@@ -863,13 +943,15 @@ export class PedestrianSystem {
             }
             if (ped.state === 'ragdoll' || ped.isDead) {
                 this._releaseActivity(ped);
-                if (ped.death) this._updateDeathMotion(ped, dt);
+                if (ai.wallSlump) this._updateWallSlump(ped, dt);
+                else if (ped.death) this._updateDeathMotion(ped, dt);
                 else if (ped.state === 'dead' && !ai.deadPosed) this._poseDead(ped);
                 ai.lastState = ped.state;
                 continue;
             }
             if (ped.state === 'carjacked') {
-                ai.lastState = ped.state;
+                if (ai.carOut) this._updateCarOut(ped, dt);
+                ai.lastState = 'carjacked';
                 continue;
             }
 
@@ -891,6 +973,13 @@ export class PedestrianSystem {
                 }
             }
 
+            // Rocked back by a punch
+            if (ai.shoveT > 0 && ped.state !== 'held' && ped.state !== 'downed') {
+                ai.shoveT -= dt;
+                const k = Math.max(0, ai.shoveT / 0.25);
+                ped.mesh.position.x += ai.shoveX * k * dt;
+                ped.mesh.position.z += ai.shoveZ * k * dt;
+            }
             switch (ped.state) {
                 case 'talking': this._updateTalking(ped, dt, ctx); break;
                 case 'fleeing': this._updateFleeing(ped, dt); break;
@@ -899,6 +988,8 @@ export class PedestrianSystem {
                 case 'waiting_to_cross': this._updateWaiting(ped, dt); break;
                 case 'idle': this._updateIdle(ped, dt); break;
                 case 'fighting': this._updateFighting(ped, dt, ctx); break;
+                case 'downed': this._updateDowned(ped, dt); break;
+                case 'held': this._updateHeld(ped, dt); break;
                 case 'activity': this.scenes.updatePed(ped, dt, ctx); break;
                 case 'bar': if (ped.barCtl) ped.barCtl.updatePed(ped, dt, ctx); break;
                 case 'following': this._updateFollowing(ped, dt); break;
@@ -906,7 +997,7 @@ export class PedestrianSystem {
             }
             // People lying on the ground or kneeling in cuffs don't leap out of the way of cars
             const grounded = ped.state === 'activity' && ai.act && ai.act.stay;
-            if (ped.state !== 'fleeing' && ped.state !== 'sitting' && ped.state !== 'bar' && !grounded && !ped.barCtl) this._dodgeCars(ped, dt);
+            if (ped.state !== 'fleeing' && ped.state !== 'sitting' && ped.state !== 'bar' && ped.state !== 'downed' && ped.state !== 'held' && !grounded && !ped.barCtl) this._dodgeCars(ped, dt);
             // A heavy night out sometimes catches up with someone on the way home
             if (ai.drunk > 0 && !ped.barCtl && (ped.state === 'walking' || ped.state === 'idle') && Math.random() < dt * 0.003 * ai.drunk) {
                 this.scenes.startVomit(ped);
@@ -997,6 +1088,20 @@ export class PedestrianSystem {
         const ai = ped.ai;
         const n = ped.net;
         n.x = s.x; n.z = s.z; n.yaw = s.yaw;
+        const b = s.b;
+        if (b) {
+            if (b[5] / 10 > (ped.faceDmg || 0) + 0.05) this.bruiseFace(ped, b[5] / 10 - (ped.faceDmg || 0));
+            if (b[6] && !ped.headGone) this.goreHead(ped);
+            for (const limb in LIMB_BITS) if ((b[9] & LIMB_BITS[limb]) && !(ped.limbsGone & LIMB_BITS[limb])) this.goreLimb(ped, limb);
+            if (!n.local) ped.hp = b[7];
+        }
+        // While we hold them we move them; the owner only gets told
+        if (n.local) {
+            if ((s.flags & 256) && !ped.isDead) n.local = false;
+            else return;
+        }
+        // (just let go: a moment for the owner to catch up before its old position pulls them back)
+        if (n.releasedAt !== undefined && this._time - n.releasedAt < 0.6) return;
         if (n.fresh) {
             n.fresh = false;
             ped.mesh.position.set(s.x, 0, s.z);
@@ -1037,7 +1142,16 @@ export class PedestrianSystem {
             ped.state = 'dead';
             ai.deadPosed = false;
         }
+        if (b && b[8] && ped.isDead && !ai.wallSlump) {
+            // Sat dead against a wall where the owner has them
+            this.slumpDead(ped);
+            ped.mesh.position.set(s.x, 0, s.z);
+            ped.mesh.rotation.set(0, s.yaw, 0);
+            ai.yaw = s.yaw;
+            return;
+        }
         if (ped.isDead || ped.state === 'dying' || ped.state === 'ragdoll') {
+            if (ai.wallSlump) return;
             // The fall itself plays out locally from the event; a body that came to rest is placed where the owner has it
             if (ped.state === 'dead' && !ped.death && s.q) {
                 ped.mesh.position.set(s.x, s.q.py, s.z);
@@ -1046,6 +1160,17 @@ export class PedestrianSystem {
             return;
         }
         ped.state = s.state === 'dead' ? 'idle' : s.state;
+        if (b && ped.state === 'held') {
+            ai.held = ai.held || { t: 0, escape: 0, struggle: 0, moving: 0, downPose: 'back' };
+            ai.held.mode = HELD_MODES[b[0]] || 'drag';
+            ai.held.lying = !!b[1];
+            ai.held.moving = Math.min(1, s.speed / 3);
+        } else if (ped.state !== 'held') ai.held = null;
+        if (b && ped.state === 'downed') {
+            ai.downPose = DOWN_POSES[b[2]] || 'back';
+            if (Math.abs((ai.downAge || 0) - b[3] / 10) > 0.3 && (ai.downAge || 0) < 1) ai.downAge = b[3] / 10;
+            ai.getUp = b[4] / 10;
+        } else if (ped.state !== 'downed') ai.downAge = 0;
     }
 
     /** Peds from another game: follow their targets and animate; no AI, no spawning. */
@@ -1063,14 +1188,25 @@ export class PedestrianSystem {
             const ai = ped.ai;
             if (ped.state === 'dying') { this._updateDying(ped, dt); continue; }
             if (ped.state === 'ragdoll' || ped.isDead) {
-                if (ped.death) this._updateDeathMotion(ped, dt);
+                if (ai.wallSlump) this._updateWallSlump(ped, dt);
+                else if (ped.death) this._updateDeathMotion(ped, dt);
                 else if (ped.state === 'dead' && !ai.deadPosed) this._poseDead(ped);
                 continue;
             }
             const n = ped.net;
+            if (n && n.local) {
+                // We hold them: game.html places them; just the animation clock here
+                if (ped.state === 'downed') ai.downAge = (ai.downAge || 0) + dt;
+                if (ai.held) ai.held.t += dt;
+                ped.mesh.rotation.set(0, ai.yaw, 0);
+                this._animate(ped, dt);
+                continue;
+            }
+            if (n && ped.state === 'downed') ai.downAge = (ai.downAge || 0) + dt;
             if (!n) {
                 // Ours alone (a driver who just got carjacked): runs off and is gone after a while
                 ai.localAge = (ai.localAge || 0) + dt;
+                if (ped.state === 'carjacked' && ai.carOut) { this._updateCarOut(ped, dt); continue; }
                 if (ped.state === 'fleeing') this._updateFleeing(ped, dt);
                 if (ai.localAge > 15 && ped.state !== 'carjacked') ai.vanish = true;
                 this._animate(ped, dt);
@@ -2276,27 +2412,57 @@ export class PedestrianSystem {
         if (!ped || ped.isDead || ped.state === 'ragdoll' || ped.state === 'dying') return { knockedOut: false };
         if (!ped.ai) this._initAI(ped);
         const ai = ped.ai;
+        // Pinned to a wall or held down they can take a long beating, but not forever
+        const heldDown = ped.state === 'held' && ai.held && (ai.held.mode === 'pin' || ai.held.mode === 'mount');
+        if (heldDown && !ped.net) hit = Object.assign({}, hit, { damage: hit.damage * 0.3 });
         if (ped.net) {
             // Someone else's person: they decide whether it lands; we just show the stagger
             if (this.net) this.net.cmd('punch', { id: ped.net.id, hit: pickHit(hit) });
             ai.flinch = 1;
-            ai.flinchSide = Math.random() < 0.5 ? 1 : -1;
+            ai.flinchMove = hit.move || 'cross';
+            ai.flinchSide = hit.side || (Math.random() < 0.5 ? 1 : -1);
             return { knockedOut: false };
         }
         ped.hp -= hit.damage;
         const p = ped.mesh.position;
-        // Stagger back along the punch
-        p.x += hit.dirX * 0.22;
-        p.z += hit.dirZ * 0.22;
+        const grounded = ped.state === 'downed' || (ped.state === 'held' && ai.held && ai.held.lying);
+        const pinned = ped.state === 'held' && ai.held && (ai.held.mode === 'pin' || ai.held.mode === 'mount');
+        if (hit.move) this.bruiseFace(ped, pinned ? 1 : 0.5);
+        // Stagger back along the punch over a moment (not when lying down, or held against a wall)
+        const power = { jab: 0.6, cross: 1, hook: 1.1, uppercut: 1.2, stomp: 0 }[hit.move] ?? 1;
+        if (!grounded && ped.state !== 'held') {
+            ai.shoveX = hit.dirX * 1.8 * power;
+            ai.shoveZ = hit.dirZ * 1.8 * power;
+            ai.shoveT = 0.25;
+        }
+        ai.flinchMove = hit.move || 'cross';
         ai.flinch = 1;
-        ai.flinchSide = Math.random() < 0.5 ? 1 : -1;
+        ai.flinchSide = hit.side || (Math.random() < 0.5 ? 1 : -1);
         ai.punching = 0; // a hit interrupts their own swing
+        if (ai.held) ai.held.escape = Math.max(0, ai.held.escape - 0.35); // a beating saps the will to wriggle free
         if (ped.hp <= 0) {
             if (ped.isPoliceOfficer) return { knockedOut: true }; // police.js handles officers
-            this.startShotDeath(ped, { x: hit.x, y: hit.y !== undefined ? hit.y : p.y + 1.6, z: hit.z, dirX: hit.dirX, dirY: 0, dirZ: hit.dirZ });
-            return { knockedOut: true };
+            const kill = { x: hit.x, y: hit.y !== undefined ? hit.y : p.y + 1.6, z: hit.z, dirX: hit.dirX, dirY: 0, dirZ: hit.dirZ };
+            if (grounded) this._dieOnGround(ped, kill);
+            else {
+                if (ped.state === 'held') ai.held = null;
+                if (pinned) ped.state = 'idle';
+                this.startShotDeath(ped, kill);
+                if (pinned) this.slumpDead(ped);   // beaten to death against the wall: down it they slide
+            }
+            return { knockedOut: true, pinned };
         }
         if (ped.isPoliceOfficer) return { knockedOut: false };
+        if (grounded) {
+            ai.downT = Math.max(ai.downT || 0, 1.2) + 0.5; // kept down by the beating
+            ai.getUp = 0;
+            return { knockedOut: false };
+        }
+        if (ped.state === 'held') return { knockedOut: false, pinned };
+        if (hit.knock && Math.random() < hit.knock + (ped.hp < 40 ? 0.25 : 0)) {
+            this.knockDown(ped, hit.dirX, hit.dirZ);
+            return { knockedOut: false, knockedDown: true };
+        }
         this._releaseActivity(ped);
         ai.direct = null;
         ai.path = null;
@@ -2364,6 +2530,521 @@ export class PedestrianSystem {
                 ai.punchCd = (0.6 + Math.random() * 1.0) * (ai.punchSlow || 1);
             }
         }
+    }
+
+    // --------------------------------------------------------------------------------------------
+    // Brawls: knocked down, grabbed, dragged, pinned (the player's side is in game.html / brawl.js)
+    // --------------------------------------------------------------------------------------------
+    /** Puts someone on the ground for a few seconds, falling along (dirX, dirZ) over fallDur seconds. */
+    knockDown(ped, dirX = 0, dirZ = 0, secs = null, fallDur = 0.45) {
+        if (!ped || ped.isDead || ped.isPoliceOfficer || (ped.net && !ped.net.local) || !ped.mesh || ped.state === 'ragdoll' || ped.state === 'dying') return false;
+        if (!ped.ai) this._initAI(ped);
+        const ai = ped.ai;
+        this._releaseActivity(ped);
+        ai.path = null;
+        ai.direct = null;
+        ai.punching = 0;
+        ai.held = null;
+        // Shoved the way they face: on the front; otherwise on the back (now and then the side)
+        const facing = Math.sin(ai.yaw) * dirX + Math.cos(ai.yaw) * dirZ;
+        ai.downPose = facing > 0.3 ? 'front' : (Math.random() < 0.25 ? 'side' : 'back');
+        ai.downT = secs !== null ? secs : 3 + Math.random() * 3;
+        ai.downAge = 0;
+        ai.fallDur = fallDur;
+        ai.getUp = 0;
+        ai.fallDX = dirX;
+        ai.fallDZ = dirZ;
+        ai.moveSpeed = 0;
+        ped.state = 'downed';
+        ai.lastState = 'downed';
+        ai.pose = 'downed';
+        return true;
+    }
+
+    _updateDowned(ped, dt) {
+        const ai = ped.ai;
+        const p = ped.mesh.position;
+        ai.downAge += dt;
+        if (ai.downAge < 0.4) {
+            // The fall carries them a little way
+            const k = (0.4 - ai.downAge) * 2.5;
+            p.x += ai.fallDX * k * dt * 1.6;
+            p.z += ai.fallDZ * k * dt * 1.6;
+        }
+        p.y = ped.floorY || 0;
+        ai.pose = 'downed';
+        if (ai.getUp > 0) {
+            ai.getUp += dt / 1.1;
+            if (ai.getUp >= 1) {
+                ai.getUp = 0;
+                // Back up: angry ones come back for more, the rest run
+                if (ai.fighter || Math.random() < 0.3) {
+                    ai.fighter = true;
+                    ped.state = 'fighting';
+                    ai.fightTime = 0;
+                    ai.punchCd = 0.4 + Math.random() * 0.4;
+                } else {
+                    ped.state = 'fleeing';
+                    ped.fleeTimer = 240;
+                    ped.speed = 0.17;
+                }
+                ai.lastState = ped.state;
+                ai.pose = 'walk';
+            }
+            return;
+        }
+        ai.downT -= dt;
+        if (ai.downT <= 0) ai.getUp = 0.001;
+    }
+
+    /** The player takes hold of someone (standing or lying). */
+    grab(ped) {
+        if (!ped || ped.isDead || ped.isPoliceOfficer || !ped.mesh || ped.state === 'ragdoll' || ped.state === 'dying' ||
+            ped.state === 'carjacked' || ped.state === 'sitting') return false;
+        if (ped.net) ped.net.local = true;   // someone else's: we move them while we hold them (game.html tells the owner)
+        if (!ped.ai) this._initAI(ped);
+        const ai = ped.ai;
+        this._releaseActivity(ped);
+        ai.path = null;
+        ai.direct = null;
+        ai.punching = 0;
+        const lying = ped.state === 'downed';
+        if (lying) ai.downPose = 'back'; // hauled by the wrists, they end up on their back
+        ai.held = { mode: 'drag', lying, downPose: 'back', t: 0, escape: 0, struggle: 0.12 + Math.random() * 0.18, moving: 0 };
+        ped.state = 'held';
+        ai.lastState = 'held';
+        ai.pose = 'held';
+        return true;
+    }
+
+    /** game.html moves a held person each frame: where, which way they face, how ('drag' | 'pin'). */
+    setHeld(ped, x, z, yaw, mode, dt = 0.016) {
+        if (!ped || ped.state !== 'held' || !ped.ai.held) return;
+        const H = ped.ai.held;
+        const p = ped.mesh.position;
+        const moved = Math.hypot(x - p.x, z - p.z);
+        H.moving += (Math.min(1, moved / Math.max(dt, 1e-3) / 3) - H.moving) * Math.min(1, dt * 8);
+        p.x = x;
+        p.z = z;
+        p.y = ped.floorY || 0;
+        ped.ai.yaw = yaw;
+        H.mode = mode;
+        if (mode === 'pin' || mode === 'neck') H.lying = false;
+    }
+
+    /** Lets go. 'drop' leaves them on the ground; otherwise they stagger off (fight or flight). */
+    release(ped, how = 'let') {
+        if (!ped || ped.state !== 'held') return;
+        const ai = ped.ai;
+        const H = ai.held;
+        ai.held = null;
+        if (ped.net) {
+            // Someone else's: back to what their game says (it's told the same)
+            if (how === 'drop' && H && H.mode === 'pin') { this.knockDown(ped, 0, 0, 3); ai.downPose = 'wall'; }
+            else if (H && H.lying) { this.knockDown(ped, 0, 0, 3); ai.downPose = 'back'; ai.downAge = 1; }
+            ped.net.local = false;
+            ped.net.releasedAt = this._time;
+            return;
+        }
+        if (how === 'drop' && H && H.mode === 'pin') {
+            // Off a wall: they slide down it and sit slumped against it (longer the worse the beating)
+            this.knockDown(ped, 0, 0, ped.hp < 25 ? 8 + Math.random() * 6 : 2.5 + Math.random() * 2);
+            ai.downPose = 'wall';
+            return;
+        }
+        if (how === 'drop' || (H && H.lying)) {
+            this.knockDown(ped, -Math.sin(ai.yaw) * 0.3, -Math.cos(ai.yaw) * 0.3, 1.5 + Math.random() * 2);
+            if (H && H.lying) ai.downPose = H.downPose || 'back';
+            ai.downAge = 1;  // already on the ground: no fall
+            return;
+        }
+        if (ai.fighter || Math.random() < 0.35) {
+            ai.fighter = true;
+            ped.state = 'fighting';
+            ai.fightTime = 0;
+            ai.punchCd = 0.6;
+        } else {
+            ped.state = 'fleeing';
+            ped.fleeTimer = 240;
+            ped.speed = 0.17;
+        }
+        ai.lastState = ped.state;
+        ai.pose = 'walk';
+    }
+
+    _updateHeld(ped, dt) {
+        const ai = ped.ai;
+        const H = ai.held;
+        if (!H) {
+            ped.state = 'fleeing';
+            return;
+        }
+        H.t += dt;
+        ai.pose = 'held';
+        ai.moveSpeed = 0;
+        // Wriggling free: standing people manage it eventually unless kept busy
+        if (!H.lying && H.mode !== 'pin') {
+            H.escape += dt * H.struggle;
+            if (H.escape >= 1) {
+                H.broke = true;
+                this.release(ped, 'let');
+            }
+        }
+    }
+
+    /**
+     * Damage to the face, in punches' worth: the skin goes red and purple, then a bloody nose and
+     * mouth, swelling, cuts, blood down the shirt, and finally a smashed face with the eyes swollen shut.
+     * Returns the total so far.
+     */
+    bruiseFace(ped, amount = 1) {
+        const rig = ped && ped.mesh && ped.mesh.userData.rig;
+        if (!rig || !rig.bindings || !rig.neck || ped.headGone) return 0;
+        const f = (ped.faceDmg || 0) + amount;
+        ped.faceDmg = f;
+        const B = rig.bindings;
+        const add = (part, j, hex) => { if (!B.some((b) => b.part === part)) B.push({ part, joint: j, color: new THREE.Color(hex) }); };
+        const head = B.find((b) => b.part === 'head');
+        if (head) {
+            if (!head.skin0) head.skin0 = head.color.clone();
+            head.color.copy(head.skin0).lerp(_BRUISED, Math.min(0.55, f * 0.05));
+        }
+        if (f >= 1) add('faceBlood', rig.neck, 0x7a0000);
+        if (f >= 3) add('faceSwell', rig.neck, 0x6b3550);
+        if (f >= 5) add('faceGash', rig.neck, 0x4a0000);
+        if (f >= 6 && rig.torso) add('shirtBlood', rig.torso, 0x5c0000);
+        if (f >= 8) {
+            add('faceMash', rig.neck, 0x560000);
+            const i = B.findIndex((b) => b.part === 'eyes');
+            if (i >= 0) B.splice(i, 1);    // swollen shut
+        }
+        return f;
+    }
+
+    /** A point-blank shot to the head: there's not much head left (they're killed separately). */
+    goreHead(ped) {
+        const rig = ped && ped.mesh && ped.mesh.userData.rig;
+        if (!rig || !rig.bindings || !rig.neck || ped.headGone) return;
+        ped.headGone = true;
+        const B = rig.bindings;
+        const head = B.find((b) => b.part === 'head');
+        const skin = head ? (head.skin0 || head.color).clone() : new THREE.Color(0xc68a62);
+        const gone = new Set(['head', 'eyes', 'hairShort', 'hairLong', 'cap', 'policeHat', 'capBrim', 'faceBlood', 'faceSwell', 'faceGash', 'faceMash']);
+        for (let i = B.length - 1; i >= 0; i--) if (gone.has(B[i].part)) B.splice(i, 1);
+        B.push({ part: 'headGore', joint: rig.neck, color: new THREE.Color(0x5a0000) });
+        B.push({ part: 'skullStub', joint: rig.neck, color: skin.lerp(_BRUISED, 0.3) });
+        if (rig.torso && !B.some((b) => b.part === 'shirtBlood')) B.push({ part: 'shirtBlood', joint: rig.torso, color: new THREE.Color(0x5c0000) });
+    }
+
+    /**
+     * A shotgun blast up close tears off a limb ('armL' | 'armR' | 'legL' | 'legR'), alive or dead:
+     * a ragged stump with the bone showing is left. Returns the bindings that came off (for limbMesh)
+     * or null if it was already gone.
+     */
+    goreLimb(ped, limb) {
+        const rig = ped && ped.mesh && ped.mesh.userData.rig;
+        const bit = LIMB_BITS[limb];
+        if (!rig || !rig.bindings || !bit || (ped.limbsGone & bit)) return null;
+        ped.limbsGone = (ped.limbsGone || 0) | bit;
+        const [root, mid] = limb === 'armL' ? [rig.shoulderL, rig.elbowL] : limb === 'armR' ? [rig.shoulderR, rig.elbowR]
+            : limb === 'legL' ? [rig.legL, rig.kneeL] : [rig.legR, rig.kneeR];
+        const B = rig.bindings;
+        const lost = [];
+        for (let i = B.length - 1; i >= 0; i--) {
+            const j = B[i].joint;
+            if (j === root || j === mid || (j && j.parent === mid)) lost.push(B.splice(i, 1)[0]);
+        }
+        // (whatever was in that hand goes with it)
+        if (rig.props) for (const k in rig.props) if (lost.includes(rig.props[k])) rig.props[k] = null;
+        B.push({ part: 'limbStub', joint: root, color: new THREE.Color(0x5a0000) });
+        B.push({ part: 'boneStub', joint: root, color: new THREE.Color(0xe6dccb) });
+        if (rig.torso && !B.some((b) => b.part === 'shirtBlood')) B.push({ part: 'shirtBlood', joint: rig.torso, color: new THREE.Color(0x5c0000) });
+        return lost;
+    }
+
+    /**
+     * The parts goreLimb took off as one loose object pivoting at `pivot` (world), posed as they
+     * were when they came off (the joints' matrices must be current). Inside it the limb runs down
+     * its -Y (`axis` is the limb's world direction from the pivot), so rotation.x = -PI/2 lays it flat.
+     */
+    limbMesh(lost, pivot, axis) {
+        const g = new THREE.Group();
+        g.position.copy(pivot);
+        g.rotation.order = 'YXZ';
+        const q = new THREE.Quaternion().setFromUnitVectors(axis, new THREE.Vector3(0, -1, 0));
+        const inv = new THREE.Matrix4().makeRotationFromQuaternion(q)
+            .multiply(new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z));
+        g.quaternion.copy(q.invert());
+        for (const b of lost) {
+            const src = this.renderer.meshes[b.part];
+            if (!src) continue;
+            const m = new THREE.Mesh(src.geometry, new THREE.MeshLambertMaterial({ color: b.color }));
+            m.matrixAutoUpdate = false;
+            m.matrix.multiplyMatrices(inv, b.joint.matrixWorld);
+            m.castShadow = true;
+            g.add(m);
+        }
+        // Where it was torn: a bloody end
+        const end = new THREE.Mesh(this.renderer.meshes.limbStub.geometry, new THREE.MeshLambertMaterial({ color: 0x5a0000 }));
+        end.rotation.x = Math.PI;
+        end.scale.setScalar(0.9);
+        g.add(end);
+        return g;
+    }
+
+    /**
+     * Killed against a wall: the body slides down it and stays sat there, slumped (instead of the
+     * falling death, which would tip it back through the wall). Call after the kill.
+     */
+    slumpDead(ped) {
+        if (!ped || !ped.isDead || !ped.mesh || !ped.mesh.userData.rig) return;
+        ped.death = null;
+        ped.state = 'dead';
+        ped.ai.deadPosed = true;
+        ped.ai.held = null;
+        ped.ai.wallSlump = { t: 0, side: Math.random() < 0.5 ? 1 : -1 };
+    }
+
+    _updateWallSlump(ped, dt) {
+        const S = ped.ai.wallSlump;
+        if (S.t > 1.2) return;   // settled
+        S.t += dt;
+        const rig = ped.mesh.userData.rig;
+        const u = Math.min(1, S.t / 0.85);
+        const k = u * u * (3 - 2 * u);
+        const pitch = this._wallSit(rig, k, ped.mesh.scale.y || 1, 1, 0);
+        rig.neck.rotation.set(pitch, 0.3 * k * S.side, 0.35 * k * S.side);
+        rig.torso.rotation.z += 0.12 * k * S.side;
+    }
+
+    /**
+     * Sitting on the ground with the back against a wall, k 0..1 of the way down (knees buckle on
+     * the way); limp 0..1 lets the arms and head go. Returns the head pitch.
+     */
+    _wallSit(rig, k, h, limp, t) {
+        const buckle = Math.sin(Math.PI * Math.min(1, k * 1.15));
+        rig.body.rotation.set(0, 0, 0);
+        rig.body.position.y = (0.1 / h - 0.92) * k;
+        rig.legL.rotation.set(-1.45 * k, 0, 0.12 * k);
+        rig.legR.rotation.set(-1.35 * k, 0, -0.14 * k);
+        rig.kneeL.rotation.x = 0.15 * k + 1.0 * buckle;
+        rig.kneeR.rotation.x = 0.35 * k + 0.8 * buckle;
+        rig.torso.rotation.set(-0.06 * k + 0.22 * k * limp, 0, 0);
+        const breathe = t ? Math.sin(t * 1.4) * 0.03 * (1 - limp) : 0;
+        rig.shoulderL.rotation.set((-0.25 + breathe) * k * (1 - limp) + 0.05 * k, 0, -0.18 * k);
+        rig.shoulderR.rotation.set((-0.25 - breathe) * k * (1 - limp) + 0.05 * k, 0, 0.18 * k);
+        rig.elbowL.rotation.x = -0.5 * k * (1 - limp) - 0.15 * k;
+        rig.elbowR.rotation.x = -0.5 * k * (1 - limp) - 0.15 * k;
+        return (0.15 + 0.55 * limp) * k;
+    }
+
+    /** Killed while lying down: they stay down (handed to the ragdoll already flat on the ground). */
+    _dieOnGround(ped, hit) {
+        const ai = ped.ai;
+        const pose = (ai.held && ai.held.lying ? ai.held.downPose : ai.downPose) || 'back';
+        ai.held = null;
+        ped.state = 'downed';
+        this.startShotDeath(ped, hit);
+        if (ped.state !== 'dying') return;
+        this._beginFall(ped, hit.dirX || 0, hit.dirZ || 0, 0.15, 0, 0);
+        const face = pose === 'front' ? 1 : -1;
+        const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), ai.yaw)
+            .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), face * Math.PI / 2));
+        ped.ragdollHeading = ai.yaw;
+        ped.ragdollFace = face;
+        ped.ragdollQuat.copy(q);
+        ped.ragdollCom.set(0, 1.0, 0).applyQuaternion(q).add(ped.mesh.position);
+        ped.ragdollCom.y = (ped.floorY || 0) + 0.25;
+        ped.ragdollVel.set((hit.dirX || 0) * 0.15, 0, (hit.dirZ || 0) * 0.15);
+        ped.ragdollAngVel.set(0, 0, 0);
+        const rig = ped.mesh.userData.rig;
+        if (rig) rig.body.rotation.set(0, 0, 0);
+    }
+
+    /**
+     * A player's body in a fight pose (multiplayer.js): o = { pose: 'held' | 'downed', mode, lying,
+     * downPose, hp }. holder keeps the clocks between frames.
+     */
+    poseBrawlBody(holder, rig, o, dt) {
+        const ai = holder.ai || (holder.ai = { downAge: 0, getUp: 0, held: { t: 0, moving: 0 } });
+        const changed = ai.pose !== o.pose || ai.held.mode !== o.mode;
+        ai.pose = o.pose;
+        ai.held.mode = o.mode;
+        ai.held.lying = !!o.lying;
+        ai.downPose = o.downPose || 'back';
+        ai.downAge = changed ? 0 : ai.downAge + dt;
+        ai.getUp = 0;
+        holder.hp = o.hp === undefined ? 100 : o.hp;
+        rig.body.rotation.set(0, 0, 0);
+        rig.body.position.y = 0;
+        for (const j of ['legL', 'legR', 'torso']) rig[j].rotation.set(0, 0, 0);
+        const pitch = this._animateBrawl(holder, rig, this._time, dt);
+        rig.neck.rotation.set(pitch, 0, 0);
+    }
+
+    /** Poses for the brawl states; returns the head pitch. */
+    _animateBrawl(ped, rig, t, dt) {
+        const ai = ped.ai;
+        const h = ped.mesh.scale.y || 1;
+        const lie = (which, k) => {
+            // Lying on the back / front / side (pivoting over the feet), k 0..1 of the way down
+            if (which === 'side') rig.body.rotation.set(0, 0, (Math.PI / 2) * k);
+            else rig.body.rotation.x = (which === 'front' ? 1 : -1) * (Math.PI / 2) * k;
+            rig.body.position.y = (0.13 / h) * k;
+        };
+        if (ai.pose === 'downed') {
+            const which = ai.downPose || 'back';
+            if (which === 'wall') {
+                // Sliding down the wall, sat against it, and (in time) back up
+                const k = ai.getUp > 0 ? 1 - Math.min(1, ai.getUp) : Math.min(1, ai.downAge / 0.9);
+                const limp = Math.max(0, Math.min(1, 1 - (ped.hp - 1) / 35));
+                return this._wallSit(rig, k * k * (3 - 2 * k), h, limp, t);
+            }
+            if (ai.getUp > 0) {
+                // Roll up to the knees, then stand
+                const g = ai.getUp;
+                if (g < 0.55) {
+                    const k = 1 - g / 0.55;
+                    lie(which, k);
+                    rig.legL.rotation.x = rig.legR.rotation.x = -1.2 * (1 - k);
+                    rig.kneeL.rotation.x = rig.kneeR.rotation.x = 1.9 * (1 - k * 0.5);
+                    rig.shoulderL.rotation.x = rig.shoulderR.rotation.x = -0.9;
+                    rig.body.position.y += -0.44 * (1 - k);
+                } else {
+                    const k = (g - 0.55) / 0.45;
+                    rig.body.position.y = -0.44 * (1 - k);
+                    rig.legL.rotation.x = -1.2 * (1 - k);
+                    rig.legR.rotation.x = -0.4 * (1 - k);
+                    rig.kneeL.rotation.x = 1.9 * (1 - k);
+                    rig.kneeR.rotation.x = 1.0 * (1 - k);
+                    rig.torso.rotation.x = 0.5 * (1 - k);
+                    rig.shoulderL.rotation.x = rig.shoulderR.rotation.x = -0.6 * (1 - k);
+                }
+                return 0.2;
+            }
+            const k = Math.min(1, ai.downAge / (ai.fallDur || 0.45));
+            const fall = k * k;   // gravity: slow to start, fast at the end
+            lie(which, fall);
+            // Arms thrown up and out as they go over, until they hit the ground
+            const flail = Math.sin(Math.PI * Math.min(1, k * 1.15)) * (k < 1 ? 1 : 0);
+            // Knees buckle on the way down; on the ground: writhing, an arm over the face, knees drawn up
+            const hurt = 0.5 + 0.5 * Math.sin(t * 1.7);
+            rig.kneeL.rotation.x = 0.6 * (1 - fall) + fall * (0.5 + hurt * 0.6);
+            rig.kneeR.rotation.x = 0.4 * (1 - fall) + fall * (0.3 + (1 - hurt) * 0.5);
+            rig.legL.rotation.x = -fall * (0.2 + hurt * 0.45);
+            rig.legR.rotation.x = -fall * (0.1 + (1 - hurt) * 0.3);
+            rig.shoulderL.rotation.set(-1.6 * fall - Math.sin(t * 2.3) * 0.3 * fall, 0, -0.3);
+            rig.elbowL.rotation.x = -2.0 * fall;
+            rig.shoulderR.rotation.set(-0.9 * fall + Math.sin(t * 1.9 + 1) * 0.35 * fall, 0, 0.5 * fall);
+            rig.elbowR.rotation.x = -1.4 * fall;
+            if (flail > 0) {
+                rig.shoulderL.rotation.x -= 1.4 * flail;
+                rig.shoulderR.rotation.x -= 1.2 * flail;
+                rig.shoulderL.rotation.z -= 0.6 * flail;
+                rig.shoulderR.rotation.z += 0.6 * flail;
+                rig.elbowL.rotation.x += 1.2 * flail;
+                rig.elbowR.rotation.x += 1.0 * flail;
+            }
+            rig.torso.rotation.x = Math.sin(t * 2.1) * 0.06 * fall;
+            rig.torso.rotation.y = Math.sin(t * 1.3) * 0.12 * fall;
+            if (ai.flinch > 0) {
+                // A stomp: curl up tight
+                const f = Math.sin(ai.flinch * Math.PI);
+                rig.kneeL.rotation.x += f * 0.9;
+                rig.kneeR.rotation.x += f * 0.9;
+                rig.legL.rotation.x -= f * 0.7;
+                rig.legR.rotation.x -= f * 0.7;
+                rig.shoulderL.rotation.x -= f * 0.8;
+                rig.shoulderR.rotation.x -= f * 0.8;
+            }
+            return -0.1 * fall;
+        }
+        // Held
+        const H = ai.held || {};
+        const daze = Math.max(0, Math.min(1, 1 - (ped.hp - 1) / 35));
+        const alive = 1 - daze;
+        if (H.lying && H.mode === 'mount') {
+            // On their back with you on top: arms up over the face, legs bucking (less as they fade)
+            lie('back', 1);
+            const buck = Math.sin(t * 4.3) * alive;
+            rig.shoulderL.rotation.set(-2.3 * alive - 0.2 * daze, 0, -0.35 - 0.6 * daze);
+            rig.shoulderR.rotation.set(-2.2 * alive - 0.2 * daze + Math.sin(t * 5.1) * 0.25 * alive, 0, 0.35 + 0.6 * daze);
+            rig.elbowL.rotation.x = -2.0 * alive - 0.2;
+            rig.elbowR.rotation.x = -1.9 * alive - 0.2;
+            rig.legL.rotation.x = -0.25 - 0.35 * Math.max(0, buck);
+            rig.legR.rotation.x = -0.2 - 0.35 * Math.max(0, -buck);
+            rig.kneeL.rotation.x = 0.4 + 0.6 * Math.max(0, buck);
+            rig.kneeR.rotation.x = 0.35 + 0.6 * Math.max(0, -buck);
+            rig.torso.rotation.y = Math.sin(t * 2.7) * 0.18 * alive;
+            return (0.1 + Math.sin(t * 3.1) * 0.15 * alive) + daze * 0.2;
+        }
+        if (H.lying) {
+            // Dragged along the ground by the wrists, head first: kicking, twisting, bucking
+            lie('back', 1);
+            const m = 0.45 + H.moving;
+            rig.shoulderL.rotation.set(-2.9, 0, -0.25 + Math.sin(t * 4.1) * 0.12 * alive);
+            rig.shoulderR.rotation.set(-2.9, 0, 0.25 - Math.sin(t * 3.7) * 0.12 * alive);
+            rig.elbowL.rotation.x = rig.elbowR.rotation.x = -0.2;
+            const kick = Math.sin(t * 6.3) * 0.6 * m * alive;
+            const kick2 = Math.sin(t * 5.1 + 1.3) * 0.6 * m * alive;
+            rig.legL.rotation.x = -0.25 + kick;
+            rig.legR.rotation.x = -0.25 + kick2;
+            rig.legL.rotation.z = Math.sin(t * 2.2) * 0.2 * alive;
+            rig.legR.rotation.z = -Math.sin(t * 2.6) * 0.2 * alive;
+            rig.kneeL.rotation.x = 0.3 + Math.max(0, -kick) * 1.4;
+            rig.kneeR.rotation.x = 0.3 + Math.max(0, -kick2) * 1.4;
+            rig.torso.rotation.y = Math.sin(t * 3.3) * 0.35 * alive;
+            rig.torso.rotation.z = Math.sin(t * 2.4) * 0.15 * alive;
+            return 0.2 + Math.sin(t * 4.7) * 0.3 * alive;
+        }
+        if (H.mode === 'neck') {
+            // Held up by the throat in front of you: both hands clawing at your arm, feet scrabbling
+            const step = t * 10;
+            const scrab = 0.25 + H.moving;
+            rig.body.position.y = 0.05;
+            rig.torso.rotation.x = -0.18 + daze * 0.2;
+            rig.legL.rotation.x = Math.sin(step) * 0.45 * scrab * alive + 0.1;
+            rig.legR.rotation.x = -Math.sin(step) * 0.45 * scrab * alive + 0.1;
+            rig.kneeL.rotation.x = 0.2 + Math.max(0, Math.cos(step)) * 0.6 * scrab * alive + daze * 0.3;
+            rig.kneeR.rotation.x = 0.2 + Math.max(0, -Math.cos(step)) * 0.6 * scrab * alive + daze * 0.3;
+            const w = Math.sin(t * 8) * 0.15 * alive;
+            rig.shoulderL.rotation.set(-1.9 * alive + w, 0, -0.25);
+            rig.shoulderR.rotation.set(-1.9 * alive - w, 0, 0.25);
+            rig.elbowL.rotation.x = -1.7 * alive - 0.1;
+            rig.elbowR.rotation.x = -1.7 * alive - 0.1;
+            return -0.35 * alive + daze * 0.3;
+        }
+        if (H.mode === 'pin') {
+            // Back to the wall, up on the toes, hands clawing at the grip on the collar
+            // (beaten senseless: the hands drop, the knees go, the head hangs, held up by the collar)
+            const daze = Math.max(0, Math.min(1, 1 - (ped.hp - 1) / 35));
+            const alive = 1 - daze;
+            rig.body.position.y = 0.04 - daze * 0.06;
+            rig.torso.rotation.x = -0.12 + daze * 0.18;
+            rig.legL.rotation.x = 0.08;
+            rig.legR.rotation.x = 0.12;
+            rig.kneeL.rotation.x = 0.15 + daze * 0.35 + Math.sin(t * 5) * 0.08 * alive;
+            rig.kneeR.rotation.x = 0.1 + daze * 0.3 + Math.sin(t * 5 + 2) * 0.08 * alive;
+            const w = Math.sin(t * 7) * 0.2 * alive;
+            rig.shoulderL.rotation.set(-1.7 * alive + w + daze * 0.1, 0, -0.5 * alive - 0.15 * daze);
+            rig.shoulderR.rotation.set(-1.7 * alive - w + daze * 0.1, 0, 0.5 * alive + 0.15 * daze);
+            rig.elbowL.rotation.x = -1.5 * alive - 0.2 * daze;
+            rig.elbowR.rotation.x = -1.5 * alive - 0.2 * daze;
+            return -0.25 * alive + daze * (0.22 + Math.sin(t * 1.3) * 0.08);   // lolling, face still towards you
+        }
+        // Dragged on their feet, stumbling backwards, hands on the arm that has them
+        const ph = t * 9 * (0.3 + H.moving);
+        rig.torso.rotation.x = -0.35;
+        rig.body.rotation.x = -0.12 * (0.5 + H.moving);
+        rig.legL.rotation.x = Math.sin(ph) * 0.55 * (0.2 + H.moving);
+        rig.legR.rotation.x = -Math.sin(ph) * 0.55 * (0.2 + H.moving);
+        rig.kneeL.rotation.x = 0.25 + Math.max(0, Math.cos(ph)) * 0.5 * H.moving;
+        rig.kneeR.rotation.x = 0.25 + Math.max(0, -Math.cos(ph)) * 0.5 * H.moving;
+        rig.shoulderL.rotation.set(-2.0 + Math.sin(t * 6) * 0.2, 0, -0.2);
+        rig.shoulderR.rotation.set(-2.0 - Math.sin(t * 6) * 0.2, 0, 0.2);
+        rig.elbowL.rotation.x = -1.2;
+        rig.elbowR.rotation.x = -1.2;
+        return -0.3;
     }
 
     // --------------------------------------------------------------------------------------------
@@ -2845,8 +3526,10 @@ export class PedestrianSystem {
         let headPitch = 0;
         const pose = ai.pose;
         // Scene poses (lying down, kneeling, dancing...) come from pedestrianScenes.js
-        const custom = (pose === 'walk' || pose === 'run' || pose === 'fight' || pose === 'sit' || pose === 'stand' || pose === 'talk')
-            ? null : this.scenes.pose(ped, rig, t, pose);
+        const brawl = pose === 'downed' || pose === 'held';
+        const custom = brawl ? this._animateBrawl(ped, rig, t, dt)
+            : (pose === 'walk' || pose === 'run' || pose === 'fight' || pose === 'sit' || pose === 'stand' || pose === 'talk')
+                ? null : this.scenes.pose(ped, rig, t, pose);
         if (custom !== null) {
             headPitch = custom;
         } else if ((pose === 'walk' || pose === 'run') && ai.moveSpeed > 0.05) {
@@ -2887,14 +3570,23 @@ export class PedestrianSystem {
             rig.shoulderR.rotation.set(-1.15, 0, 0.35);
             rig.elbowL.rotation.set(-1.85, 0, 0);
             rig.elbowR.rotation.set(-1.85, 0, 0);
+            // Guard drifts and the weight shifts from foot to foot
+            rig.torso.rotation.y = Math.sin(t * 1.7) * 0.12;
+            rig.shoulderL.rotation.x += Math.sin(t * 2.3) * 0.12;
+            rig.shoulderR.rotation.x += Math.sin(t * 2.3 + 2) * 0.12;
+            rig.body.rotation.z = Math.sin(t * 3) * 0.04;
             if (ai.punching > 0) {
-                const k = ai.punching < 0.24 ? ai.punching / 0.24 : Math.max(0, 1 - (ai.punching - 0.24) / 0.26);
+                // Wind up (cock the arm, turn away), snap it out, then pull back to the guard
+                const p = ai.punching;
+                const wind = p < 0.13 ? p / 0.13 : Math.max(0, 1 - (p - 0.13) / 0.08);
+                const k = p < 0.13 ? 0 : p < 0.24 ? (p - 0.13) / 0.11 : Math.max(0, 1 - (p - 0.24) / 0.26);
                 const sh = ai.punchArm > 0 ? rig.shoulderL : rig.shoulderR;
                 const el = ai.punchArm > 0 ? rig.elbowL : rig.elbowR;
-                sh.rotation.x = -1.15 - 0.4 * k;
+                sh.rotation.x = -1.15 + 0.35 * wind - 0.45 * k;
                 sh.rotation.z *= 1 - k;
-                el.rotation.x = -1.85 + 1.75 * k;
-                rig.torso.rotation.y = -ai.punchArm * 0.35 * k;
+                el.rotation.x = -1.85 - 0.3 * wind + 1.75 * k;
+                rig.torso.rotation.y = ai.punchArm * 0.3 * wind - ai.punchArm * 0.45 * k;
+                rig.torso.rotation.x = 0.12 + 0.12 * k;
             }
         } else if (pose === 'sit') {
             const seatH = ai.seat >= 0 && this.nav ? (SEAT_HEIGHT[this.nav.seatType[ai.seat]] || 0.45) : 0.45;
@@ -2955,18 +3647,50 @@ export class PedestrianSystem {
         // Dog leashes, shopping bags, drinks, stoops, staggers, handcuffs...
         if (custom === null) headPitch += this.scenes.overlay(ped, rig, t);
 
-        // Getting punched: head snaps back and the body rocks
+        // Getting punched: the reaction depends on the blow. Hooks whip the head round, uppercuts snap
+        // it back, jabs just jolt it; the heavy ones buckle the knees and throw the arms out
+        let whip = 0;
         if (ai.flinch > 0) {
-            ai.flinch = Math.max(0, ai.flinch - dt * 3.5);
-            const f = Math.sin(ai.flinch * Math.PI);
-            rig.torso.rotation.x -= f * 0.35;
-            rig.torso.rotation.z += ai.flinchSide * f * 0.15;
-            headPitch -= f * 0.6;
+            ai.flinch = Math.max(0, ai.flinch - dt * 3.2);
+            // fast out, slow back
+            const u = 1 - ai.flinch;
+            const f = u < 0.2 ? u / 0.2 : Math.pow(1 - (u - 0.2) / 0.8, 1.6);
+            const sd = ai.flinchSide || 1;
+            const mv = ai.flinchMove || 'cross';
+            if (mv === 'hook') {
+                whip = sd * 0.85 * f;
+                rig.torso.rotation.y += sd * 0.35 * f;
+                rig.torso.rotation.z += sd * 0.25 * f;
+                rig.body.rotation.z += sd * 0.07 * f;
+                headPitch -= 0.15 * f;
+            } else if (mv === 'uppercut') {
+                headPitch -= 1.0 * f;
+                rig.torso.rotation.x -= 0.45 * f;
+                rig.body.position.y += 0.04 * f;
+            } else if (mv === 'jab') {
+                headPitch -= 0.38 * f;
+                rig.torso.rotation.x -= 0.12 * f;
+                whip = sd * 0.15 * f;
+            } else {
+                headPitch -= 0.6 * f;
+                rig.torso.rotation.x -= 0.3 * f;
+                rig.torso.rotation.z += sd * 0.12 * f;
+                whip = sd * 0.3 * f;
+            }
+            if (mv !== 'jab' && ai.pose !== 'downed' && ai.pose !== 'held') {
+                rig.kneeL.rotation.x += 0.4 * f;
+                rig.kneeR.rotation.x += 0.3 * f;
+                rig.body.position.y -= 0.05 * f;
+                rig.shoulderL.rotation.z -= 0.5 * f;
+                rig.shoulderR.rotation.z += 0.5 * f;
+            }
         }
 
         // Head turns smoothly towards whatever the ped is looking at
         const lookNow = rig.neck.rotation.y;
-        rig.neck.rotation.set(headPitch, lookNow + (ai.look - lookNow) * Math.min(1, dt * 5), 0);
+        const lookBase = lookNow - (ai.lastWhip || 0);
+        rig.neck.rotation.set(headPitch, lookBase + (ai.look - lookBase) * Math.min(1, dt * 5) + whip, 0);
+        ai.lastWhip = whip;
         // Keep the body facing its heading (ragdoll/kill code may have touched the root)
         ped.mesh.rotation.set(0, ai.yaw, 0);
         if (ped.state !== 'sitting' && pose !== 'sit') ped.mesh.position.y = ped.floorY || 0;
@@ -3215,6 +3939,126 @@ export class PedestrianSystem {
         this._pickStops(ped, node);
         ped.state = 'walking';
         return ped;
+    }
+
+    /**
+     * The driver of `car` ({ position, yaw }) getting out of the driver's seat (`seat`: car space,
+     * riders.js seatLocal) and running from `threat` (a live {x, z}): how 'pulled' (yanked out by
+     * someone at the door) or 'hands' (held up at gunpoint: hands up, opens the door, climbs out,
+     * backs off, then runs). State 'carjacked' until they run; `ai.carOut.door` (0..1) is their door.
+     */
+    driverOut(car, seat, style, seed, how, threat) {
+        const ped = this._makePed(car.position.x, car.position.z, (car.yaw || 0) + Math.PI, style, seed);
+        ped.state = 'carjacked';
+        ped.isCarjackedDriver = true;
+        ped.ai.lastState = 'carjacked';
+        ped.ai.phone = false;
+        ped.ai.carOut = { car, seat, how, threat, t: 0, door: how === 'hands' ? 0 : 1 };
+        this._updateCarOut(ped, 0);
+        return ped;
+    }
+
+    _updateCarOut(ped, dt) {
+        const ai = ped.ai, C = ai.carOut, car = C.car, rig = ped.mesh.userData.rig;
+        const t = (C.t += dt);
+        const hands = C.how === 'hands';
+        // seated until t0, out of the car by t1, standing there (hands up / stumbling) until t2
+        const [t0, t1, t2] = hands ? [1.0, 2.1, 3.7] : [0.4, 0.95, 1.5];
+        const out = smooth01((t - t0) / (t1 - t0));
+        if (hands) C.door = smooth01((t - 0.55) / 0.4);
+        const p = ped.mesh.position;
+        const yaw = car.yaw || 0, sin = Math.sin(yaw), cos = Math.cos(yaw);
+        const side = C.seat.x > 0 ? 1 : -1;            // which side of the car their door is
+        if (t < t1) {
+            // Car space (x right, z back): out of the seat, past the open door (it swings forward)
+            const ox = side * (hands ? 1.3 : 1.55), oz = C.seat.z + (hands ? 0.45 : 1.1);
+            const lx = C.seat.x + (ox - C.seat.x) * out, lz = C.seat.z + (oz - C.seat.z) * out;
+            p.x = car.position.x + lx * cos + lz * sin;
+            p.z = car.position.z - lx * sin + lz * cos;
+            // Legs swing out first, the body turns to face out of the door
+            ai.yaw = yaw + Math.PI - side * (Math.PI / 2) * smooth01(out * 1.6);
+        } else {
+            const ax = p.x - C.threat.x, az = p.z - C.threat.z, d = Math.hypot(ax, az) || 1;
+            if (hands) {
+                // Backing off, out from the car (not into it) and towards its back, facing the gun
+                ai.yaw = lerpAngle(ai.yaw, Math.atan2(-ax, -az), Math.min(1, dt * 6));
+                const bx = side * cos + 0.6 * sin, bz = -side * sin + 0.6 * cos, bl = Math.hypot(bx, bz);
+                p.x += (bx / bl) * 0.6 * dt;
+                p.z += (bz / bl) * 0.6 * dt;
+            } else {
+                // Thrown clear: stumbling off towards the back of the car
+                const k = 1 - (t - t1) / (t2 - t1);
+                p.x += (side * cos * 1.4 + sin * 1.8) * k * dt;
+                p.z += (-side * sin * 1.4 + cos * 1.8) * k * dt;
+            }
+        }
+        p.y = ped.floorY || 0;
+        ped.mesh.rotation.set(0, ai.yaw, 0);
+
+        // ---- Pose: seated → ducking out of the door frame → standing ----
+        resetRig(rig);
+        const h = ped.mesh.scale.y || 1;
+        const sit = 1 - out, duck = Math.sin(out * Math.PI);
+        rig.body.position.y = ((C.seat.y + 0.06) / h - 0.92) * sit - 0.1 * duck;
+        const lead = 1 - smooth01(out * 1.7);           // the door-side leg goes out first
+        rig.legL.rotation.set(-1.45 * lead, 0, 0.06 * lead);
+        rig.legR.rotation.set(-1.4 * sit, 0, -0.06 * sit);
+        rig.kneeL.rotation.x = 1.4 * lead + 0.5 * duck;
+        rig.kneeR.rotation.x = 1.3 * sit + 0.3 * duck;
+        rig.torso.rotation.x = 0.45 * duck;
+        const shake = Math.sin(t * 31) * 0.05;
+        if (hands) {
+            // Hands off the wheel and up; the left one pushes the door open and holds the frame on the way out
+            const up = smooth01(t / 0.45);
+            const reach = t < t1 ? smooth01((t - 0.5) / 0.3) * (1 - smooth01((t - t1 + 0.25) / 0.25)) : 0;
+            const armUp = (sh, el, z0, z1, x0) => {
+                sh.rotation.set(x0 + (-2.75 - x0) * up + shake, 0, z0 + (z1 - z0) * up);
+                el.rotation.x = -0.55 + 0.05 * up;
+            };
+            armUp(rig.shoulderL, rig.elbowL, -0.18, 0.45, -1.15);
+            armUp(rig.shoulderR, rig.elbowR, 0.18, -0.45, -1.15);
+            if (reach > 0) {
+                rig.shoulderL.rotation.set(-2.75 + 1.4 * reach, 0, 0.45 + 0.4 * reach);
+                rig.elbowL.rotation.x = -0.5 + 0.3 * reach;
+            }
+            rig.neck.rotation.set(t < t0 ? Math.sin(t * 2) * 0.1 : -0.1, 0, 0);
+            if (t > t1) {
+                // Stepping back: a nervous shuffle
+                const s = Math.sin(t * 7);
+                rig.legL.rotation.x = s * 0.25;
+                rig.legR.rotation.x = -s * 0.25;
+                rig.torso.rotation.x = -0.1;
+            }
+        } else {
+            // Arms up over the face as the door is ripped open, flailing as they're hauled out, then windmilling
+            const flail = t < t0 ? 0 : 1;
+            const s = Math.sin(t * 14);
+            rig.shoulderL.rotation.set(-2.0 + 0.7 * s * flail + shake, 0, 0.3 + 0.4 * flail);
+            rig.shoulderR.rotation.set(-2.0 - 0.7 * s * flail - shake, 0, -0.3 - 0.4 * flail);
+            rig.elbowL.rotation.x = -1.6 + 0.9 * flail;
+            rig.elbowR.rotation.x = -1.6 + 0.9 * flail;
+            rig.torso.rotation.z = t < t0 ? 0.25 * smooth01(t / 0.2) : 0;   // leaning away from the door
+            if (t > t1) {
+                const k = (t - t1) / (t2 - t1), w = Math.sin(t * 16);
+                rig.torso.rotation.x = 0.5 * (1 - k);
+                rig.legL.rotation.x = -w * 0.7;
+                rig.legR.rotation.x = w * 0.7;
+                rig.kneeL.rotation.x = 0.4;
+                rig.kneeR.rotation.x = 0.4;
+            }
+        }
+
+        if (t >= t2) {
+            // Run for it, away from whoever has the gun
+            ai.carOut = null;
+            // (away from the gun, but never back through the car)
+            const ax = p.x - C.threat.x, az = p.z - C.threat.z, d = Math.hypot(ax, az) || 1;
+            const fx = ax / d + side * cos, fz = az / d - side * sin, fl = Math.hypot(fx, fz) || 1;
+            ped.state = 'fleeing';
+            ped.fleeTimer = 600;
+            ped.velocity.set((fx / fl) * 0.11, 0, (fz / fl) * 0.11);
+            ai.pose = 'run';
+        }
     }
 
     /** Somebody gets out of a car at (x, z) and walks off along the sidewalks (or null where there are none). */

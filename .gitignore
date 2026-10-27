@@ -6,3 +6,8 @@ node_modules/
 
 # gzipped copies of the map parts, made by server.js
 .cache/
+mapedit-backup/
+
+# media references
+
+*.mp4

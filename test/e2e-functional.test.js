@@ -2017,7 +2017,8 @@ async function runFunctionalTests(options = {}) {
         const frontDecalMesh = frontRearGlass ? frontRearGlass.getObjectByName('window_blood_decal') : null;
         const frontDriver = targetCar1.mesh.getObjectByName('vehicle_driver_npc');
         const frontDriverVisible = !!frontDriver && frontDriver.visible;
-        const frontCabinOpen = !targetCar1.mesh.getObjectByName('cabin_roof').visible;
+        const frontInterior = targetCar1.mesh.getObjectByName('civic_interior');
+        const frontCabinOpen = !!frontInterior && frontInterior.visible;
 
         // 2. Spawn second target car and shoot its back window
         const targetCar2 = new (window.__GAME__.vehicles.getPlayerVehicle().constructor)('target_sedan_rear', 0, 0, 8);
@@ -2095,7 +2096,7 @@ async function runFunctionalTests(options = {}) {
 
       assertEqual(windowReport.frontDriverDead, true, 'Shooting front windshield must kill the driver');
       assertEqual(windowReport.frontGlassBroken, true, 'Shot windshield must shatter');
-      assertEqual(windowReport.frontCabinOpen, true, 'Cabin must open up once a window is broken');
+      assertEqual(windowReport.frontCabinOpen, true, 'The cabin shows through the glass once a window is broken');
       assertEqual(windowReport.frontDriverVisible, true, 'Dead driver must be visible inside');
       assertEqual(windowReport.frontHasBlood, true, 'Rear glass must have blood splatter flag after a windshield shot');
       assertEqual(windowReport.hasFrontDecal, true, 'Rear glass must mount blood splatter decal after a windshield shot');

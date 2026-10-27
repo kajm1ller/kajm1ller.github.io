@@ -424,6 +424,9 @@ export class AnothermapoLoader {
         this.offset = options.offset || ANOTHERMAPO_CONFIG.MAP_OFFSET;
         this.freezeTransforms = options.freezeTransforms !== false;
         this.registerColliders = options.registerColliders !== false;
+        // Map editor: every object's bounds, from the vertices its faces use (see mapEditor.js)
+        this.editBlocks = options.editIndex ? [] : null;
+        this.reloadParts = options.reloadParts || null; // parts the editor rewrote: skip the browser cache
         this.roadNetwork = options.roadNetwork || null;
         this.collisionMeshes = options.collisionMeshes || null;
         // Cap on texture width/height in px (0 = full size). Mobile GPUs/tabs cannot hold the ~680MB of decoded 2048px textures.
@@ -549,7 +552,7 @@ export class AnothermapoLoader {
 
                 let partFailed = false;
                 try {
-                    const resp = await fetch(this.basePath + partName);
+                    const resp = await fetch(this.basePath + partName, this.reloadParts && this.reloadParts.has(partName) ? { cache: 'reload' } : undefined);
                     if (!resp.ok) {
                         throw new Error(`HTTP ${resp.status}`);
                     }
@@ -616,7 +619,8 @@ export class AnothermapoLoader {
             loadedCount: this.loadedCount,
             obstacleCount: this.obstacleCount,
             totalTriangles: this.totalTriangles,
-            treeInstances: this.treeInstances
+            treeInstances: this.treeInstances,
+            editBlocks: this.editBlocks
         };
     }
 
@@ -901,6 +905,7 @@ export class AnothermapoLoader {
         let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
         let blockVertexCount = 0;
         let blockMatName = '';
+        let blockIsTree = false;
 
         const flushBlock = () => {
             if (blockVertexCount >= 3) {
@@ -921,6 +926,12 @@ export class AnothermapoLoader {
                         }
                     }
                     if (!isIgnored) {
+                        if (blockIsTree) {
+                            // Tree billboards span the whole canopy (~7 m); only the trunk should block
+                            const tx = (minX + maxX) * 0.5, tz = (minZ + maxZ) * 0.5;
+                            minX = tx - TREE_TRUNK_HALF; maxX = tx + TREE_TRUNK_HALF;
+                            minZ = tz - TREE_TRUNK_HALF; maxZ = tz + TREE_TRUNK_HALF;
+                        }
                         this._registerWorldBoundsCollider(
                             minX, minY, minZ,
                             maxX, maxY, maxZ,
@@ -933,6 +944,17 @@ export class AnothermapoLoader {
             maxX = -Infinity; maxY = -Infinity; maxZ = -Infinity;
             blockVertexCount = 0;
             blockMatName = '';
+            blockIsTree = false;
+        };
+
+        const edit = this.editBlocks && !isTerrainPart;
+        let eOrd = -1, eCount = 0, eName = '';
+        let eb = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+        const flushEdit = () => {
+            if (eOrd >= 0 && eb[0] <= eb[3] && eb[3] - eb[0] <= 200 && eb[5] - eb[2] <= 200) {
+                this.editBlocks.push({ part: partName, ord: eOrd, name: eName, box: eb });
+            }
+            eb = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
         };
 
         const lines = rawText.split('\n');
@@ -979,6 +1001,18 @@ export class AnothermapoLoader {
                 const nCount = normals.length / 3;
                 const cornerCount = readFace(line, vCount, tCount, nCount);
                 if (cornerCount < 3) continue;
+                if (edit && eOrd >= 0) {
+                    for (let k = 0; k < cornerCount; k++) {
+                        const vi = _face[k * 3] * 3;
+                        const x = positions[vi], y = positions[vi + 1], z = positions[vi + 2];
+                        if (x < eb[0]) eb[0] = x;
+                        if (y < eb[1]) eb[1] = y;
+                        if (z < eb[2]) eb[2] = z;
+                        if (x > eb[3]) eb[3] = x;
+                        if (y > eb[4]) eb[4] = y;
+                        if (z > eb[5]) eb[5] = z;
+                    }
+                }
                 if (currentSlot < 0) {
                     currentSlot = slotNames.length;
                     slotNames.push('');
@@ -1004,9 +1038,17 @@ export class AnothermapoLoader {
                 if (!blockMatName) blockMatName = name.toUpperCase();
             } else if ((c0 === 111 || c0 === 103) && c1 === 32) {
                 // 'o ' / 'g ' starts a new object block
-                if (extractColliders) flushBlock();
+                if (edit) {
+                    flushEdit();
+                    if (c0 === 111) { eOrd = eCount++; eName = line.slice(2).trim(); } else eOrd = -1;
+                }
+                if (extractColliders) {
+                    flushBlock();
+                    blockIsTree = c0 === 111 && /^Tree\d/.test(line.slice(2));
+                }
             }
         }
+        if (edit) flushEdit();
         if (extractColliders) flushBlock();
 
         // Bucket every triangle by the world tile its centroid falls in, de-duplicating shared corners per material
@@ -1256,6 +1298,9 @@ export class AnothermapoLoader {
 
         if (this.roadNetwork && typeof this.roadNetwork.isNearRoad === 'function') {
             if (this.roadNetwork.isNearRoad(cx, cz, 6.0)) return;
+            // A box round a slanted or overhanging building can reach across the street: cars hit it out of nowhere
+            // shortcut: drops the whole collider (you can drive into those ~70 buildings), fit a rotated box if that matters
+            if (typeof this.roadNetwork.crossesBox === 'function' && this.roadNetwork.crossesBox(minX - 1, minZ - 1, maxX + 1, maxZ + 1)) return;
         }
 
         const worldBox = new THREE.Box3(
@@ -1288,6 +1333,8 @@ export class AnothermapoLoader {
         }
     }
 }
+
+const TREE_TRUNK_HALF = 0.3; // half-width (m) of a tree's collision box
 
 export class OSMRoadNetwork {
     constructor(config = {}) {
@@ -1669,6 +1716,27 @@ export class OSMRoadNetwork {
                 }
             }
         }
+    }
+
+    /** Whether any road centreline runs through the box (x/z). */
+    crossesBox(minX, minZ, maxX, maxZ) {
+        for (let i = 0; i < this.segments.length; i++) {
+            const seg = this.segments[i];
+            if (seg.maxX < minX || seg.minX > maxX || seg.maxZ < minZ || seg.minZ > maxZ) continue;
+            // Clip the segment to the box (slab test)
+            const ax = seg.p0.x, az = seg.p0.z;
+            const dx = seg.p1.x - ax, dz = seg.p1.z - az;
+            let t0 = 0, t1 = 1;
+            for (const [d, a, lo, hi] of [[dx, ax, minX, maxX], [dz, az, minZ, maxZ]]) {
+                if (Math.abs(d) < 1e-9) { if (a < lo || a > hi) { t0 = 2; break; } continue; }
+                let u0 = (lo - a) / d, u1 = (hi - a) / d;
+                if (u0 > u1) [u0, u1] = [u1, u0];
+                t0 = Math.max(t0, u0);
+                t1 = Math.min(t1, u1);
+            }
+            if (t0 <= t1) return true;
+        }
+        return false;
     }
 
     isNearRoad(x, z, clearance = 5.0) {

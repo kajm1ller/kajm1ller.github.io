@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DRUGS, DRUG_IDS, ALCOHOL_IDS, ALCOHOL, buildDrugViewmodel, restPose, DrugUse, DrugEffects } from '../../js/game/drugs.js';
+import { DRUGS, DRUG_IDS, ALCOHOL_IDS, ALCOHOL, DMT_TRIP, buildDrugViewmodel, restPose, DrugUse, DrugEffects } from '../../js/game/drugs.js';
 import { getItemDef, Inventory, createItem } from '../../js/game/items.js';
 
 const finite = (s) => {
@@ -9,11 +9,11 @@ const finite = (s) => {
     }
 };
 
-test('Drugs: all 17 (14 drugs and 3 drinks) are inventory items', () => {
-    assert.equal(DRUG_IDS.length, 17);
+test('Drugs: all 19 (16 drugs and 3 drinks) are inventory items', () => {
+    assert.equal(DRUG_IDS.length, 19);
     const names = DRUG_IDS.map((id) => getItemDef(id).name);
     for (const n of ['Cigarettes', 'Vape', 'Weed (Dab Pen)', 'Weed (Joint)', 'Weed (Bong)', 'Cocaine', 'Crack Cocaine', 'Heroin',
-        'Fentanyl', 'Crystal Meth', 'Ketamine', 'LSD', 'Psilocybin', 'Lean', 'Beer', 'Whiskey', 'Vodka']) {
+        'Fentanyl', 'Crystal Meth', 'Ketamine', 'LSD', 'Psilocybin', 'DMT', 'Salvia', 'Lean', 'Beer', 'Whiskey', 'Vodka']) {
         assert.ok(names.includes(n), `${n} missing`);
     }
     const inv = new Inventory({ hotbarSize: 9, bagSize: 30 });
@@ -170,4 +170,43 @@ test('Alcohol: beer < whiskey < vodka; drunker with every drink; sick, then out 
     for (let i = 0; i < 4000; i++) fx.update(0.1);
     assert.equal(fx.state.active, false);
     assert.equal(fx.summary().length, 0);
+});
+
+test('Mushrooms: one dose crawls and glows; take too many and the patterns take over the whole screen', () => {
+    const peak = (n) => {
+        const fx = new DrugEffects();
+        for (let i = 0; i < n; i++) fx.dose('psilocybin');
+        for (let t = 0; t < 60; t += 0.5) fx.update(0.5);      // past the come-up
+        finite(fx.state);
+        return fx.state;
+    };
+    const one = peak(1), two = peak(2), four = peak(4);
+    assert.ok(one.drift > 0.4 && one.glow > 0.3 && one.edges > 0.2, 'one dose: drifting, haloes, fringes');
+    assert.equal(one.takeover, 0);
+    assert.ok(two.pattern > one.pattern + 0.3, 'more patterns on two');
+    assert.equal(two.takeover, 0);
+    assert.ok(four.takeover >= 1, 'four: the patterns are all there is');
+    assert.ok(four.moveScale < one.moveScale && four.muffle > 0.3);
+});
+
+test('DMT: one hit, speckles, a burst, minutes in hyperspace, then dark and back', () => {
+    const fx = new DrugEffects();
+    fx.dose('dmt');
+    const at = (t) => { while (fx.doses.length && fx.doses[0].t < t) fx.update(0.25); finite(fx.state); return { ...fx.state }; };
+    const comeUp = at(12);
+    assert.ok(comeUp.dmtBreak > 0.3 && comeUp.dmt === 0, 'specks creeping in first');
+    assert.ok(comeUp.reverb > 0.5 && comeUp.pulse > 0.1 && comeUp.hum > 0, 'the world\'s own sound rings out and throbs coming up');
+    const burst = at(DMT_TRIP.BURST - 0.5);
+    assert.ok(burst.dmtFlash > 0.5, 'the burst');
+    const inside = at(90);
+    assert.equal(inside.dmt, 1);
+    assert.equal(inside.pulse, 0);
+    assert.ok(inside.dmtT > 60 && inside.moveScale <= 0.4 && inside.muffle > 0.8, 'deep in it: barely moving, the world far away');
+    const out = at(DMT_TRIP.OUT + 1);
+    assert.ok(out.dmt < 0.1 && out.dark > 0.5, 'dark on the way out');
+    const back = at(DMT_TRIP.BACK + 10);
+    assert.equal(back.dmt, 0);
+    assert.ok(back.dark < 0.1 && back.dmtBreak > 0, 'back in the world, still sparkling');
+    at(DMT_TRIP.END + 2);
+    assert.equal(fx.doses.length, 0);
 });

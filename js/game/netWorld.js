@@ -21,6 +21,7 @@ import * as THREE from 'three';
 import { Vehicle } from './vehicle.js';
 import { makeProp, makeDog } from './pedestrianScenes.js';
 import { lerpAngle } from './camera.js';
+import { brawlRecord } from './pedestrians.js';
 
 export const NET_CONFIG = Object.freeze({
     SEND_INTERVAL: 0.1,
@@ -34,7 +35,7 @@ export const NET_CONFIG = Object.freeze({
 });
 
 export const PED_STATES = ['walking', 'idle', 'waiting_to_cross', 'crossing', 'sitting', 'hanging_out', 'activity', 'following',
-    'fleeing', 'fighting', 'talking', 'dying', 'ragdoll', 'dead', 'carjacked', 'cuffed'];
+    'fleeing', 'fighting', 'talking', 'dying', 'ragdoll', 'dead', 'carjacked', 'cuffed', 'downed', 'held'];
 const STATE_CODE = new Map(PED_STATES.map((s, i) => [s, i]));
 
 // ped.ai flags carried over the wire
@@ -156,9 +157,11 @@ export class NetOwner {
                 const qt = ped.mesh.quaternion;
                 extra = [q1000(qt.x), q1000(qt.y), q1000(qt.z), q1000(qt.w), q100(pos.y)];
             }
+            // Fights: held / knocked down, the state of their face, a head blown off, sat dead against a wall
+            const brawl = brawlRecord(ped);
             const rec = [id, q20(pos.x), q20(pos.z), q100(ai.yaw || 0), STATE_CODE.get(ped.state) ?? 0, ai.pose || 'stand',
-                q20(ai.moveSpeed || 0), flags, ai.seat >= 0 ? ai.seat : -1, props, extra];
-            const key = rec.join(',') + (props ? JSON.stringify(props) : '') + (extra ? extra.join(',') : '');
+                q20(ai.moveSpeed || 0), flags, ai.seat >= 0 ? ai.seat : -1, props, extra, brawl];
+            const key = rec.join(',') + (props ? JSON.stringify(props) : '') + (extra ? extra.join(',') : '') + (brawl ? brawl.join(',') : '');
             if (this.sentKey.p.get(id) !== key) {
                 this.sentKey.p.set(id, key);
                 p.push(rec);
@@ -360,7 +363,8 @@ export class NetReplica {
         this.peds.applyReplicaState(ped, {
             x: r[1] / 20, z: r[2] / 20, yaw: r[3] / 100, state: PED_STATES[r[4]] || 'walking', pose: r[5],
             speed: r[6] / 20, flags: r[7], seat: r[8], props: r[9] || null,
-            q: r[10] ? { x: r[10][0] / 1000, y: r[10][1] / 1000, z: r[10][2] / 1000, w: r[10][3] / 1000, py: r[10][4] / 100 } : null
+            q: r[10] ? { x: r[10][0] / 1000, y: r[10][1] / 1000, z: r[10][2] / 1000, w: r[10][3] / 1000, py: r[10][4] / 100 } : null,
+            b: r[11] || 0
         });
         return true;
     }

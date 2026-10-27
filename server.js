@@ -64,6 +64,55 @@ app.get(/^\/mapfinal\/([\w.-]+\.obj)$/, async (req, res, next) => {
 });
 app.use('/mapfinal', (req, res, next) => { res.set('Cache-Control', 'public, max-age=86400'); next(); });
 
+// Map editor (game.html?mapedit=1): rewrites the OBJ parts in mapfinal/. Only from this machine; the first
+// edit of a part keeps the original in mapedit-backup/.
+app.post('/api/mapedit', express.json({ limit: '20mb' }), async (req, res) => {
+  const ip = req.socket.remoteAddress || '';
+  if (!/^(::1|127\.0\.0\.1|::ffff:127\.0\.0\.1)$/.test(ip)) return res.status(403).json({ error: 'local only' });
+  try {
+    const { applyMapEdits, applyEntityEdits } = await import('./js/game/mapEditCore.js');
+    const byPart = new Map();
+    for (const op of req.body.ops || []) {
+      if (!/^part\d{4}\.obj$/.test(op.part)) throw new Error('bad part ' + op.part);
+      if (!byPart.has(op.part)) byPart.set(op.part, []);
+      byPart.get(op.part).push(op);
+    }
+    // Compute everything first so a bad op leaves the map untouched
+    const results = [];
+    for (const [part, ops] of byPart) {
+      const file = path.join(MAP_DIR, part);
+      const before = fs.readFileSync(file, 'utf8');
+      results.push({ part, file, before, after: applyMapEdits(before, ops) });
+    }
+    // Entities kept in data files (gas stations, street signs, moved road signs)
+    const DATA_DIR = path.join(__dirname, 'js', 'game', 'data');
+    const byFile = new Map();
+    for (const op of req.body.entityOps || []) {
+      if (!['gasStations', 'streetSigns', 'roadSignEdits'].includes(op.file)) throw new Error('bad file ' + op.file);
+      if (!byFile.has(op.file)) byFile.set(op.file, []);
+      byFile.get(op.file).push(op);
+    }
+    for (const [name, ops] of byFile) {
+      const file = path.join(DATA_DIR, name + '.json');
+      const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '{}';
+      const after = JSON.stringify(applyEntityEdits(name, JSON.parse(before), ops), null, name === 'gasStations' ? 1 : name === 'roadSignEdits' ? 1 : 0);
+      results.push({ part: name + '.json', file, before, after });
+    }
+    const backupDir = path.join(__dirname, 'mapedit-backup');
+    fs.mkdirSync(backupDir, { recursive: true });
+    for (const r of results) {
+      const bak = path.join(backupDir, r.part);
+      if (!fs.existsSync(bak)) fs.writeFileSync(bak, r.before);
+      const tmp = r.file + '.tmp';
+      fs.writeFileSync(tmp, r.after);
+      fs.renameSync(tmp, r.file);
+    }
+    res.json({ ok: true, parts: results.map((r) => r.part).filter((p) => p.endsWith('.obj')) });
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e) });
+  }
+});
+
 app.use(express.static(path.join(__dirname), staticOptions));
 
 app.get('/api/bedroom-voice', async (req, res) => {

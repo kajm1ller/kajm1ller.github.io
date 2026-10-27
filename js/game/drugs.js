@@ -124,10 +124,29 @@ export const DRUGS = {
     },
     psilocybin: {
         name: 'Psilocybin', method: 'mushrooms', doses: 5, color: 0xa1887f,
-        desc: 'Breathing walls, warm colours, the giggles',
-        onset: 30, peak: 200, fade: 150,
-        fx: { sat: 0.45, tint: [1.0, 0.95, 0.8], tintAmt: 0.1, wave: 0.28, breathe: 0.45, trail: 0.3, kaleido: 0.18, hueCycle: 0.25,
-            sway: 0.2, chroma: 0.3, musicRate: -0.35, label: 'Shrooming' }
+        desc: 'Breathing walls, crawling patterns, the giggles. Too many and the patterns are all there is.',
+        // The visuals (drift, patterns, edges, snow, glow, takeover) grow with how much is in you,
+        // and not in a straight line: DrugEffects.update (SHROOMS)
+        onset: 30, peak: 200, fade: 150, shroom: 1,
+        fx: { sat: 0.4, tint: [1.0, 0.95, 0.82], tintAmt: 0.08, breathe: 0.3, trail: 0.22, hueCycle: 0.12, contrast: 0.06,
+            sway: 0.18, musicRate: -0.3, label: 'Shrooming' },
+        comeUpFx: { vignette: 0.18, sway: 0.25, blur: 0.15, bright: 0.02 }
+    },
+    dmt: {
+        name: 'DMT', method: 'bulb', doses: 3, color: 0xffb74d,
+        desc: 'One hit. The world speckles, smears, bursts, and you are somewhere else entirely for a few minutes.',
+        // A fixed timeline (DMT_TRIP), taken from media/dmt.mp4: the visuals are dmtChannels below and
+        // drugFx.js, the sound media/dmt-trip.mp3 (game.html). The curve is only for the HUD.
+        onset: 27, peak: 127, fade: 50, dmt: true,
+        fx: { label: 'Breakthrough' }
+    },
+    salvia: {
+        name: 'Salvia', method: 'bong', doses: 5, color: 0x2e7d32,
+        desc: 'Reality peels away like a page. You become something else, somewhere else, for what feels like forever.',
+        // The pull while it peels away; the trip itself is js/game/salvia/ (game.html startSalviaTrip)
+        onset: 3, peak: 7, fade: 3, trip: 'salvia',
+        fx: { sway: 1.4, roll: 2, wave: 0.9, ghost: 0.8, fovAdd: 25, chroma: 0.9, sat: 0.8, trail: 0.7, mouseLag: 0.8,
+            kaleido: 0.5, hueCycle: 2.5, breathe: 0.6, drift: 0.7, edges: 0.6, glow: 0.5, shake: 0.3, label: 'Peeling' }
     },
     // Alcohol: no fixed curve; each drink adds `alcohol` units to your blood (DrugEffects.drink).
     // A beer is one unit, a shot of whiskey a bit more, a shot of vodka more again.
@@ -319,6 +338,7 @@ function hand(x = 0, y = -0.02, z = 0.015) {
     arm.rotation.x = 0.95;
     g.add(arm);
     g.position.set(x, y, z);
+    g.userData.hand = true;
     return g;
 }
 
@@ -559,6 +579,13 @@ export function buildDrugViewmodel(id) {
     if (aux) group.add(aux);
     group.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.frustumCulled = false; } });
     return { group, main, aux, parts, method: def.method };
+}
+
+/** The drug on its own, without the hand holding it (lying on the ground). */
+export function buildDrugWorldModel(id) {
+    const { main } = buildDrugViewmodel(id);
+    for (const c of main.children.filter((c) => c.userData.hand)) main.remove(c);
+    return main;
 }
 
 // ================================================================================================
@@ -851,7 +878,8 @@ export class DrugUse {
 // ================================================================================================
 const SCALAR = ['hueCycle', 'sat', 'contrast', 'bright', 'vignette', 'blur', 'wave', 'breathe', 'chroma', 'ghost', 'trail',
     'kaleido', 'flash', 'grain', 'paranoia', 'sway', 'roll', 'shake', 'fovAdd', 'mouseLag', 'regen', 'muffle', 'heartbeat', 'ring', 'nod',
-    'stumble', 'spins', 'drunk'];
+    'stumble', 'spins', 'drunk', 'drift', 'pattern', 'edges', 'snow', 'glow', 'takeover', 'shroom', 'tracer',
+    'dmt', 'dmtT', 'dmtBreak', 'dmtSmear', 'dmtFlash', 'reverb', 'echo', 'pulse', 'pulseRate', 'hum'];
 
 /**
  * Alcohol, in units in the blood (a beer is about one). It soaks in over half a minute or so and
@@ -864,6 +892,79 @@ export const ALCOHOL = Object.freeze({
     HANGOVER: 150        // seconds of hangover after you come round
 });
 const SCALED = ['moveScale', 'mouseScale', 'damageScale', 'musicRate']; // 1 + sum
+
+/**
+ * Psilocybin by how much is in you (`shroom`: doses at full strength). One: colours richer, surfaces
+ * breathe and crawl, haloes and rainbow fringes on edges, tracers (`tracer`: afterimages that trail
+ * behind anything moving, the world included as you look round), faint visual snow. Two: geometry
+ * grows over textured surfaces, the world flows. TAKEOVER_FROM and up: the patterns spread until
+ * they're all you can see (TAKEOVER_FULL), slow and heavy, sound far away.
+ */
+export const SHROOMS = Object.freeze({ TAKEOVER_FROM: 2.4, TAKEOVER_FULL: 3.6 });
+function shroomChannels(s, k) {
+    const ramp = (a, b) => Math.max(0, Math.min(1, (k - a) / (b - a)));
+    s.shroom = k;
+    s.drift += 0.55 * ramp(0.1, 1) + 0.6 * ramp(1, 2.5);
+    s.edges += 0.35 * ramp(0.3, 1) + 0.5 * ramp(1, 2.2);
+    s.glow += 0.5 * ramp(0.2, 1) + 0.6 * ramp(1, 2.5);
+    s.snow += 0.25 * ramp(0.2, 1) + 0.35 * ramp(1, 3);
+    s.pattern += 0.22 * ramp(0.5, 1) + 0.6 * ramp(1, 2.2) + 0.2 * ramp(2.2, 3);
+    s.kaleido += 0.12 * ramp(1.5, 3);
+    s.chroma += 0.15 * ramp(0.3, 1) + 0.25 * ramp(1, 2.5);
+    // Tracers: seconds an afterimage takes to fade, so whatever moves (or the world, as you look round) ghosts
+    s.tracer += 0.12 * ramp(0.1, 0.6) + 0.14 * ramp(0.6, 1.2) + 0.16 * ramp(1.2, 2.5);
+    const take = ramp(SHROOMS.TAKEOVER_FROM, SHROOMS.TAKEOVER_FULL);
+    s.takeover += take;
+    s.moveScale -= 0.45 * take;
+    s.mouseLag += 0.5 * take;
+    s.muffle += 0.6 * take;
+    s.sway += 0.3 * take;
+}
+
+/**
+ * A DMT hit, second by second (t: seconds since the hit), after media/dmt.mp4 and its soundtrack
+ * media/dmt-trip.mp3 (which starts at the hit): speckles creep into the world (to SPECKLE), the
+ * colours wash out and it all rushes inwards (SMEAR), a green-white BURST, hyperspace until OUT
+ * (`dmtT` drives its scenes in drugFx.js), dark, BACK to the world still sparkling, over at END.
+ */
+export const DMT_TRIP = Object.freeze({ SPECKLE: 20, SMEAR: 25, BURST: 27, OUT: 154, BACK: 158, END: 204 });
+function dmtChannels(s, t) {
+    const T = DMT_TRIP;
+    const r = (a, b) => Math.max(0, Math.min(1, (t - a) / (b - a)));
+    const comeUp = r(2, T.SPECKLE) * (1 - r(T.BURST, T.BURST + 1));
+    s.dmtBreak += comeUp;
+    s.sat += 0.6 * comeUp;
+    s.edges += 0.4 * comeUp;
+    s.chroma += 0.4 * comeUp;
+    s.dmtSmear += r(T.SPECKLE, T.BURST) * (1 - r(T.BURST, T.BURST + 1.5));
+    s.dmtFlash += Math.sin(Math.PI * r(T.SMEAR, T.BURST + 1.5));
+    s.dmt += r(T.BURST - 0.5, T.BURST + 1.5) * (1 - r(T.OUT - 3, T.OUT));
+    s.trail += 0.35 * r(T.BURST, T.BURST + 3) * (1 - r(T.OUT - 3, T.OUT));   // melting: it smears as it moves
+    s.dmtT = Math.max(s.dmtT, t - T.BURST);
+    // Out: black, then the world fading back in, still sparkling for a while
+    s.dark += 0.92 * r(T.OUT - 3, T.OUT) * (1 - r(T.OUT + 1, T.BACK + 2));
+    const after = r(T.OUT, T.BACK) * (1 - r(T.BACK, T.END));
+    s.dmtBreak += 0.55 * after;
+    s.drift += 0.5 * after;
+    s.glow += 0.5 * after;
+    s.snow += 0.4 * after;
+    s.sat += 0.35 * after;
+    // Coming up, the world's own sound (the music, the street) rings out and starts to throb, faster
+    // and faster, a buzz rising under it, the pitch sagging; it all cuts out at the burst (the
+    // trip's soundtrack takes over: game.html)
+    const cut = 1 - r(T.BURST - 0.3, T.BURST + 0.3);
+    s.reverb += r(1, 16) * cut + 0.35 * after;
+    s.echo += 0.85 * r(6, 22) * cut;
+    s.pulse += 0.8 * r(7, 23) * cut;
+    s.pulseRate = Math.max(s.pulseRate, 3 + 13 * r(5, T.BURST) * r(5, T.BURST));
+    s.hum += r(9, T.BURST) * cut;
+    s.musicRate -= 0.15 * r(10, T.SMEAR) * cut;
+    // In there you can barely move, and the world's sounds are far away
+    const deep = r(T.SMEAR, T.BURST) * (1 - r(T.OUT, T.BACK));
+    s.moveScale -= 0.75 * deep;
+    s.mouseLag += 0.6 * deep;
+    s.muffle += 0.95 * deep;
+}
 
 function emptyState() {
     const s = { hue: 0, tint: [1, 1, 1], tintAmt: 0, dark: 0, drain: 0, figureX: 0, figureA: 0, overdose: 0, active: false };
@@ -948,7 +1049,7 @@ export class DrugEffects {
         const s = emptyState();
         let tintW = 0;
         const tint = [0, 0, 0];
-        let opioid = 0, stim = 0;
+        let opioid = 0, stim = 0, shroom = 0;
         const apply = (fx, k) => {
             if (!fx || k <= 0) return;
             for (const key in fx) {
@@ -982,7 +1083,12 @@ export class DrugEffects {
             apply(d.crashFx, crash * dose.strength);
             if (d.opioid) opioid += d.opioid * k;
             if (d.stim) stim += d.stim * k;
+            if (d.shroom) shroom += d.shroom * k;
+            if (d.dmt) dmtChannels(s, dose.t);
+            // Coming up: a little queasy and yawny before it starts
+            if (d.comeUpFx && dose.t < d.onset) apply(d.comeUpFx, Math.sin(Math.PI * dose.t / d.onset) * dose.strength);
         }
+        if (shroom > 0.01) shroomChannels(s, shroom);
         // ---- Alcohol ----
         const soak = Math.min(this.stomach, this.stomach * dt * 3 / ALCOHOL.ABSORB + dt * 0.01);
         this.stomach -= soak;

@@ -8,7 +8,11 @@
  *   join   { name, x, y, z, yaw }
  *   update { x, y, z, yaw, pitch, roll, state: 'foot'|'car'|'plane', color, model,
  *            region, hp, anim, held, speed, steer, riders: [[seat, seed, style]], lights,
- *            radio (track index, -1 off), radioT (seconds into it) }
+ *            radio (track index, -1 off), radioT (seconds into it),
+ *            brawl ('' or a fight pose: g* holding someone, h* held, hdown on the ground; neck / pin /
+ *            mount / drag), face (damage to the face, 0..40), nohead (a head blown off) }
+ *   direct kinds used by fights (one player to another): hold { mode, x, z, yaw, lying } (the holder
+ *            says where their victim is), release { how }, exec { dir... }, broke {} (the victim got free)
  *   chat   { text }
  *   fire   { weapon, ox, oy, oz, dx, dy, dz }        relayed to the other players as 'shot'
  *   shoot  { targetId, weapon, damage }              PvP hit on one player -> 'hit' to the target
@@ -117,7 +121,10 @@ function attachMultiplayer(server, options = {}) {
       lights: p.lights,
       radio: p.radio,
       radioT: p.radioT,
-      ride: p.ride
+      ride: p.ride,
+      brawl: p.brawl,
+      face: p.face,
+      nohead: p.nohead
     }));
   }
 
@@ -236,7 +243,7 @@ function attachMultiplayer(server, options = {}) {
             ragdoll: false,
             order: ++joinCounter,
             region: null, hp: 100, anim: 'idle', held: '', speed: 0, steer: 0, riders: [], lights: 0, radio: -1, radioT: 0,
-            ride: null, told: null
+            ride: null, told: null, brawl: '', face: 0, nohead: false
           });
           send(ws, { type: 'welcome', id: playerId, now: Date.now() });
           broadcastPlayerList();
@@ -263,6 +270,9 @@ function attachMultiplayer(server, options = {}) {
           player.speed = num(msg.speed, -200, 200, 0);
           player.steer = num(msg.steer, -1, 1, 0);
           player.lights = Math.floor(num(msg.lights, 0, 15, 0));
+          player.brawl = typeof msg.brawl === 'string' && /^[a-z]{0,10}$/.test(msg.brawl) ? msg.brawl : '';
+          player.face = Math.round(num(msg.face, 0, 40, 0) * 10) / 10;
+          player.nohead = !!msg.nohead;
           // The song on the car radio (track index, -1 off) and how far in, so passengers hear it too
           player.radio = Math.floor(num(msg.radio, -1, 999, -1));
           player.radioT = Math.round(num(msg.radioT, 0, 36000, 0) * 10) / 10;

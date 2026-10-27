@@ -185,8 +185,10 @@ export class RoadSigns {
      * @param {THREE.Scene} scene
      * @param {import('./trafficNet.js').TrafficNet} net
      */
-    constructor(scene, net) {
+    constructor(scene, net, edits = {}) {
         this.net = net;
+        this.edits = edits;       // roadSignEdits.json: { 'kind:x,z': { dx, dz, dyaw, deleted } } from the map editor
+        this.entities = [];       // every placed sign, for the map editor
         this.group = new THREE.Group();
         this.group.name = 'road_signs';
         this.heads = [];          // { ctrl, group, lamp } lamp = index of the head's red lamp
@@ -265,6 +267,15 @@ export class RoadSigns {
             if (back) back.add(x + nx * 0.035, h, z + nz * 0.035, yaw + Math.PI);
         };
         const curb = { x: 0, z: 0, dx: 0, dz: -1, edge: 0 };
+        // The map editor's moves / turns / deletions, keyed by where the generator put the sign
+        const edited = (kind, x, z) => {
+            const key = `${kind}:${Math.round(x * 10)},${Math.round(z * 10)}`;
+            const e = this.edits[key];
+            const out = e ? { x: x + e.dx, z: z + e.dz, dyaw: e.dyaw, deleted: !!e.deleted } : { x, z, dyaw: 0, deleted: false };
+            if (!out.deleted) this.entities.push({ kind, key, x: out.x, z: out.z, dyaw: out.dyaw });
+            return out;
+        };
+        const turned = (nx, nz, r) => [nx * Math.cos(r) + nz * Math.sin(r), -nx * Math.sin(r) + nz * Math.cos(r)];
 
         // ---- Traffic signals ----
         const signalJunctions = new Set();
@@ -326,10 +337,12 @@ export class RoadSigns {
         for (const piece of net.pieces.values()) {
             if (!piece.stopSign || !piece.junction) continue;
             this._curb(piece, Math.max(0, piece.len - 0.5), curb);
-            const nx = -curb.dx, nz = -curb.dz;
-            posts.add(curb.x, 0, curb.z, 0, 1, 2.55, 1);
-            signOnPost(stops, stopBacks, curb.x, curb.z, nx, nz, 2.25);
-            if (piece.junction.control === 'allway') signOnPost(allWay, plaqueBacks, curb.x, curb.z, nx, nz, 1.72);
+            const ed = edited('stop', curb.x, curb.z);
+            if (ed.deleted) continue;
+            const [nx, nz] = turned(-curb.dx, -curb.dz, ed.dyaw);
+            posts.add(ed.x, 0, ed.z, 0, 1, 2.55, 1);
+            signOnPost(stops, stopBacks, ed.x, ed.z, nx, nz, 2.25);
+            if (piece.junction.control === 'allway') signOnPost(allWay, plaqueBacks, ed.x, ed.z, nx, nz, 1.72);
             this.counts.stop++;
         }
 
@@ -346,13 +359,15 @@ export class RoadSigns {
             if (net.roadNetwork.isNearRoad && this._onOtherRoad(curb.x, curb.z, piece)) continue;
             list.push({ x: curb.x, z: curb.z });
             placed.set(mph, list);
+            const ed = edited('speed', curb.x, curb.z);
+            if (ed.deleted) continue;
             let batch = speedBatches.get(mph);
             if (!batch) {
                 batch = new Batch(speedGeo, face(speedTexture(mph)));
                 speedBatches.set(mph, batch);
             }
-            posts.add(curb.x, 0, curb.z, 0, 1, 2.5, 1);
-            signOnPost(batch, speedBacks, curb.x, curb.z, -curb.dx, -curb.dz, 2.1);
+            posts.add(ed.x, 0, ed.z, 0, 1, 2.5, 1);
+            signOnPost(batch, speedBacks, ed.x, ed.z, ...turned(-curb.dx, -curb.dz, ed.dyaw), 2.1);
             this.counts.speed++;
         }
 
@@ -363,13 +378,16 @@ export class RoadSigns {
             if ((lane.startDegree || 0) >= 3) {
                 // Parallel to the street at the corner, readable from the crossing street
                 this._curb(piece, 3.0, curb);
-                const rx = -curb.dz, rz = curb.dx;
-                posts.add(curb.x, 0, curb.z, 0, 1, 2.6, 1);
+                const ed = edited('oneway', curb.x, curb.z);
+                const [rx, rz] = turned(-curb.dz, curb.dx, ed.dyaw);
+                if (!ed.deleted) posts.add(ed.x, 0, ed.z, 0, 1, 2.6, 1);
                 // Seen from the road (looking outward) travel runs to the viewer's left; from the
                 // sidewalk side, to the right
-                oneWayFront.add(curb.x - rx * 0.04, 2.3, curb.z - rz * 0.04, facingYaw(-rx, -rz));
-                oneWayBack.add(curb.x + rx * 0.04, 2.3, curb.z + rz * 0.04, facingYaw(rx, rz));
-                this.counts.oneWay++;
+                if (!ed.deleted) {
+                    oneWayFront.add(ed.x - rx * 0.04, 2.3, ed.z - rz * 0.04, facingYaw(-rx, -rz));
+                    oneWayBack.add(ed.x + rx * 0.04, 2.3, ed.z + rz * 0.04, facingYaw(rx, rz));
+                    this.counts.oneWay++;
+                }
             }
             if ((lane.endDegree || 0) >= 3 && piece.junction) {
                 // DO NOT ENTER for drivers who would turn in at the wrong end: on their right,
@@ -377,9 +395,12 @@ export class RoadSigns {
                 piece.path.sample(piece.len, _p);
                 const left = (lane.halfWidth || 4) + (lane.offset || 0) + CURB_GAP;
                 const x = _p.x + _p.dz * left, z = _p.z - _p.dx * left;
-                posts.add(x, 0, z, 0, 1, 2.5, 1);
-                signOnPost(dne, dneBacks, x, z, _p.dx, _p.dz, 2.1);
-                this.counts.doNotEnter++;
+                const ed = edited('dne', x, z);
+                if (!ed.deleted) {
+                    posts.add(ed.x, 0, ed.z, 0, 1, 2.5, 1);
+                    signOnPost(dne, dneBacks, ed.x, ed.z, ...turned(_p.dx, _p.dz, ed.dyaw), 2.1);
+                    this.counts.doNotEnter++;
+                }
             }
         }
 

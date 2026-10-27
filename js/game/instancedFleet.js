@@ -15,7 +15,7 @@
  */
 
 import * as THREE from 'three';
-import { CAR_MODEL_IDS, getCarModel, getFleetGeometry, getModelGeometry, getUnitWheelGeometry } from './carModels.js';
+import { CAR_MODEL_IDS, getCarModel, getFleetGeometry, getModelGeometry, getPartMaterials, getUnitWheelGeometry } from './carModels.js';
 
 const _scratchMat4 = new THREE.Matrix4();
 const _scratchPos = new THREE.Vector3();
@@ -117,7 +117,8 @@ export class InstancedVehicleFleet {
         this.materials = {
             body: createFleetBodyMaterial(),
             tire: new THREE.MeshStandardMaterial({ color: 0x1b1b1b, roughness: 0.92, metalness: 0.0 }),
-            rim: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.85, envMapIntensity: 1.2 })
+            rim: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.85, envMapIntensity: 1.2 }),
+            glass: getPartMaterials().glass
         };
 
         // model id -> { mesh, count, model, wheels }
@@ -149,8 +150,11 @@ export class InstancedVehicleFleet {
                 mesh.castShadow = true;
                 mesh.receiveShadow = true;
             }
-            meshes.push(mesh);
-            this.batches.set(id, { mesh, count: 0, model: getCarModel(id), wheels: getModelGeometry(id).wheels });
+            const glass = new THREE.InstancedMesh(getFleetGeometry(id).glass, this.materials.glass, max);
+            glass.name = `instanced_${id}_glass`;
+            glass.instanceMatrix = mesh.instanceMatrix;     // same cars, same matrices
+            meshes.push(mesh, glass);
+            this.batches.set(id, { mesh, glass, count: 0, model: getCarModel(id), wheels: getModelGeometry(id).wheels });
         }
 
         const wheelGeo = getUnitWheelGeometry();
@@ -261,12 +265,12 @@ export class InstancedVehicleFleet {
         // Models with no cars on the road are skipped entirely
         for (const batch of this.batches.values()) {
             const mesh = batch.mesh;
-            mesh.count = batch.count;
-            mesh.visible = batch.count > 0;
+            mesh.count = batch.glass.count = batch.count;
+            mesh.visible = batch.glass.visible = batch.count > 0;
             if (batch.count > 0) {
                 mesh.instanceMatrix.needsUpdate = true;
                 mesh.instanceColor.needsUpdate = true;
-                drawCalls++;
+                drawCalls += 2;
             }
         }
         this.meshes.tires.count = wheelIndex;
@@ -311,7 +315,7 @@ export class InstancedVehicleFleet {
             }
         }
         for (const key in this.materials) {
-            if (this.materials[key]) this.materials[key].dispose();
+            if (this.materials[key] && key !== 'glass') this.materials[key].dispose();   // glass is shared with the car meshes
         }
     }
 }

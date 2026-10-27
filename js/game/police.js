@@ -227,7 +227,11 @@ export class PoliceOfficer {
     /**
      * Updates officer AI, positioning, and weapon firing towards the player.
      */
-    update(dt, playerPos, isPlayerInVehicle, scene, onShootCallback) {
+    /**
+     * @param {Object} [rules] { weaponsFree: the player has opened fire (shoot back), arrest: this
+     *   officer is the one walking in to cuff them }
+     */
+    update(dt, playerPos, isPlayerInVehicle, scene, onShootCallback, rules = { weaponsFree: true, arrest: false }) {
         if (this.isDead) return;
 
         // Ragdoll physics update if officer was launched by vehicle
@@ -261,12 +265,16 @@ export class PoliceOfficer {
         // Turn officer to face player directly
         this.mesh.rotation.y = Math.atan2(dx, dz);
 
-        // Advance towards player if farther than combat standoff distance (5.5m)
-        if (dist > 5.5) {
+        // Hold them at gunpoint from a few metres off; one officer walks in to make the arrest. Once
+        // the player has fired, close to a shooting distance instead.
+        const standoff = rules.weaponsFree ? 5.5 : (rules.arrest ? 1.8 : 7.5);
+        this.aiming = dist < 30;
+        if (dist > standoff) {
             const dirX = dx / dist;
             const dirZ = dz / dist;
-            this.position.x += dirX * this.speed;
-            this.position.z += dirZ * this.speed;
+            const sp = rules.arrest && !rules.weaponsFree ? this.speed * 0.45 : this.speed;   // walking in, gun up
+            this.position.x += dirX * sp;
+            this.position.z += dirZ * sp;
 
             // Animate running legs (rigged officers are animated by the pedestrian system)
             this.walkPhase += 0.24;
@@ -282,8 +290,8 @@ export class PoliceOfficer {
             }
         }
 
-        // Fire service pistol when in line of sight (< 42m)
-        if (dist < 42.0) {
+        // Fire service pistol when in line of sight (< 42m), and only once the player has opened fire
+        if (dist < 42.0 && rules.weaponsFree) {
             this.shootCooldown -= dt;
             if (this.shootCooldown <= 0) {
                 this.shootCooldown = 1.1 + Math.random() * 0.6; // Fire every 1.1-1.7s
@@ -469,12 +477,15 @@ export class PoliceVehicle extends Vehicle {
                 handbrake = true;
             }
         } else {
-            if (dist < 5.0) {
+            // On foot: pull up some way off (slowing well before), and never drive at them
+            if (dist < 16.0) {
                 throttle = 0;
-                brake = 0.9;
-            } else if (dist < 10.0 && targetForward < 0) {
-                throttle = 0.3;
-                brake = 0.2;
+                brake = 1.0;
+                handbrake = absSpeed < 1.5;
+                if (dist < 9.0 && targetForward > 0) steerDemand = targetRight > 0 ? 1 : -1;   // swerve off them
+            } else if (dist < 34.0) {
+                throttle = absSpeed > 7 ? 0 : 0.35;
+                brake = absSpeed > 9 ? 0.6 : 0;
             } else {
                 throttle = 1.0;
                 brake = 0;
@@ -555,6 +566,11 @@ export class PoliceSystem {
     /**
      * Reports a crime committed by the player.
      */
+    /** The player fired a gun: any police around may now shoot back. */
+    playerFired() {
+        if (this.wantedLevel > 0 || this.officers.length) this.weaponsFree = true;
+    }
+
     triggerCrime(type, pos = null) {
         if (this.disabled) return;
         const crime = {
@@ -661,6 +677,8 @@ export class PoliceSystem {
      */
     clearWantedLevel() {
         this.pendingReport = null;
+        this.weaponsFree = false;
+        this.gunpointTime = 0;
         this.wantedLevel = 0;
         this.wantedCooldown = 0;
         this.spawnTimer = 0;
@@ -1017,9 +1035,18 @@ export class PoliceSystem {
 
         // 2. Update Armed Officers on foot
         const onShoot = (off, pPos) => this.handleOfficerFire(off, pPos);
+        // Guns on them a while and still not shooting: the nearest officer goes in to cuff them
+        let nearestOff = null, nd = Infinity;
+        for (const off of this.officers) {
+            if (off.isDead || off.state === 'ragdoll') continue;
+            const d = Math.hypot(playerPos.x - off.position.x, playerPos.z - off.position.z);
+            if (d < nd) { nd = d; nearestOff = off; }
+        }
+        this.gunpointTime = nd < 12 && !isPlayerInVehicle ? (this.gunpointTime || 0) + dt : 0;
+        const arrester = !this.weaponsFree && this.gunpointTime > 3 ? nearestOff : null;
         for (let i = 0; i < this.officers.length; i++) {
             const off = this.officers[i];
-            off.update(dt, playerPos, isPlayerInVehicle, this.scene, onShoot);
+            off.update(dt, playerPos, isPlayerInVehicle, this.scene, onShoot, { weaponsFree: !!this.weaponsFree, arrest: off === arrester });
 
             if (!off.isDead) {
                 const d = Math.hypot(playerPos.x - off.position.x, playerPos.z - off.position.z);

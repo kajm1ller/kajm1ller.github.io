@@ -241,22 +241,31 @@ export class CashDrops {
         const side = new THREE.MeshStandardMaterial({ color: 0x8fbf88, roughness: 0.9 });
         const top = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8, emissive: 0x1d3a1a, emissiveIntensity: 0.6 });
         this._mats = [side, side, top, top, side, side];
+        this._half = new THREE.Vector3(0.17, 0.035, 0.08);
+        this.physics = null;   // PropPhysics (propPhysics.js), set by the game: the bills fall and land
     }
 
-    /** Leaves `amount` dollars at (x, z). `id` names it in multiplayer, where the server decides who gets it. */
-    drop(x, z, amount, id = null) {
+    /**
+     * Leaves `amount` dollars at (x, z). `id` names it in multiplayer, where the server decides who gets it.
+     * opts { y, vel, thrown }: `thrown` (the player's own) can't be picked up until they've stepped away.
+     */
+    drop(x, z, amount, id = null, opts = {}) {
         if (!(amount > 0)) return;
         if (id !== null && this.drops.some((d) => d.id === id)) return;
         const mesh = new THREE.Mesh(this._geo, this._mats);
-        mesh.position.set(x, 0.3, z);
+        mesh.position.set(x, opts.y ?? 0.3, z);
+        mesh.rotation.set(Math.random() - 0.5, Math.random() * 6, Math.random() - 0.5);
         mesh.castShadow = true;
         this.scene.add(mesh);
-        this.drops.push({ mesh, x, z, amount, age: 0, phase: Math.random() * 6, id, asked: 0 });
+        const body = this.physics ? this.physics.add(mesh, this._half, opts.vel || null,
+            new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(6)) : null;
+        this.drops.push({ mesh, body, x, z, amount, age: 0, id, asked: 0, thrown: !!opts.thrown });
         while (this.drops.length > MONEY_CONFIG.MAX_DROPS) this._remove(0);
     }
 
     _remove(i) {
         this.scene.remove(this.drops[i].mesh);
+        if (this.drops[i].body) this.physics.remove(this.drops[i].body);
         this.drops.splice(i, 1);
     }
 
@@ -277,9 +286,11 @@ export class CashDrops {
             const d = this.drops[i];
             d.age += dt;
             if (d.age > MONEY_CONFIG.DROP_LIFETIME) { this._remove(i); continue; }
-            d.mesh.rotation.y += dt * 2.2;
-            d.mesh.position.y = 0.32 + Math.sin(d.age * 3 + d.phase) * 0.08;
-            if (canCollect && Math.hypot(player.x - d.x, player.z - d.z) < MONEY_CONFIG.DROP_PICKUP_RADIUS) {
+            d.x = d.mesh.position.x;
+            d.z = d.mesh.position.z;
+            const near = Math.hypot(player.x - d.x, player.z - d.z) < MONEY_CONFIG.DROP_PICKUP_RADIUS;
+            if (d.thrown) { d.thrown = near; continue; }
+            if (canCollect && near) {
                 if (d.id !== null && onTake) {
                     if (d.age - d.asked > 1) { d.asked = d.age; onTake(d.id); }
                 } else {

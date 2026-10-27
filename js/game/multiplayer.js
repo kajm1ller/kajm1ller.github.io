@@ -16,7 +16,7 @@ import * as THREE from 'three';
 import { createHondaCivic } from './vehicle.js';
 import { createPlaneMesh } from './plane.js';
 import { lerpAngle } from './camera.js';
-import { poseWalk, poseAim, poseIdle, poseUse, poseSeated, poseStagger, poseHold } from './avatarPose.js';
+import { poseWalk, poseAim, poseIdle, poseUse, poseSeated, poseStagger, poseHold, poseGrabbing, posePunch } from './avatarPose.js';
 
 const _tmpV = new THREE.Vector3();
 
@@ -337,7 +337,7 @@ export class RemotePlayers {
             visualState: null,
             tag: createNameTag(p.name, p.hp === undefined ? 100 : p.hp),
             hp: p.hp === undefined ? 100 : p.hp,
-            anim: 'idle', held: '', ride: null, sit: null, riders: [], body: null, walkClock: 0,
+            anim: 'idle', held: '', ride: null, sit: null, riders: [], body: null, walkClock: 0, brawl: '', face: 0, nohead: false,
             pos: new THREE.Vector3(p.x, p.y, p.z),
             target: new THREE.Vector3(p.x, p.y, p.z),
             aim: new THREE.Vector3(p.x, p.y, p.z),
@@ -387,6 +387,9 @@ export class RemotePlayers {
             e.anim = p.anim || 'idle';
             e.region = p.region || null;
             e.held = p.held || '';
+            e.brawl = p.brawl || '';
+            e.face = p.face || 0;
+            e.nohead = !!p.nohead;
             e.ride = p.ride || null;
             e.sit = p.sit === undefined ? null : p.sit;
             e.riders = Array.isArray(p.riders) ? p.riders : [];
@@ -464,6 +467,7 @@ export class RemotePlayers {
                 e.root.rotation.z = 0;
             }
 
+            if (e.tag) e.tag.visible = !e.override;   // (in a fight with us: no name in our face)
             if (e.body) this._poseBody(e, dt);
             if (e.state === 'foot' && e.visual && e.visual.userData.legL) {
                 e.walkPhase += e.speed * dt * 2.4;
@@ -488,8 +492,25 @@ export class RemotePlayers {
             b.mesh.position.set(0, -500, 0);
             return;
         }
-        b.mesh.position.set(e.pos.x, e.pos.y, e.pos.z);
-        b.mesh.rotation.set(0, e.yaw, 0);
+        // A beaten face, a blown-off head; a fresh body once they're back to new (respawned)
+        if ((b.faceDmg || 0) > e.face + 0.5 || (b.headGone && !e.nohead)) {
+            this._dropBody(e);
+            this._makeBody(e);
+            return;
+        }
+        if (e.face > (b.faceDmg || 0) + 0.05) this.peds.bruiseFace(b, e.face - (b.faceDmg || 0));
+        if (e.nohead && !b.headGone) this.peds.goreHead(b);
+        // A fight we're in with them: our own game knows where they are and how (e.override, set each
+        // frame by game.html: { brawl, x, z, yaw (the body's own yaw) }), sooner than their reports
+        const ov = e.override;
+        if (ov) {
+            b.mesh.position.set(ov.x, e.pos.y, ov.z);
+            b.mesh.rotation.set(0, ov.yaw, 0);
+        } else {
+            b.mesh.position.set(e.pos.x, e.pos.y, e.pos.z);
+            // (yaw is where their camera looks; the rig faces +Z, so it is turned round)
+            b.mesh.rotation.set(0, e.yaw + Math.PI, 0);
+        }
         const h = b.mesh.scale.y || 1;
         // What's in their hand: the gun they have out, the drink, the joint, the needle...
         const prop = heldProp(e.held);
@@ -497,7 +518,30 @@ export class RemotePlayers {
             b.held = e.held;
             this.peds.setProp({ mesh: b.mesh }, 'R', prop ? prop[0] : null, prop ? prop[1] : 0x1e1e1e);
         }
-        if (e.sit !== null) {
+        const br = ov ? ov.brawl : e.brawl;
+        if (br && br[0] === 'h') {
+            // Held / pinned / pinned down / dragged / knocked down by someone (their game says where)
+            const mode = br.slice(1);
+            const down = mode === 'down';
+            this.peds.poseBrawlBody(b, rig, {
+                pose: down ? 'downed' : 'held', mode: down ? '' : mode,
+                lying: mode === 'mount' || mode === 'drag', downPose: 'back', hp: e.hp
+            }, dt);
+            if (e.anim === 'punch') {
+                // Fighting back: fists flying at whoever has them
+                const a = Math.max(0, Math.sin(this.time * 9)), c = Math.max(0, -Math.sin(this.time * 9));
+                const up = mode === 'mount' ? -2.4 : -1.4;
+                rig.shoulderL.rotation.set(up - 0.5 * a, 0, -0.1);
+                rig.shoulderR.rotation.set(up - 0.5 * c, 0, 0.1);
+                rig.elbowL.rotation.x = -1.6 + 1.5 * a;
+                rig.elbowR.rotation.x = -1.6 + 1.5 * c;
+            }
+        } else if (br && br[0] === 'g') {
+            e.walkClock += e.speed * dt * 2.1;
+            poseGrabbing(rig, br.slice(1), this.time, e.walkClock, e.speed, e.anim === 'punch', !!prop && prop[2] === 'gun');
+        } else if (e.anim === 'punch') {
+            posePunch(rig, this.time);
+        } else if (e.sit !== null) {
             poseSeated(rig, 0.66, h, 'table', this.time);
         } else if (e.anim === 'aim') {
             poseAim(rig, e.pitch);
@@ -516,12 +560,21 @@ export class RemotePlayers {
         } else if (e.speed > 0.15 || e.anim === 'walk' || e.anim === 'run') {
             e.walkClock += e.speed * dt * 2.1;
             poseWalk(rig, e.walkClock, Math.max(e.speed, e.anim === 'run' ? 4 : 0));
-            if (prop && e.anim !== 'run') poseHold(rig, prop[2], prop[3]);
+            const running = e.anim === 'run' || e.speed > 3.6;
+            if (prop && (!running || prop[2] === 'gun')) poseHold(rig, prop[2], prop[3], running, e.walkClock);
         } else {
             poseIdle(rig, this.time);
             if (prop) poseHold(rig, prop[2], prop[3]);
         }
         if (e.recoil > 0) e.recoil = Math.max(0, e.recoil - dt * 6);
+        // A punch just landed on them (from here): the head snaps, the body rocks
+        if (e.flinch > 0) {
+            const f = Math.sin(e.flinch * Math.PI);
+            rig.neck.rotation.x -= f * 0.55;
+            rig.neck.rotation.y += f * 0.4 * (e.flinchSide || 1);
+            rig.torso.rotation.x -= f * 0.2;
+            e.flinch = Math.max(0, e.flinch - dt * 4);
+        }
     }
 
     /** A shot from player `id`: they're drawn aiming for a moment, with the kick. */

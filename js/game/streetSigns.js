@@ -194,7 +194,11 @@ export class StreetSigns {
     /** Shows only the chunks of blades near the camera. */
     update(cameraPos) {
         if (!this.chunks) return;
-        const reach = DRAW_DISTANCE + CELL * 0.71;
+        const reach = (this.drawDistance || DRAW_DISTANCE) + CELL * 0.71; // drawDistance: the map editor shows every sign
+        // (only once the camera has moved a few metres)
+        if (this._at && this._reach === reach && (this._at.x - cameraPos.x) ** 2 + (this._at.z - cameraPos.z) ** 2 < 9) return;
+        this._at = { x: cameraPos.x, z: cameraPos.z };
+        this._reach = reach;
         for (const mesh of this.chunks) {
             const c = mesh.geometry.boundingSphere.center;
             mesh.visible = (c.x - cameraPos.x) ** 2 + (c.z - cameraPos.z) ** 2 < reach * reach;

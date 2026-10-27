@@ -72,6 +72,8 @@ export class PlayerController {
             space: false,
             e: false
         };
+        // Touch controls driving: { throttle 0..1, brake 0..1, steer -1..1 (+1 left) }, null otherwise
+        this.analog = null;
 
         // DOM HUD Prompt Element Cache
         this.hudPrompt = null;
@@ -544,14 +546,21 @@ export class PlayerController {
             // Forward inputs to vehicle with adversarial sanitization
             // With the engine off the car can only roll: no throttle (brake and handbrake still work)
             const engineBlocked = this.requireEngine && !this.activeVehicle.isPlane && !this.activeVehicle.engineOn;
-            const throttle = !engineBlocked && !!this.keys.w;
-            const brake = !!this.keys.s;
+            let throttle = !engineBlocked && !!this.keys.w;
+            let brake = !!this.keys.s;
             // Contradictory left+right steer cancels out to 0
-            const steer = {
+            let steer = {
                 left: !!this.keys.a && !this.keys.d,
                 right: !!this.keys.d && !this.keys.a
             };
             const handbrake = !!this.keys.space;
+            // Touch controls: a stick and pedals that go part of the way (cars; planes keep the keys)
+            const A = this.analog;
+            if (A && !this.activeVehicle.isPlane) {
+                throttle = engineBlocked ? 0 : Math.max(throttle ? 1 : 0, A.throttle || 0);
+                brake = Math.max(brake ? 1 : 0, A.brake || 0);
+                steer = A.steer ? Math.max(-1, Math.min(1, A.steer)) : steer;   // (+1 is left)
+            }
 
             if (typeof this.activeVehicle.setInputs === 'function') {
                 this.activeVehicle.setInputs(throttle, steer, brake, handbrake);

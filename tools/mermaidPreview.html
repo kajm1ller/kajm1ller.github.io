@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mermaid World preview</title>
+<style>
+    html, body { margin: 0; height: 100%; background: #04202e; overflow: hidden; }
+</style>
+<script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+</script>
+</head>
+<body>
+<script type="module">
+    // Dev page: Mermaid World on its own (no city map), for working on its look and quests.
+    //   ?audio=1       turn the procedural audio on
+    //   ?manual=1      don't run on requestAnimationFrame: step with __MW_STEP__(seconds, frames)
+    //   __MW__         the world, for poking at from the console / tests
+    import * as THREE from 'three';
+    import { MermaidWorld } from '../js/game/mermaid/mermaidWorld.js';
+
+    const params = new URLSearchParams(location.search);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.body.appendChild(renderer.domElement);
+    addEventListener('resize', () => renderer.setSize(innerWidth, innerHeight));
+
+    let ctx = null;
+    window.__MW_EXITED__ = 0;
+    const world = new MermaidWorld({
+        renderer,
+        getAudioContext: () => {
+            if (!params.get('audio')) return null;
+            if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+            return ctx;
+        },
+        onExit: () => { window.__MW_EXITED__++; console.log('[preview] trip over'); }
+    });
+    window.__MW__ = world;
+    window.__MW_STEP__ = (sec = 1, frames = 1) => {
+        const dt = sec / frames;
+        for (let i = 0; i < frames; i++) world.frame(dt);
+    };
+    world.enter();
+    if (!params.get('manual')) {
+        let last = performance.now();
+        const loop = (now) => {
+            requestAnimationFrame(loop);
+            world.frame(Math.min(0.1, (now - last) / 1000));
+            last = now;
+        };
+        requestAnimationFrame(loop);
+    }
+</script>
+</body>
+</html>

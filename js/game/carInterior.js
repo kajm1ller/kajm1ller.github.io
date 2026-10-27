@@ -19,7 +19,7 @@
  */
 
 import * as THREE from 'three';
-import { getCarModel, cabinShape, getWindowFrames, buildCabinFrame, polySpanAt, pointInPoly, mergeGeometries } from './carModels.js';
+import { getCarModel, cabinShape, getWindowFrames, polySpanAt, pointInPoly, mergeGeometries } from './carModels.js';
 
 // Driver eye point of the Civic in car space; other models use vehicle.driverEye (cabinShape().eye)
 export const DRIVER_EYE = Object.freeze(Object.assign({}, cabinShape('civic').eye));
@@ -244,11 +244,25 @@ class Cluster {
         return c;
     }
 
-    draw(gear) {
-        if (gear === this.lastKey) return;
-        this.lastKey = gear;
+    draw(gear, beltLamp = false) {
+        const key = gear + (beltLamp ? '+belt' : '');
+        if (key === this.lastKey) return;
+        this.lastKey = key;
         const g = this.ctx;
         g.drawImage(this.bg, 0, 0);
+        if (beltLamp) {
+            // Seatbelt warning lamp: a seated person with the belt across them
+            g.strokeStyle = g.fillStyle = '#ff3b30';
+            g.lineWidth = 4;
+            g.lineCap = 'round';
+            g.beginPath();
+            g.arc(250, 72, 7, 0, Math.PI * 2);
+            g.fill();
+            g.beginPath();
+            g.moveTo(248, 84); g.lineTo(246, 110); g.lineTo(268, 112); g.lineTo(270, 128);
+            g.moveTo(240, 86); g.lineTo(262, 108);
+            g.stroke();
+        }
         g.fillStyle = '#000000';
         g.fillRect(232, 150, 48, 30);
         g.fillStyle = gear === 'R' ? '#ff3b30' : this.style.label;
@@ -453,15 +467,11 @@ export class CarInterior {
         }
     }
 
-    /**
-     * The cabin is only drawn when it can be seen: from the driver's seat, or from outside through
-     * an open door or shot-out glass (otherwise the tinted greenhouse hides it).
-     */
+    /** The glass is see-through, so the cabin always shows; the car's plain seats give way to it. */
     updateVisibility() {
-        const v = this.vehicle;
-        const see = this.cockpitActive || this.occupied || this.cabinExposed || !!v.transitionActive ||
-            (v.doorOpenAngle || 0) > 0.01 || !!(v.cabinFrame && v.cabinFrame.visible);
-        this.root.visible = see;
+        this.root.visible = true;
+        const plain = this.vehicle.mesh.getObjectByName('cabin_furniture');
+        if (plain) plain.visible = false;
     }
 
     _build() {
@@ -913,26 +923,9 @@ export class CarInterior {
         }
     }
 
-    /**
-     * Lets the cabin be seen into from outside once a window is broken: the solid greenhouse gives
-     * way to its pillars and roof edges, so the seats and whoever is in them show through the glass.
-     */
+    /** Marks the cabin as shot into (the glass is see-through anyway, so nothing to uncover). */
     exposeCabin() {
-        if (this.cabinExposed) return;
-        const mesh = this.vehicle.mesh;
-        const cabin = mesh.getObjectByName('cabin_roof');
-        if (!cabin) return;
         this.cabinExposed = true;
-        this.root.visible = true;
-        if (typeof this.vehicle.setCabinSeeThrough === 'function') {
-            this.vehicle.setCabinSeeThrough(true);
-            return;
-        }
-        cabin.visible = false;
-        const frame = buildCabinFrame(this.model.id);
-        frame.name = 'cabin_frame';
-        frame.castShadow = frame.receiveShadow = true;
-        mesh.add(frame);
     }
 
     /**
@@ -962,7 +955,7 @@ export class CarInterior {
         if (!running) rpm = 0;
         this._rpm = this._rpm === undefined ? rpm : this._rpm + (rpm - this._rpm) * Math.min(1, dt * 12);
         this.tachNeedle.rotation.z = -Math.PI * 1.25 - Math.min(1.02, this._rpm / this.clusterTex.maxRpm) * sweep;
-        this.clusterTex.draw(v.gearLabel || (running ? 'D' : 'P'));
+        this.clusterTex.draw(v.gearLabel || (running ? 'D' : 'P'), running && !!v.beltWarning);
         if (this.taxiMeter && running) this.taxiMeter.add(Math.abs(v.speed || 0) * dt);
 
         // Screen (redraws only when something on it changes)
@@ -1075,12 +1068,13 @@ export class CarInterior {
 // Window shattering
 // ================================================================================================
 const SHARD_COUNT = 90;
-const MAX_SHARDS = SHARD_COUNT * 4;
+const MAX_SHARDS = 640;
+const _zeroMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
 
 // Window panes come from the car model (carModels.js getWindowFrames): each lies in a plane through
 // `origin` spanned by U (across) and V (up the glass), with N pointing out of the car, and `poly`
-// is the pane outline in (u, v). Side windows break forward of the B-pillar; the rear quarter pane
-// behind it is separate glass and survives. `floor` is where shards that fall inside come to rest.
+// is the pane outline in (u, v). The door glass and the rear quarter glass behind the B-pillar break
+// separately. `floor` is where shards that fall inside come to rest.
 function windowPoint(w, u, v, target) {
     return target.copy(w.origin).addScaledVector(w.U, u).addScaledVector(w.V, v);
 }
@@ -1097,7 +1091,10 @@ function randomInPane(w, out) {
     return out;
 }
 
-/** Glass shards flying out of broken windows, plus the jagged edges left in the frames. */
+/**
+ * Glass shards flying out of broken windows, plus the jagged edges left in the frames, all one
+ * instanced mesh: breaking a window adds no objects (and compiles no shaders) mid-game.
+ */
 export class GlassShatterSystem {
     constructor(scene) {
         this.scene = scene;
@@ -1113,11 +1110,14 @@ export class GlassShatterSystem {
         this.mesh = new THREE.InstancedMesh(shardGeo, this.material, MAX_SHARDS);
         this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         this.mesh.frustumCulled = false;
-        this.mesh.count = 0;
+        // One invisible instance is always drawn, so the shader is compiled at load, not on the first break
+        this.mesh.setMatrixAt(0, _zeroMatrix);
+        this.mesh.count = 1;
         this.mesh.name = 'glass_shards';
         scene.add(this.mesh);
         this.shards = [];
         this._m = new THREE.Matrix4();
+        this._m2 = new THREE.Matrix4();
         this._q = new THREE.Quaternion();
         this._e = new THREE.Euler();
         this._s = new THREE.Vector3();
@@ -1153,18 +1153,20 @@ export class GlassShatterSystem {
         const P = this._p;
         const shape = cabinShape(vehicle.model || 'civic');
 
-        // Jagged remains along the bottom and up both sides of the frame, lying in the glass plane
-        const edges = new THREE.Group();
-        edges.name = `${which}_window_jagged_edges`;
+        // Jagged remains along the bottom and up both sides of the frame, lying in the glass plane.
+        // The driver's door glass hangs on the door, so its broken edges do too.
+        const doorPivot = which === 'left' && vehicle.leftDoorPivot && glass.parent === vehicle.leftDoorPivot ? vehicle.leftDoorPivot : null;
+        const frame = doorPivot || root;
         const basis = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(w.U, w.V, w.N));
-        const spin = new THREE.Quaternion();
         const zAxis = new THREE.Vector3(0, 0, 1);
         const addShard = (u, v, sw, sh, rot) => {
-            const m = new THREE.Mesh(this.mesh.geometry, this.material);
-            windowPoint(w, u, v, m.position);
-            m.quaternion.copy(basis).multiply(spin.setFromAxisAngle(zAxis, rot));
-            m.scale.set(sw, sh, 1);
-            edges.add(m);
+            const pos = windowPoint(w, u, v, new THREE.Vector3());
+            if (doorPivot) pos.sub(doorPivot.position);
+            this.shards.push({
+                vehicle, frame, edge: true, life: 1e9,
+                pos, quat: basis.clone().multiply(new THREE.Quaternion().setFromAxisAngle(zAxis, rot)),
+                scale: new THREE.Vector3(sw, sh, 1)
+            });
         };
         const vb = w.v0 + 0.03;
         const bottom = polySpanAt(w.poly, vb) || [w.u0, w.u1];
@@ -1180,14 +1182,6 @@ export class GlassShatterSystem {
             if (!sp) continue;
             addShard(sp[0] + 0.03, v, 0.05 + Math.random() * 0.05, 0.05 + Math.random() * 0.09, Math.PI / 2 + (Math.random() - 0.5));
             addShard(sp[1] - 0.03, v, 0.05 + Math.random() * 0.05, 0.05 + Math.random() * 0.09, -Math.PI / 2 + (Math.random() - 0.5));
-        }
-        // The driver's door glass hangs on the door, so its broken edges do too
-        const doorPivot = which === 'left' && vehicle.leftDoorPivot && glass.parent === vehicle.leftDoorPivot ? vehicle.leftDoorPivot : null;
-        if (doorPivot) {
-            edges.position.copy(doorPivot.position).negate();
-            doorPivot.add(edges);
-        } else {
-            root.add(edges);
         }
 
         // Flying shards: outward ones in world space, inward ones in car space so they settle on the
@@ -1232,7 +1226,7 @@ export class GlassShatterSystem {
                     vy: Math.random() * 1.6 - 0.2 + onY * out * 0.5,
                     vz: vz + outZ * out + (Math.random() - 0.5) * 1.4,
                     vehicle: null,
-                    floor: 0.015,
+                    floor: (vehicle.position ? vehicle.position.y || 0 : 0) + 0.015,   // the road under the car, not y = 0
                     life: 8 + Math.random() * 4
                 });
             }
@@ -1249,8 +1243,14 @@ export class GlassShatterSystem {
         for (let i = list.length - 1; i >= 0; i--) {
             const s = list[i];
             s.life -= dt;
-            if (s.life <= 0) {
+            // Shards riding a car go with it when it leaves the scene (traffic going dormant)
+            if (s.life <= 0 || (s.vehicle && !s.vehicle.mesh.parent)) {
                 list.splice(i, 1);
+                continue;
+            }
+            if (s.edge) {
+                this._m.compose(s.pos, s.quat, s.scale).premultiply(s.frame.matrixWorld);
+                this.mesh.setMatrixAt(n++, this._m);
                 continue;
             }
             if (s.vehicle) {
@@ -1292,10 +1292,19 @@ export class GlassShatterSystem {
             this._m.compose(this._p, this._q, this._s);
             this.mesh.setMatrixAt(n++, this._m);
         }
+        if (n === 0) {
+            if (this.mesh.count === 1 && this._idle) return;
+            this.mesh.setMatrixAt(n++, _zeroMatrix);
+            this._idle = true;
+        } else {
+            this._idle = false;
+        }
         this.mesh.count = n;
-        if (n > 0) this.mesh.instanceMatrix.needsUpdate = true;
+        this.mesh.instanceMatrix.needsUpdate = true;
     }
 }
+
+let _shatterNoise = null;
 
 /** Synthesized safety-glass shatter: a crack, a noisy crunch and a spray of tinkles. */
 export function playGlassShatter(ctx) {
@@ -1307,13 +1316,16 @@ export function playGlassShatter(ctx) {
         out.gain.value = 0.9;
         out.connect(ctx.destination);
 
-        // Noise burst through a high-pass for the crunch
-        const len = Math.floor(ctx.sampleRate * 0.5);
-        const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-        const d = buf.getChannelData(0);
-        for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+        // Noise burst through a high-pass for the crunch (the buffer is made once per context)
+        if (!_shatterNoise || _shatterNoise.ctx !== ctx) {
+            const len = Math.floor(ctx.sampleRate * 0.5);
+            const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+            const d = buf.getChannelData(0);
+            for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+            _shatterNoise = { ctx, buf };
+        }
         const noise = ctx.createBufferSource();
-        noise.buffer = buf;
+        noise.buffer = _shatterNoise.buf;
         const hp = ctx.createBiquadFilter();
         hp.type = 'highpass';
         hp.frequency.value = 2200;
@@ -1336,7 +1348,7 @@ export function playGlassShatter(ctx) {
         thump.stop(t0 + 0.15);
 
         // Tinkling pieces landing
-        for (let i = 0; i < 26; i++) {
+        for (let i = 0; i < 12; i++) {
             const t = t0 + 0.03 + Math.random() * 0.9;
             const o = ctx.createOscillator();
             o.type = 'sine';

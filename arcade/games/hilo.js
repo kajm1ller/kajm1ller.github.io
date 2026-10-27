@@ -28,6 +28,7 @@ const CSS = `
 .hl-side .big { font-size: 26px; }
 .hl-side b { color: var(--cz-text); font-size: 15px; }
 .hl-card { --cw: clamp(110px, 15vw, 150px); }
+@media (max-width: 420px) { .hl-side { width: 80px; } .hl-card { --cw: 96px; } }
 .hl-mult { font-size: 42px; font-weight: 900; font-variant-numeric: tabular-nums; }
 .hl-profit { color: var(--cz-green); font-weight: 800; }
 .hl-trail { display: flex; gap: 6px; flex-wrap: nowrap; overflow: hidden; max-width: 100%; padding: 6px; --cw: 46px; }

@@ -189,3 +189,34 @@ test('PoliceSystem: Killing police officers increases wanted stars', () => {
     assert.equal(killed2, true);
     assert.equal(policeSys.wantedLevel, 3, 'Killing second police officer must increase wanted stars to 3');
 });
+
+test('Police hold you at gunpoint: no shooting until you shoot, no running you over on foot', () => {
+    const scene = new THREE.Scene();
+    const officer = new PoliceOfficer('officer_hold', 0, 20, 0, scene);
+    let shots = 0;
+    for (let i = 0; i < 600; i++) officer.update(1 / 60, { x: 0, y: 0, z: 0 }, false, scene, () => shots++, { weaponsFree: false, arrest: false });
+    assert.equal(shots, 0, 'holds fire');
+    const d = Math.hypot(officer.position.x, officer.position.z);
+    assert.ok(d > 6 && d < 9, `stops a few metres off (${d.toFixed(2)})`);
+    for (let i = 0; i < 300; i++) officer.update(1 / 60, { x: 0, y: 0, z: 0 }, false, scene, () => shots++, { weaponsFree: true, arrest: false });
+    assert.ok(shots > 0, 'shoots back once fired on');
+
+    const sys = new PoliceSystem(scene, new SpatialGrid(), new RoadNetwork(), null);
+    sys.playerFired();
+    assert.ok(!sys.weaponsFree, 'nothing to shoot back with when nobody is after you');
+    sys.triggerCrime('shooting', { x: 0, y: 0, z: 0 });
+    sys.playerFired();
+    assert.ok(sys.weaponsFree);
+    sys.clearWantedLevel();
+    assert.ok(!sys.weaponsFree);
+
+    // A cruiser coming at someone on foot pulls up short
+    const car = new PoliceVehicle('police_stop', 0, 60, 0, scene);
+    const grid = new SpatialGrid(), roads = new RoadNetwork();
+    let closest = Infinity;
+    for (let i = 0; i < 60 * 12; i++) {
+        car.updateAI(1 / 60, { x: 0, z: 0 }, false, grid, roads);
+        closest = Math.min(closest, Math.hypot(car.position.x, car.position.z));
+    }
+    assert.ok(closest > 6, `never runs them down (closest ${closest.toFixed(1)} m)`);
+});

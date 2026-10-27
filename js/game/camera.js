@@ -231,7 +231,7 @@ export class CameraController {
                 this.orbitYaw -= movementX * this.mouseSensitivity;
                 this.orbitPitch -= movementY * this.mouseSensitivity;
                 this.orbitYaw = Math.max(-2.3, Math.min(2.3, this.orbitYaw));
-                this.orbitPitch = Math.max(-0.65, Math.min(0.5, this.orbitPitch));
+                this.orbitPitch = Math.max(-1.2, Math.min(0.5, this.orbitPitch));   // (down to the seatbelt buckle)
             } else {
                 // Orbit camera around car
                 this.orbitYaw -= movementX * this.mouseSensitivity;
@@ -292,27 +292,42 @@ export class CameraController {
             const vy = typeof this.targetVehicle.getYaw === 'function' ? this.targetVehicle.getYaw() : 0;
             const speed = typeof this.targetVehicle.getSpeed === 'function' ? this.targetVehicle.getSpeed() : 0;
 
-            // When moving forward/reverse and NOT aiming, decay manual orbit yaw/pitch back toward 0
-            if (speed > 1.0 && !this.isAiming && this.aimTransition < 0.05) {
+            // Chase view: when moving and NOT aiming, swing the manual orbit back behind the car. In the
+            // driver's seat the head stays wherever you turned it.
+            if (speed > 1.0 && !this.isAiming && this.aimTransition < 0.05 && !this.cockpitView) {
                 const orbitDecay = 1.0 - Math.exp(-dt * 2.5);
                 this.orbitYaw *= (1.0 - orbitDecay);
                 this.orbitPitch *= (1.0 - orbitDecay);
             }
 
-            // Smooth chase yaw toward vehicle yaw
-            const yawAlpha = 1.0 - Math.exp(-dt * this.yawFollowRate);
-            this.chaseYaw = lerpAngle(this.chaseYaw, vy, yawAlpha);
+            const tv = this.targetVehicle;
+            const aLong = tv.accelLong || 0, aLat = tv.accelLat || 0;
+            // Smooth chase yaw toward where the car is going: its heading, or its direction of travel
+            // when it slides, so a drift shows its angle. Loose at low speed, tighter at speed, so
+            // the car swings in the frame through a corner instead of being nailed to the screen.
+            let headYaw = vy;
+            const vel = tv.velocity;
+            if (vel && Math.abs(speed) > 4 && !tv.isPlane) {
+                const travelYaw = Math.atan2(-vel.x, -vel.y);
+                headYaw = lerpAngle(vy, speed > 0 ? travelYaw : vy, 0.6);
+            }
+            const yawAlpha = 1.0 - Math.exp(-dt * Math.min(this.yawFollowRate, 3.2 + Math.abs(speed) * 0.09));
+            this.chaseYaw = lerpAngle(this.chaseYaw, headYaw, yawAlpha);
 
             const effectiveYaw = this.chaseYaw + this.orbitYaw;
             const effectivePitch = this.orbitPitch;
 
-            // Dynamic camera distance / height based on speed
-            const chaseDistance = this._chaseSetting(this.targetVehicle, 'chaseDistance');
-            const chaseHeight = this._chaseSetting(this.targetVehicle, 'chaseHeight');
-            const lookHeight = this._chaseSetting(this.targetVehicle, 'targetLookHeight');
-            const speedRatio = Math.min(1.0, speed / 25.0);
-            const currentDist = chaseDistance + speedRatio * 1.5;
-            const currentHeight = chaseHeight + speedRatio * 0.4 + Math.sin(effectivePitch) * 2.0;
+            // Dynamic camera distance / height based on speed, stretched by the pull of acceleration
+            const chaseDistance = this._chaseSetting(tv, 'chaseDistance');
+            const chaseHeight = this._chaseSetting(tv, 'chaseHeight');
+            const lookHeight = this._chaseSetting(tv, 'targetLookHeight');
+            const speedRatio = Math.min(1.0, Math.abs(speed) / 25.0);
+            this._pull = (this._pull || 0) + (Math.max(-0.8, Math.min(1.2, aLong * 0.09)) - (this._pull || 0)) * (1 - Math.exp(-dt * 3));
+            const currentDist = chaseDistance + speedRatio * 1.6 + this._pull;
+            const currentHeight = chaseHeight + speedRatio * 0.35 + Math.sin(effectivePitch) * 2.0;
+            // Speed (and boost) widen the view a little; game.html adds this to its FOV
+            const fovWant = tv.isPlane ? 0 : speedRatio * speedRatio * 7 + (tv.boostTimer > 0 ? 6 : 0);
+            this.fovKick = (this.fovKick || 0) + (fovWant - (this.fovKick || 0)) * (1 - Math.exp(-dt * 3));
 
             const distProj = currentDist * Math.cos(effectivePitch);
 
@@ -323,12 +338,14 @@ export class CameraController {
                 vp.z + Math.cos(effectiveYaw) * distProj
             );
 
-            // Focus target on vehicle (slightly ahead when moving fast)
-            const lookahead = speedRatio * 1.5;
+            // Focus target on vehicle (ahead when moving fast, and towards the inside of a turn)
+            const lookahead = speedRatio * 2.2;
+            this._turnLook = (this._turnLook || 0) + (Math.max(-2.5, Math.min(2.5, aLat * 0.22)) - (this._turnLook || 0)) * (1 - Math.exp(-dt * 2.5));
+            const rx = Math.cos(vy), rz = -Math.sin(vy); // car's right
             this._lookTarget.set(
-                vp.x - Math.sin(vy) * lookahead,
+                vp.x - Math.sin(vy) * lookahead - rx * this._turnLook,
                 (vp.y || 0) + lookHeight,
-                vp.z - Math.cos(vy) * lookahead
+                vp.z - Math.cos(vy) * lookahead - rz * this._turnLook
             );
 
             // Driver's seat <-> chase camera blend
@@ -339,7 +356,6 @@ export class CameraController {
             const seat = this.viewBlend * this.viewBlend * (3.0 - 2.0 * this.viewBlend);
 
             // Chase placement (orbit only applies to the chase camera)
-            const posBeta = 1.0 - Math.exp(-dt * this.posFollowRate);
             if (wantCockpit) {
                 this._desiredPos.set(
                     vp.x + Math.sin(this.chaseYaw) * currentDist,
@@ -347,31 +363,46 @@ export class CameraController {
                     vp.z + Math.cos(this.chaseYaw) * currentDist
                 );
             }
-            this._chasePos.copy(this.camera.position).lerp(this._desiredPos, posBeta);
+            // Horizontal follow is a touch loose (the car leads), height follows quickly (no bob)
+            const posBeta = 1.0 - Math.exp(-dt * Math.min(this.posFollowRate, 7 + speedRatio * 3));
+            const yBeta = 1.0 - Math.exp(-dt * 10);
+            const cp = this.camera.position;
+            if (this.viewBlend < 0.001 && this.aimTransition < 0.001) this._chasePos.copy(cp);
+            this._chasePos.x += (this._desiredPos.x - this._chasePos.x) * posBeta;
+            this._chasePos.z += (this._desiredPos.z - this._chasePos.z) * posBeta;
+            this._chasePos.y += (this._desiredPos.y - this._chasePos.y) * yBeta;
             this._chaseLook.copy(this._lookTarget);
 
-            // Driver's eye, rigidly attached to the car, with a touch of road vibration and lean into turns
+            // Driver's eye rides in the car (with its roll and pitch); the head lags the g-forces
             const cosY = Math.cos(vy);
             const sinY = Math.sin(vy);
             this._shakeTime += dt * (2 + Math.abs(speed) * 1.3);
-            const lean = Math.max(-0.05, Math.min(0.05, -(this.targetVehicle.steerAngle || 0) * Math.abs(speed) * 0.006));
+            const gk = 1.0 - Math.exp(-dt * 6.0);
+            this._headX = (this._headX || 0) + (Math.max(-0.07, Math.min(0.07, -aLat * 0.006)) - (this._headX || 0)) * gk;
+            this._headZ = (this._headZ || 0) + (Math.max(-0.06, Math.min(0.08, aLong * 0.005)) - (this._headZ || 0)) * gk;
             this.lean += (this.leanTarget - this.lean) * (1.0 - Math.exp(-dt * 6.0));
             const out = this.lean * this.lean * (3.0 - 2.0 * this.lean);
             // Each car model seats the driver differently (vehicle.driverEye)
-            const eye = this.targetVehicle.driverEye || this.cockpitOffset;
-            const ox = eye.x + lean - out * 0.8;
-            const oy = eye.y + out * 0.07 + Math.sin(this._shakeTime * 7.3) * Math.min(0.004, Math.abs(speed) * 0.0002) +
-                (this.targetVehicle.bumpHeave || 0) - eye.z * (this.targetVehicle.bumpPitch || 0);
-            const oz = eye.z - out * 0.12;
-            this._cockpitPos.set(
-                vp.x + ox * cosY + oz * sinY,
-                (vp.y || 0) + oy,
-                vp.z - ox * sinY + oz * cosY
-            );
+            const eye = tv.driverEye || this.cockpitOffset;
+            const ox = eye.x + this._headX - out * 0.8;
+            const oy = eye.y + out * 0.07 + Math.sin(this._shakeTime * 7.3) * Math.min(0.004, Math.abs(speed) * 0.0002);
+            const oz = eye.z + this._headZ - out * 0.12;
+            if (tv.mesh && tv.mesh.parent && !tv.isPlane) {
+                // through the body's transform, so the view rolls and pitches with the car
+                tv.mesh.updateMatrixWorld();
+                this._cockpitPos.set(ox, oy, oz).applyMatrix4(tv.mesh.matrixWorld);
+            } else {
+                this._cockpitPos.set(
+                    vp.x + ox * cosY + oz * sinY,
+                    (vp.y || 0) + oy + (tv.bumpHeave || 0) - eye.z * (tv.bumpPitch || 0),
+                    vp.z - ox * sinY + oz * cosY
+                );
+            }
 
-            // Where the driver looks: ahead plus mouse look (seat view), or the drive-by aim
-            const lookYaw = vy + (wantCockpit ? this.orbitYaw : 0);
-            const lookPitch = (wantCockpit ? this.orbitPitch - 0.06 : -0.06) + (this.targetVehicle.bumpPitch || 0);
+            // Where the driver looks: ahead and a little into the turn, plus mouse look (seat view), or the drive-by aim
+            this._lookInto = (this._lookInto || 0) + ((tv.steerAngle || 0) * 0.45 - (this._lookInto || 0)) * (1 - Math.exp(-dt * 4));
+            const lookYaw = vy + this._lookInto + (wantCockpit ? this.orbitYaw : 0);
+            const lookPitch = (wantCockpit ? this.orbitPitch - 0.06 : -0.06) + (tv.bumpPitch || 0) + (tv.bodyPitch || 0);
             this._seatLook.set(
                 this._cockpitPos.x - Math.sin(lookYaw) * Math.cos(lookPitch) * 25.0,
                 this._cockpitPos.y + Math.sin(lookPitch) * 25.0,
@@ -397,6 +428,10 @@ export class CameraController {
             this._blendedLookTarget.lerpVectors(this._chaseLook, this._seatLook, seat);
             this._blendedLookTarget.lerp(this._cockpitAimTarget, aim);
             this.camera.lookAt(this._blendedLookTarget);
+            // Roll: the seat view tilts with the body (the neck takes some out); the chase camera banks a hair
+            const chaseBank = Math.max(-0.03, Math.min(0.03, (this._turnLook || 0) * 0.012));
+            const roll = (tv.bodyRoll || 0) * 0.6 * inSeat + chaseBank * (1 - inSeat);
+            if (roll) this.camera.rotateZ(roll * (1 - aim));
         }
     }
 }

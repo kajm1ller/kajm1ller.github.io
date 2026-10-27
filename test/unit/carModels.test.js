@@ -31,6 +31,7 @@ test('Car models: every model builds a complete, finite car mesh', () => {
         const fleet = getFleetGeometry(id);
         assert(fleet.body && allFinite(fleet.body), `${id}: fleet batch`);
         assert.equal(fleet.body.attributes.paintMask.count, fleet.body.attributes.position.count, `${id}: paint mask per vertex`);
+        assert(fleet.glass && allFinite(fleet.glass), `${id}: fleet glass batch`);
     }
 });
 
@@ -52,16 +53,23 @@ test('Car models: glass panes sit inside the greenhouse, above the beltline and 
 test('Car models: a ray into the middle of each pane lands inside its outline', () => {
     for (const id of CAR_MODEL_IDS) {
         const frames = getWindowFrames(id);
-        for (const type of ['front', 'back', 'left', 'right']) {
+        for (const type of ['front', 'back', 'left', 'right']) assert(frames[type], `${id}: ${type} window frame`);
+        // Every pane can be shot out, the rear quarter glass included
+        const panes = getModelGeometry(id).glass.map((p) => p.name);
+        assert.deepEqual(Object.values(frames).map((w) => w.glass).sort(), panes.slice().sort(), `${id}: every pane has a hit frame`);
+        for (const type in frames) {
             const w = frames[type];
-            assert(w, `${id}: ${type} window frame`);
             // Outward normal really points away from the car's centre line
             const c = w.center;
-            const outward = type === 'front' || type === 'left' ? -1 : 1;
+            const outward = type === 'front' || type.startsWith('left') ? -1 : 1;
             const axis = type === 'front' || type === 'back' ? w.N.z : w.N.x;
             assert(Math.sign(axis) === Math.sign(outward), `${id}: ${type} normal points out of the car`);
+            // (a quarter pane can be a thin triangle whose bounding-box centre is off the glass)
             const d = new THREE.Vector3().subVectors(c, w.origin);
-            assert(pointInPoly(w.poly, d.dot(w.U), d.dot(w.V)), `${id}: ${type} pane centre is inside its outline`);
+            const [u, v] = type.endsWith('Rear')
+                ? w.poly.reduce((s, p) => [s[0] + p[0] / w.poly.length, s[1] + p[1] / w.poly.length], [0, 0])
+                : [d.dot(w.U), d.dot(w.V)];
+            assert(pointInPoly(w.poly, u, v), `${id}: ${type} pane centre is inside its outline`);
         }
     }
 });
@@ -157,6 +165,7 @@ test('InstancedVehicleFleet: batches cars by model and scales wheels per model',
     assert(Math.abs(s.y - CAR_MODELS.pickup.wheels.radius) < 1e-6, 'pickup wheel scaled to its radius');
     const metrics = fleet.getMetrics();
     assert.equal(metrics.vehicleCount, ids.length);
-    assert.equal(metrics.drawCalls, 4 + 2, 'one draw per model on the road plus tyres and rims');
+    assert.equal(metrics.drawCalls, 4 * 2 + 2, 'body and glass per model on the road plus tyres and rims');
+    assert.equal(fleet.batches.get('van').glass.count, 3, 'see-through glass drawn for each car');
     fleet.dispose();
 });

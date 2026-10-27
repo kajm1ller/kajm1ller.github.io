@@ -21,7 +21,7 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import {
-    getCarModel, buildCarMesh, cabinShape, getModelGeometry, buildCabinFrame,
+    getCarModel, buildCarMesh, cabinShape, getModelGeometry,
     getPartMaterials, getPaintMaterial, DEFAULT_CAR_MODEL
 } from './carModels.js';
 
@@ -153,6 +153,16 @@ export class Vehicle {
         this.inputSteer = 0;
         this.inputBrake = 0;
         this.inputHandbrake = false;
+        // Player feel: keys eased into analogue-ish inputs, felt g-forces, body lean
+        this._steerIn = 0;
+        this._thrIn = 0;
+        this._brkIn = 0;
+        this.accelLong = 0;
+        this.accelLat = 0;
+        this.bodyRoll = 0;
+        this.bodyPitch = 0;
+        this._rollVel = 0;
+        this._bodyPitchVel = 0;
 
         // Drift boost state (player only): drifting under handbrake charges a boost released with the handbrake
         this.driftCharge = 0;                   // Accumulated drift charge (0..driftChargeMax)
@@ -203,33 +213,6 @@ export class Vehicle {
             // Positive Y rotation swings the front-hinged left door outward
             this.leftDoorPivot.rotation.y = -Math.abs(angle);
         }
-        this.setCabinSeeThrough(Math.abs(angle) > 0.01);
-    }
-
-    /**
-     * From outside, the cabin is a solid tinted block behind the glass. While a door is open
-     * (or the glass is shot out) it gives way to its pillars and roof edges so the interior shows.
-     * @param {boolean} see
-     */
-    setCabinSeeThrough(see) {
-        if (!this.mesh) return;
-        const cabin = this.mesh.getObjectByName('cabin_roof');
-        if (!cabin) return;
-        const permanent = !!(this.interior && this.interior.cabinExposed);
-        if (see || permanent) {
-            if (!this.cabinFrame) {
-                this.cabinFrame = buildCabinFrame(this.modelId);
-                this.cabinFrame.name = 'cabin_frame';
-                this.cabinFrame.castShadow = this.cabinFrame.receiveShadow = true;
-                this.mesh.add(this.cabinFrame);
-            }
-            this.cabinFrame.visible = true;
-            cabin.visible = false;
-        } else {
-            if (this.cabinFrame) this.cabinFrame.visible = false;
-            cabin.visible = true;
-        }
-        if (this.interior && typeof this.interior.updateVisibility === 'function') this.interior.updateVisibility();
     }
 
     /**
@@ -327,14 +310,20 @@ export class Vehicle {
 
         // 1. Speed-sensitive steering smoothing
         const speedMagnitude = Math.abs(this.speed);
+        if (this.isPlayer) this._shapePlayerInputs(dt, speedMagnitude);
         const speedSteerFactor = 1.0 / (1.0 + 0.05 * speedMagnitude);
         const effectiveMaxSteer = this.maxSteerAngle * speedSteerFactor;
-        const targetSteer = this.inputSteer * effectiveMaxSteer;
+        const targetSteer = (this.isPlayer ? this._steerIn : this.inputSteer) * effectiveMaxSteer;
 
-        const steerRate = (this.inputSteer === 0) ? this.steerCenterSpeed : this.steerSpeed;
-        const steerDelta = targetSteer - this.steerAngle;
-        const maxSteerStep = steerRate * dt;
-        this.steerAngle += Math.max(-maxSteerStep, Math.min(maxSteerStep, steerDelta));
+        if (this.isPlayer) {
+            // The rack follows the (already eased) wheel input with a little lag: no instant snap to lock
+            this.steerAngle += (targetSteer - this.steerAngle) * (1 - Math.exp(-dt * 14));
+        } else {
+            const steerRate = (this.inputSteer === 0) ? this.steerCenterSpeed : this.steerSpeed;
+            const steerDelta = targetSteer - this.steerAngle;
+            const maxSteerStep = steerRate * dt;
+            this.steerAngle += Math.max(-maxSteerStep, Math.min(maxSteerStep, steerDelta));
+        }
 
         // 2. Longitudinal acceleration & transmission state machine
         let accel = 0;
@@ -419,8 +408,15 @@ export class Vehicle {
         const tanDelta = Math.tan(this.steerAngle);
         const beta = Math.atan((this.halfWheelbase / this.wheelbase) * tanDelta);
 
+        let yawRate = 0;
         if (Math.abs(this.speed) > 0.01) {
-            const yawRate = (this.speed / this.wheelbase) * Math.cos(beta) * tanDelta;
+            yawRate = (this.speed / this.wheelbase) * Math.cos(beta) * tanDelta;
+            if (this.isPlayer) {
+                // Tyres only hold so many g: past that the nose washes wide (understeer) instead of
+                // the car pivoting on rails. The handbrake lets the tail come round.
+                const maxYaw = (this.inputHandbrake ? 19 : 13.5) / Math.max(1, Math.abs(this.speed));
+                yawRate = Math.max(-maxYaw, Math.min(maxYaw, yawRate)) * (this.inputHandbrake ? 1.3 : 1);
+            }
             this.yaw += yawRate * dt;
 
             while (this.yaw > Math.PI) this.yaw -= 2 * Math.PI;
@@ -451,8 +447,16 @@ export class Vehicle {
         }
 
         // Lateral grip damping
-        const gripFactor = this.inputHandbrake ? this.handbrakeGrip : this.normalGrip;
+        // (the player's car keeps a sliver of slide so it carries weight through corners)
+        const gripFactor = this.inputHandbrake ? this.handbrakeGrip : (this.isPlayer ? Math.min(this.normalGrip, 11) : this.normalGrip);
         vLat *= Math.max(0, 1.0 - gripFactor * dt);
+
+        // Felt accelerations (smoothed) for the body roll / pitch and the cameras
+        if (this.isPlayer) {
+            const k = 1 - Math.exp(-dt * 8);
+            this.accelLong += (((this.speed - prevSpeed) / dt) - this.accelLong) * k;
+            this.accelLat += ((this.speed * yawRate) - this.accelLat) * k;
+        }
 
         // Reconstruct world velocity
         this.velocity.x = vLong * _scratchForward.x + vLat * _scratchRight.x;
@@ -477,6 +481,43 @@ export class Vehicle {
 
         // 8. Update visual 3D mesh transforms
         this._updateMeshTransform(dt);
+    }
+
+    /**
+     * Keyboard driving is all-or-nothing; this eases it so the car feels driven, not switched:
+     * pedals squeeze in over ~0.15 s, the wheel turns in quickly at parking speed and gently at
+     * speed, and lets go faster the quicker you're going (caster pulls it straight).
+     */
+    _shapePlayerInputs(dt, speedAbs) {
+        const ease = (cur, want, rate) => cur + (want - cur) * (1 - Math.exp(-dt * rate));
+        this._thrIn = ease(this._thrIn, this.inputThrottle, this.inputThrottle > this._thrIn ? 7 : 12);
+        this._brkIn = ease(this._brkIn, this.inputBrake, this.inputBrake > this._brkIn ? 9 : 14);
+        if (this._thrIn < 0.01 && !this.inputThrottle) this._thrIn = 0;
+        if (this._brkIn < 0.01 && !this.inputBrake) this._brkIn = 0;
+        this.inputThrottle = this._thrIn;
+        this.inputBrake = this._brkIn;
+        const s = Math.min(1, speedAbs / 25);
+        const want = this.inputSteer;
+        const centring = want === 0 || Math.sign(want) !== Math.sign(this._steerIn);
+        const rate = centring ? 7 + s * 5 : 7.5 - s * 3.5;
+        this._steerIn = ease(this._steerIn, want, rate);
+        if (Math.abs(this._steerIn) < 0.002 && want === 0) this._steerIn = 0;
+    }
+
+    /** Body lean on its springs from the felt accelerations: squat, dive and roll. */
+    _updateBody(dt) {
+        if (!this.isPlayer || dt <= 0) {
+            this.bodyRoll = this.bodyPitch = 0;
+            return;
+        }
+        const h = Math.min(dt, 1 / 30);
+        const k = 90, c = 13;
+        const rollWant = Math.max(-0.065, Math.min(0.065, -this.accelLat * 0.0075));
+        const pitchWant = Math.max(-0.05, Math.min(0.05, this.accelLong * 0.0042));
+        this._rollVel += (k * (rollWant - this.bodyRoll) - c * this._rollVel) * h;
+        this.bodyRoll += this._rollVel * h;
+        this._bodyPitchVel += (k * (pitchWant - this.bodyPitch) - c * this._bodyPitchVel) * h;
+        this.bodyPitch += this._bodyPitchVel * h;
     }
 
     /**
@@ -823,10 +864,12 @@ export class Vehicle {
 
         // Position & Heading rotation (plus any suspension jolt)
         this._updateBump(dt);
+        this._updateBody(dt);
         this.mesh.position.set(this.position.x, this.position.y + this.bumpHeave, this.position.z);
-        this.mesh.rotation.order = 'YXZ'; // pitch about the car's own axis, after the heading
+        this.mesh.rotation.order = 'YXZ'; // pitch / roll about the car's own axes, after the heading
         this.mesh.rotation.y = this.yaw;
-        this.mesh.rotation.x = this.bumpPitch;
+        this.mesh.rotation.x = this.bumpPitch + this.bodyPitch;
+        this.mesh.rotation.z = this.bodyRoll;
 
         // If this vehicle is rendered via InstancedVehicleFleet (not mounted directly in scene),
         // skip per-child group matrix updates to save CPU cycles.

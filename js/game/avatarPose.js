@@ -80,10 +80,23 @@ export function poseStagger(rig, phase, speed, t) {
 /**
  * Something carried in the right hand while walking or standing: a gun held low and ready
  * ('gun', both hands for a long gun with `long`), a drink or a smoke up in front ('item').
- * Applied on top of the walk / idle pose.
+ * Applied on top of the walk / idle pose. `run` (with the stride `phase`): a long gun carried across
+ * the chest, a pistol pumped low in the bent arm, bouncing with the steps.
  */
-export function poseHold(rig, kind, long = false) {
-    if (kind === 'gun') {
+export function poseHold(rig, kind, long = false, run = false, phase = 0) {
+    if (kind === 'gun' && run) {
+        const s = Math.sin(phase), b = Math.abs(Math.cos(phase));
+        if (long) {
+            rig.shoulderR.rotation.set(-0.75 - b * 0.12, 0, 0.45);
+            rig.elbowR.rotation.x = -1.45;
+            rig.shoulderL.rotation.set(-1.05 - b * 0.12, 0, -0.55);
+            rig.elbowL.rotation.x = -1.2;
+            rig.torso.rotation.y = s * 0.05;
+        } else {
+            rig.shoulderR.rotation.set(-0.45 - s * 0.35, 0, -0.1);
+            rig.elbowR.rotation.x = -1.35;
+        }
+    } else if (kind === 'gun') {
         rig.shoulderR.rotation.set(long ? -0.75 : -0.45, 0, long ? 0.3 : -0.08);
         rig.elbowR.rotation.x = long ? -0.9 : -0.55;
         if (long) { rig.shoulderL.rotation.set(-0.85, 0, 0.45); rig.elbowL.rotation.x = -1.2; }
@@ -123,4 +136,61 @@ export function poseSeated(rig, seatH, scaleY, kind = 'ride', t = 0, look = 0) {
         rig.torso.rotation.x = -0.06;
         rig.neck.rotation.y = look + Math.sin(t * 0.5) * 0.12;
     }
+}
+
+/**
+ * Fighting someone (a player holding another player or a person): `mode` 'neck' / 'pin' (one arm
+ * out, hand at their throat), 'mount' (kneeling astride them), 'drag' (bent over, arms back, walking
+ * `speed` m/s); `punch` throws the free fist(s) in turn; `gun` keeps the other hand up with the gun.
+ */
+export function poseGrabbing(rig, mode, t, phase = 0, speed = 0, punch = false, gun = false) {
+    if (mode === 'drag') {
+        poseWalk(rig, phase, Math.min(speed, 2));
+        rig.torso.rotation.set(0.35, 0, 0);
+        rig.shoulderL.rotation.set(0.75, 0, -0.12);
+        rig.shoulderR.rotation.set(0.75, 0, 0.12);
+        rig.elbowL.rotation.x = rig.elbowR.rotation.x = -0.15;
+        rig.neck.rotation.x = -0.25;
+        return;
+    }
+    resetRig(rig);
+    const jab = punch ? Math.max(0, Math.sin(t * 9)) : 0;
+    const jab2 = punch ? Math.max(0, -Math.sin(t * 9)) : 0;
+    if (mode === 'mount') {
+        // Knees either side of them, sat up over their chest, fists coming down
+        rig.body.position.y = -0.5;
+        rig.legL.rotation.set(-1.2, 0, 0.35);
+        rig.legR.rotation.set(-1.2, 0, -0.35);
+        rig.kneeL.rotation.x = rig.kneeR.rotation.x = 2.3;
+        rig.torso.rotation.x = 0.35 + 0.15 * (jab + jab2);
+        rig.shoulderL.rotation.set(-1.2 - 0.9 * jab, 0, 0.1);
+        rig.shoulderR.rotation.set(-1.2 - 0.9 * jab2, 0, -0.1);
+        rig.elbowL.rotation.x = -1.6 + 1.4 * jab;
+        rig.elbowR.rotation.x = -1.6 + 1.4 * jab2;
+        rig.neck.rotation.x = 0.5;
+        if (gun) { rig.shoulderR.rotation.set(-0.9, 0, -0.1); rig.elbowR.rotation.x = -0.1; }
+        return;
+    }
+    // By the throat / against a wall: the gripping arm straight out, the other fist working
+    rig.shoulderL.rotation.set(-1.5, 0, 0.12);
+    rig.elbowL.rotation.x = -0.1;
+    rig.shoulderR.rotation.set(-0.9 - 0.75 * jab, 0, -0.15);
+    rig.elbowR.rotation.x = -1.7 + 1.55 * jab;
+    if (gun) { rig.shoulderR.rotation.set(-1.45, 0.35, -0.2); rig.elbowR.rotation.x = -0.2; }
+    rig.torso.rotation.set(0.1, 0.12 * jab, 0);
+    rig.legL.rotation.x = -0.25;
+    rig.legR.rotation.x = 0.2;
+}
+
+/** Throwing punches standing up. */
+export function posePunch(rig, t) {
+    resetRig(rig);
+    const a = Math.max(0, Math.sin(t * 9)), b = Math.max(0, -Math.sin(t * 9));
+    rig.shoulderL.rotation.set(-1.0 - 0.55 * a, 0, 0.15);
+    rig.shoulderR.rotation.set(-1.0 - 0.55 * b, 0, -0.15);
+    rig.elbowL.rotation.x = -1.8 + 1.65 * a;
+    rig.elbowR.rotation.x = -1.8 + 1.65 * b;
+    rig.torso.rotation.y = 0.2 * (a - b);
+    rig.legL.rotation.x = -0.2;
+    rig.legR.rotation.x = 0.25;
 }

@@ -468,10 +468,7 @@ export class WeaponWheel {
             const ca = document.createElement('div');
             ca.className = 'ww-cammo';
             ca.textContent = `× ${st.count}`;
-            const cs = document.createElement('div');
-            cs.className = 'ww-cstats';
-            cs.textContent = def.desc || '';
-            this.centerEl.append(ca, cs);
+            this.centerEl.append(ca);
         }
 
         // Inventory along the bottom: every weapon (click to hold), then the ammo

@@ -517,10 +517,11 @@ export class GasStations {
         const extras = this.pedestrians ? this.pedestrians.extraRigs : null;
         for (const s of this.sites) {
             const d = Math.hypot(eye.x - s.x, eye.z - s.z);
-            if (!s.built && d < GAS_CONFIG.BUILD_DISTANCE) this._build(s);
+            if (!s.built && d < (this.drawDistance || GAS_CONFIG.BUILD_DISTANCE)) this._build(s);
             if (!s.built) continue;
             const near = d < GAS_CONFIG.DRAW_DISTANCE;
-            if (s.group.visible !== near) s.group.visible = near;
+            const shown = near || d < this.drawDistance; // drawDistance: the map editor shows every station
+            if (s.group.visible !== shown) s.group.visible = shown;
             if (s.clerkRig && extras) {
                 const i = extras.indexOf(s.clerkRig);
                 if (near && i < 0) extras.push(s.clerkRig);

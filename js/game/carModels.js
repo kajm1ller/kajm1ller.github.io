@@ -335,7 +335,7 @@ export function getPartMaterials() {
         amber: new THREE.MeshBasicMaterial({ color: PART_COLORS.amber }),
         taxi: new THREE.MeshBasicMaterial({ color: PART_COLORS.taxi }),
         tire: std(PART_COLORS.tire, 0.92, 0.0),
-        glass: std(0x6fa4c4, 0.05, 0.3, { transparent: true, opacity: 0.55, depthWrite: false, envMapIntensity: 1.3 })
+        glass: std(0x9cc3d6, 0.05, 0.2, { transparent: true, opacity: 0.22, depthWrite: false, envMapIntensity: 1.3 })
     };
     return _partMats;
 }
@@ -633,7 +633,8 @@ const _cache = new Map();
  * - parts: [{ key, geometry }] merged per material key ('paint', 'trim', 'cabin', 'chrome', ...)
  * - door: paint geometry of the driver's door, hinge point
  * - glass: [{ name, geometry (pane local), position, quaternion, size }]
- * - windows: hit / shatter frames for 'front', 'back', 'left', 'right'
+ * - windows: hit / shatter frames for 'front', 'back', 'left', 'right' and, where the model has
+ *   rear quarter glass, 'leftRear', 'rightRear'
  * - wheels: wheel centres and sizes
  */
 export function getModelGeometry(modelId) {
@@ -708,7 +709,33 @@ function buildModelGeometry(m) {
 
     // ---------- Greenhouse ----------
     const gh = greenhouseCorners(c);
-    const cabinGeo = hexaGeo(gh.base, gh.top);
+    // The greenhouse is open behind the glass: pillars, roof edges and a headliner under the roof
+    const ghv = (p) => new THREE.Vector3(p[0], p[1], p[2]);
+    const framePw = 0.07;
+    const frameParts = [hexaGeo(gh.top.map((p) => [p[0], p[1] - 0.025, p[2]]), gh.top)];
+    for (let i = 0; i < 4; i++) {
+        frameParts.push(beamGeo(ghv(gh.base[i]), ghv(gh.top[i]), framePw));                // A- and C-pillars
+        frameParts.push(beamGeo(ghv(gh.top[i]), ghv(gh.top[(i + 1) % 4]), framePw));       // roof edges
+    }
+    for (const side of [-1, 1]) {
+        const xb = side * shape.sideX(shape.belt), xt = side * shape.sideX(shape.roof);
+        frameParts.push(beamGeo(new THREE.Vector3(xb * 0.99, shape.belt, shape.bPillar), new THREE.Vector3(xt * 0.99, shape.roof, shape.bPillar), framePw * 1.3, 0.1));
+    }
+    const cabinGeo = mergeGeometries(frameParts);
+    // Plain seats and dash, seen through the glass of cars without a full interior (traffic)
+    const fl = shape.floor, sz = shape.seatZ;
+    const seatX = Math.abs(shape.driverX), seatW = Math.min(0.5, shape.halfW * 0.85);
+    const furniture = [boxGeo(shape.halfW * 1.9, 0.26, 0.4, 0, shape.belt - 0.1, shape.frontGlassZ(shape.belt) + 0.22)];
+    const seat = (x, w, z) => {
+        furniture.push(boxGeo(w, 0.14, 0.5, x, fl + 0.24, z));
+        furniture.push(boxGeo(w, 0.62, 0.12, x, fl + 0.6, z + 0.3, 0.18));
+    };
+    for (const s of [-1, 1]) {
+        seat(s * seatX, seatW, sz);
+        furniture.push(boxGeo(seatW * 0.5, 0.16, 0.1, s * seatX, fl + 1.0, sz + 0.37));      // headrest
+    }
+    if (shape.rearSeats) seat(0, shape.halfW * 1.7, sz + 0.95);
+    const furnitureGeo = mergeGeometries(furniture);
     // Roof panel in body colour, lying on the greenhouse top
     const rt = gh.top.map((p) => [p[0] * 1.012, p[1] - 0.004, p[2] + (p[2] < (c.front + c.rear) / 2 ? -0.012 : 0.012)]);
     const rTop = gh.top.map((p) => [p[0] * 0.97, p[1] + 0.035, p[2] + (p[2] < (c.front + c.rear) / 2 ? 0.03 : -0.03)]);
@@ -778,7 +805,7 @@ function buildModelGeometry(m) {
         const frontSide = s < 0 ? slicePoly(uv, -Infinity, uB - 0.05) : slicePoly(uv, uB + 0.05, Infinity);
         const rearSide = s < 0 ? slicePoly(uv, uB + 0.05, Infinity) : slicePoly(uv, -Infinity, uB - 0.05);
         addPane(`${side}_window_glass`, F, frontSide, side, shape.floor + 0.26);
-        if (rearSide.length >= 3 && Math.abs(polyArea(rearSide)) > 0.02) addPane(`${side}_quarter_glass`, F, rearSide, null, 0);
+        if (rearSide.length >= 3 && Math.abs(polyArea(rearSide)) > 0.02) addPane(`${side}_quarter_glass`, F, rearSide, `${side}Rear`, shape.floor + 0.26);
     }
 
     // ---------- Lights, grille, bumpers, plates ----------
@@ -988,6 +1015,7 @@ function buildModelGeometry(m) {
         profile,
         parts: merged,
         cabin: cabinGeo,
+        furniture: furnitureGeo,
         door: { geometry: doorGeo, hinge: new THREE.Vector3(-W2, 0, c.front + 0.02) },
         glass,
         windows,
@@ -1133,6 +1161,10 @@ export function buildCarMesh(modelId, color = 0x111111, id = 'car') {
     const cabin = new THREE.Mesh(G.cabin, M.cabin);
     cabin.name = 'cabin_roof';
     root.add(cabin);
+    // Hidden once the car gets a full interior (CarInterior)
+    const furniture = new THREE.Mesh(G.furniture, M.trim);
+    furniture.name = 'cabin_furniture';
+    root.add(furniture);
 
     for (const pane of G.glass) {
         const g = new THREE.Mesh(pane.geometry, M.glass);
@@ -1216,33 +1248,11 @@ export function getWindowFrames(vehicleOrModel) {
     return getModelGeometry(getCarModel(id).id).windows;
 }
 
-/** Pillars and roof edges left standing once the solid greenhouse is removed (shot-out cabin). */
-export function buildCabinFrame(modelId) {
-    const model = getCarModel(modelId);
-    const G = getModelGeometry(model.id);
-    const { base, top } = G.greenhouse;
-    const v = (p) => new THREE.Vector3(p[0], p[1], p[2]);
-    const parts = [];
-    const pw = 0.07;
-    for (let i = 0; i < 4; i++) {
-        parts.push(beamGeo(v(base[i]), v(top[i]), pw));                 // A- and C-pillars
-        parts.push(beamGeo(v(top[i]), v(top[(i + 1) % 4]), pw));        // roof edges
-    }
-    const s = G.shape;
-    for (const side of [-1, 1]) {
-        const xb = side * s.sideX(s.belt), xt = side * s.sideX(s.roof);
-        parts.push(beamGeo(new THREE.Vector3(xb * 0.99, s.belt, s.bPillar), new THREE.Vector3(xt * 0.99, s.roof, s.bPillar), pw * 1.3, 0.1));
-    }
-    return new THREE.Mesh(mergeGeometries(parts), getPartMaterials().cabin);
-}
-
-// Traffic sees the glass over the dark greenhouse, so the fleet draws it opaque in the mixed tint
-const FLEET_GLASS_COLOR = 0x34505e;
-
 /**
- * Single merged geometry per model for the instanced fleet (one draw call per model): vertex
+ * Merged geometry per model for the instanced fleet: `body`, one draw call per model, with vertex
  * `color`, `paintMask` (1 = body paint, tinted by the per-instance colour) and `glow` (1 = lamp,
- * drawn self-lit). See InstancedVehicleFleet's material.
+ * drawn self-lit), see InstancedVehicleFleet's material; and `glass`, every pane, drawn see-through
+ * in a second batch so the people inside show.
  */
 export function getFleetGeometry(modelId) {
     const G = getModelGeometry(getCarModel(modelId).id);
@@ -1255,11 +1265,9 @@ export function getFleetGeometry(modelId) {
         list.push([G.parts[k], PART_COLORS[k] !== undefined ? PART_COLORS[k] : PART_COLORS.trim, 0, LIGHT_KEYS.has(k) ? 1 : 0]);
     }
     list.push([G.cabin, PART_COLORS.cabin, 0, 0]);
-    for (const p of G.glass) {
-        const g = p.geometry.clone();
-        g.applyMatrix4(new THREE.Matrix4().compose(p.position, p.quaternion, new THREE.Vector3(1, 1, 1)));
-        list.push([g, FLEET_GLASS_COLOR, 0, 0]);
-    }
+    list.push([G.furniture, PART_COLORS.trim, 0, 0]);
+    const glass = mergeGeometries(G.glass.map((p) => p.geometry.clone()
+        .applyMatrix4(new THREE.Matrix4().compose(p.position, p.quaternion, new THREE.Vector3(1, 1, 1)))));
     const body = mergeGeometries(list.map((e) => e[0]), list.map((e) => e[1]));
     const n = body.attributes.position.count;
     const paint = new Float32Array(n), glow = new Float32Array(n);
@@ -1272,6 +1280,6 @@ export function getFleetGeometry(modelId) {
     }
     body.setAttribute('paintMask', new THREE.BufferAttribute(paint, 1));
     body.setAttribute('glow', new THREE.BufferAttribute(glow, 1));
-    G.fleet = { body };
+    G.fleet = { body, glass };
     return G.fleet;
 }

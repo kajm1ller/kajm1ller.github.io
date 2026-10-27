@@ -61,7 +61,10 @@ const S = {
     shotgun: '/media/mp3/shotgun.mp3',
     rifle: '/media/mp3/Gunshot Sound Effect Single Shot.mp3',
     gun: '/media/mp3/gun.mp3',
-    boom: '/media/explosion-meme_dTCfAHs.mp3'
+    boom: '/media/explosion-meme_dTCfAHs.mp3',
+    // media/shotgun-pumping.mp3 cut in two: pulling the pump back, pushing it forward
+    pumpBack: '/media/shotgun-pump-back.mp3',
+    pumpFwd: '/media/shotgun-pump-forward.mp3'
 };
 
 // Finishes: main body, accent (grips, furniture), metal (barrel / slide)
@@ -268,14 +271,25 @@ export function buildGunModel(gunOrId) {
             box(0.03, 0.08, 0.05, 0, y - 0.05, z0 + 0.03, accent, 0.5);
         }
     };
-    const addMag = (type, z, y) => {
+    // Parts that move on their own in the viewmodel (gunMotion.js): what `fn` adds goes in a named group
+    const named = (name, fn) => {
+        const n = g.children.length;
+        const r = fn();
+        const part = new THREE.Group();
+        part.name = name;
+        for (const o of g.children.slice(n)) part.add(o);
+        g.add(part);
+        return r;
+    };
+    const addMag = (type, z, y) => named('gun_mag', () => addMagParts(type, z, y));
+    const addMagParts = (type, z, y) => {
         if (type === 'curved') {
             for (let i = 0; i < 4; i++) box(0.026, 0.035, 0.04, 0, y - 0.03 - i * 0.03, z - i * 0.012, dark, 0.25);
         } else if (type === 'box') {
             box(0.024, 0.11, 0.035, 0, y - 0.06, z, dark, 0.08);
         } else if (type === 'drum') {
             const d = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.045, 18), dark);
-            d.rotation.z = Math.PI / 2;
+            d.rotation.x = Math.PI / 2;      // round face toward the shooter
             d.position.set(0, y - 0.06, z);
             g.add(d);
         } else if (type === 'boxbelt') {
@@ -286,14 +300,20 @@ export function buildGunModel(gunOrId) {
     switch (m.family) {
         case 'pistol': {
             const L = m.len, H = m.h;
-            box(0.03, H, L, 0, 0.035, -L / 2 + 0.03, m.finish === 'polymer' ? metal : body);               // slide
+            named('gun_slide', () => {
+                box(0.03, H, L, 0, 0.035, -L / 2 + 0.03, m.finish === 'polymer' ? metal : body);           // slide
+                if (m.triangular) box(0.03, 0.012, L * 0.6, 0, 0.06, -L / 2 + 0.03, body);
+                addSight('iron', 0.052, -L + 0.04);
+                addSight('iron', 0.052, 0.01);
+            });
             box(0.028, 0.022, L * 0.75, 0, 0.007, -L * 0.375 + 0.02, body);                                 // frame
             box(0.028, 0.09, 0.04, 0, -0.04, 0.0, m.woodGrip ? accent : (m.finish === 'gold' ? dark : accent), -0.25); // grip
             box(0.024, 0.008, 0.035, 0, -0.005, -0.04, body);                                              // trigger guard
-            if (m.extMag) box(0.022, 0.06, 0.03, 0, -0.105, 0.015, dark, -0.25);
-            if (m.triangular) box(0.03, 0.012, L * 0.6, 0, 0.06, -L / 2 + 0.03, body);
-            addSight('iron', 0.052, -L + 0.04);
-            addSight('iron', 0.052, 0.01);
+            // The magazine sits up inside the grip (its base plate shows), or sticks out of it
+            named('gun_mag', () => {
+                if (m.extMag) box(0.022, 0.06, 0.03, 0, -0.105, 0.015, dark, -0.25);
+                else box(0.024, 0.085, 0.03, 0, -0.045, 0.004, dark, -0.25);
+            });
             muzzleZ = -L + 0.03;
             muzzleY = 0.035;
             if (m.suppressor) {
@@ -334,7 +354,7 @@ export function buildGunModel(gunOrId) {
             muzzleY = 0.032;
             if (m.fins) for (let i = 0; i < 5; i++) cyl(0.014, 0.006, 0, 0.032, bz - 0.01 - i * 0.012, metal);
             if (m.foregrip) box(0.025, 0.06, 0.03, 0, -0.02, -L + 0.06 - 0.04, accent, 0.2);
-            if (m.mag === 'grip') box(0.024, 0.05, 0.03, 0, -0.1, 0.035, dark, -0.22);
+            if (m.mag === 'grip') named('gun_mag', () => box(0.024, 0.05, 0.03, 0, -0.1, 0.035, dark, -0.22));
             else addMag(m.mag, -L * 0.42, 0.01);
             addStock(m.stock, 0.03, 0.06, H);
             if (m.carry) {
@@ -357,7 +377,7 @@ export function buildGunModel(gunOrId) {
             box(0.045, 0.075, L, 0, 0.02, -L / 2 + 0.15, body);                                             // body
             box(0.03, 0.08, 0.035, 0, -0.04, -0.03, accent, -0.2);                                          // grip
             box(0.03, 0.05, 0.03, 0, -0.03, -0.12, accent, 0.3);                                            // front grip / guard
-            if (m.mag === 'top') box(0.035, 0.018, L * 0.6, 0, 0.066, -L / 2 + 0.17, mat(0x2b2f33, 0.2, 0.3));
+            if (m.mag === 'top') named('gun_mag', () => box(0.035, 0.018, L * 0.6, 0, 0.066, -L / 2 + 0.17, mat(0x2b2f33, 0.2, 0.3)));
             else addMag(m.mag, 0.09, 0.0);
             if (m.carry) box(0.016, 0.03, L * 0.55, 0, 0.075, -L / 2 + 0.12, body);
             if (m.sight) addSight(m.sight, 0.075, -0.05, 0.1);
@@ -378,7 +398,7 @@ export function buildGunModel(gunOrId) {
             } else {
                 cyl(0.011, bl, 0, 0.04, -0.11 - bl / 2, metal);
                 if (m.tube) cyl(0.009, bl * 0.8, 0, 0.018, -0.11 - bl * 0.4, metal);
-                if (m.pump) box(0.034, 0.03, 0.1, 0, 0.02, -0.11 - bl * 0.35, accent);
+                if (m.pump) box(0.034, 0.03, 0.1, 0, 0.02, -0.11 - bl * 0.35, accent).name = 'shotgun_pump';   // slides back when racked
             }
             addStock(m.stock, 0.02, 0.03, 0.06);
             addSight('iron', 0.05, -0.11 - bl + 0.01);
@@ -402,12 +422,12 @@ export function buildGunModel(gunOrId) {
                 box(0.03, 0.025, 0.05, 0, 0.035, muzzleZ - 0.02, dark);
                 muzzleZ -= 0.045;
             }
-            if (m.bolt) {
+            if (m.bolt) named('gun_bolt', () => {
                 box(0.008, 0.008, 0.04, 0.025, 0.04, -0.02, metal, 0, 0.5);
                 const knob = new THREE.Mesh(new THREE.SphereGeometry(0.009, 8, 6), metal);
                 knob.position.set(0.042, 0.03, -0.01);
                 g.add(knob);
-            }
+            });
             if (m.mag) addMag(m.mag, -0.07, 0.01);
             addSight(m.sight, 0.06, -L * 0.25, m.sight === 'bigscope' ? 0.2 : 0.16);
             if (m.bipod) {
@@ -446,10 +466,12 @@ export function buildGunModel(gunOrId) {
         case 'launcher': {
             cyl(0.035, 0.55, 0, 0.02, -0.1, body, 14);
             cyl(0.048, 0.08, 0, 0.02, 0.2, body, 14, 0.035);
-            const cone = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 12), mat(0x4a5d3b, 0.4, 0.6));
-            cone.rotation.x = -Math.PI / 2;
-            cone.position.set(0, 0.02, -0.44);
-            g.add(cone);
+            named('gun_rocket', () => {
+                const cone = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 12), mat(0x4a5d3b, 0.4, 0.6));
+                cone.rotation.x = -Math.PI / 2;
+                cone.position.set(0, 0.02, -0.44);
+                g.add(cone);
+            });
             cyl(0.03, 0.04, 0, 0.02, -0.36, mat(0x4a5d3b, 0.4, 0.6), 12);
             box(0.03, 0.08, 0.04, 0, -0.04, -0.04, accent, 0.2);
             box(0.03, 0.08, 0.04, 0, -0.04, 0.08, accent, 0.2);
@@ -779,12 +801,23 @@ export class GunAudio {
         const t0 = ctx.currentTime + 0.002;
         const d = this.out;
         const click = (t, f, peak = 0.25) => this._noise(d, t, 0.03, 'bandpass', f, 3, peak);
+        // The recorded shotgun pump (synthesized clicks until it has loaded)
+        const sample = (path, t, f) => {
+            const buf = this.buffers.get(path);
+            if (!buf) { click(t, f, 0.35); return; }
+            const src = ctx.createBufferSource();
+            src.buffer = buf;
+            src.connect(d);
+            src.start(t);
+        };
         switch (kind) {
+            case 'pumpBack': sample(S.pumpBack, t0, 900); return;
+            case 'pumpFwd': sample(S.pumpFwd, t0, 1300); return;
+            case 'pump': sample(S.pumpBack, t0, 900); sample(S.pumpFwd, t0 + 0.25, 1300); return;
             case 'magOut': click(t0, 1400, 0.3); this._tone(d, t0, 400, 300, 0.05, 0.08, 'square'); break;
             case 'magIn': click(t0, 1100, 0.35); click(t0 + 0.05, 2400, 0.2); break;
             case 'slide': click(t0, 2000, 0.25); click(t0 + 0.09, 2800, 0.3); break;
             case 'shell': click(t0, 1700, 0.25); this._tone(d, t0, 600, 350, 0.04, 0.06, 'triangle'); break;
-            case 'pump': click(t0, 900, 0.35); click(t0 + 0.12, 1300, 0.35); break;
             case 'bolt': click(t0, 1600, 0.3); click(t0 + 0.1, 1100, 0.25); click(t0 + 0.22, 2200, 0.3); break;
             case 'dry': click(t0, 3200, 0.3); break;
             case 'mode': click(t0, 2600, 0.2); break;
