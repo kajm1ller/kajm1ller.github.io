@@ -25,6 +25,8 @@ import {
     updateCivicHUD
 } from './vehicle.js';
 import { Plane, createPlaneMesh, PLANE_CONFIG } from './plane.js';
+import { Helicopter } from './rotorcraft.js';
+import { AIRCRAFT, PLANE_TYPES, HELI_TYPES } from './aircraft.js';
 import { PlayerController, PlayerState } from './player.js';
 import { CameraController, CameraMode, lerpAngle } from './camera.js';
 import {
@@ -484,6 +486,10 @@ export {
     ensureCivicHUD,
     updateCivicHUD,
     Plane,
+    Helicopter,
+    AIRCRAFT,
+    PLANE_TYPES,
+    HELI_TYPES,
     createPlaneMesh,
     PLANE_CONFIG,
     PlayerController,

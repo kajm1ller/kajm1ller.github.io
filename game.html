@@ -881,8 +881,9 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         <div id="dev-menu-title" class="ui-label">Dev menu <span>` or Esc to close</span></div>
         <label>Car model <select id="dev-car-model"><option value="random">Random</option></select></label>
         <button class="dev-action" id="dev-spawn-car" type="button">Spawn car</button>
-        <button class="dev-action" id="dev-spawn-plane" type="button">Spawn plane</button>
-        <button class="dev-action" id="dev-spawn-plane-air" type="button">Spawn plane (already flying)</button>
+        <label>Aircraft <select id="dev-aircraft-type"></select></label>
+        <button class="dev-action" id="dev-spawn-plane" type="button">Spawn aircraft</button>
+        <button class="dev-action" id="dev-spawn-plane-air" type="button">Spawn aircraft (already flying)</button>
         <label><input type="checkbox" id="dev-board-on-spawn"> Get in after spawning</label>
         <button class="dev-action" id="dev-give-guns" type="button">Refill ammo &amp; drugs</button>
         <button class="dev-action" id="dev-give-money" type="button">+$10,000</button>
@@ -965,6 +966,10 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             PoliceVehicle,
             PoliceOfficer,
             Plane,
+            Helicopter,
+            AIRCRAFT,
+            PLANE_TYPES,
+            HELI_TYPES,
             PLANE_CONFIG
         } from './js/game/main.js';
         import { MultiplayerClient, RemotePlayers, MP_SEND_INTERVAL, resolveServerUrl, SMOKED as REMOTE_SMOKED } from './js/game/multiplayer.js';
@@ -1866,7 +1871,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             { id: 'i_fall_in_love_too_easily', title: 'I Fall in Love Too Easily', file: '/media/radio/I_Fall_in_Love_Too_Easily.mp3' },
             { id: 'nu_nu_meta_phenomena', title: 'Nu Nu Meta Phenomena', file: '/media/radio/Nu_Nu_Meta_Phenomena.mp3' },
             { id: 'on_fire', title: 'On Fire', file: '/media/radio/On_Fire.mp3' },
-            { id: 'girl_like_me', title: 'Girl Like Me', file: '/media/radio/Girl_Like_Me.mp3' }
+            { id: 'girl_like_me', title: 'Girl Like Me', file: '/media/radio/Girl_Like_Me.mp3' },
+            { id: 'green_earrings', title: 'Green Earrings', file: '/media/Grren_Earrings.mp3' }
         ];
 
         const radioAudio = new Audio();
@@ -2486,9 +2492,9 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             let rpm, idle, redline, cylinders, voice, throttle;
             if (vehicle.isPlane) {
                 throttle = vehicle.throttle || 0;
-                idle = 900;
-                redline = 2700;
-                cylinders = 6;
+                idle = vehicle.isJet ? 4000 : vehicle.isHelicopter ? 1500 : 900;
+                redline = vehicle.isJet ? 12000 : vehicle.isHelicopter ? 2400 : 2700;
+                cylinders = vehicle.isJet ? 8 : vehicle.isHelicopter ? 4 : 6;
                 voice = 'prop';
                 rpm = idle + (redline - idle) * throttle;
                 // Tyre squeal only from wheel braking on the runway
@@ -3342,6 +3348,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         let gunSpin = 0;                     // minigun barrels 0..1
         let adsHeld = false;                 // right mouse on foot with a gun
         let adsAmount = 0;                   // 0..1 aim-down-sights blend
+        let aircraftGunUp = false;           // piloting with a gun raised (right click aims, left click fires)
         let infiniteAmmo = false;            // dev menu
         let muzzleFlashTimer = 0;
         let recoilRecover = 0;               // camera kick still to settle back
@@ -4214,6 +4221,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             scenes: () => [...pedestrianSystem.scenes.scenes].map((s) => ({ type: s.type, x: s.x, z: s.z, people: s.members.length, at: s.members.map((m) => [m.mesh.position.x, m.mesh.position.z]) })),
             driveThrus: () => parkedCars.lanes.filter((l) => l.cars.length).map((l) => ({ x: l.cx, z: l.cz, cars: l.cars.length })),
             planes: () => airTraffic.planes.map((p) => ({ x: p.position.x, y: p.position.y, z: p.position.z, state: p.state })),
+            helis: () => airTraffic.helis.map((h) => ({ x: h.position.x, y: h.position.y, z: h.position.z, state: h.state })),
             teleport: (x, z, yaw = null) => placePlayer(x, z, yaw),
             // Free camera (dev fly mode) at (x, y, z) looking along yaw / pitch; view(null) leaves it
             view: (x, y, z, yaw = 0, pitch = -0.6) => {
@@ -7229,7 +7237,10 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         function applyGunRecoil(gun) {
             const kick = gun.recoil * (1 - 0.4 * adsAmount) * (0.85 + Math.random() * 0.3);
             const side = (Math.random() - 0.5) * kick * 0.6;
-            if (playerController.getState() === 'IN_VEHICLE') {
+            if (aircraftGunUp) {
+                cameraController.orbitPitch = Math.min(0.5, cameraController.orbitPitch + kick);
+                cameraController.orbitYaw += side;
+            } else if (playerController.getState() === 'IN_VEHICLE') {
                 cameraController.aimPitch = Math.min(1.3, cameraController.aimPitch + kick);
                 cameraController.aimYaw += side;
             } else {
@@ -7280,7 +7291,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             if (recoilRecover > 0) {
                 const back = Math.min(recoilRecover, dt * 0.9);
                 recoilRecover -= back;
-                if (inCar) cameraController.aimPitch -= back;
+                if (aircraftGunUp) cameraController.orbitPitch -= back;
+                else if (inCar) cameraController.aimPitch -= back;
                 else {
                     cameraController.fpPitch -= back;
                     fpCameraPitch = cameraController.fpPitch;
@@ -7288,7 +7300,10 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
 
             // Aiming down the sights: zoom (scopes a lot), steadier, slower look
-            const wantAds = onFoot && adsHeld && !!stack && !reloadState && !vehicleTransition && gunMotion.ready;
+            const pa = !onFoot ? getActivePlane() : null;
+            aircraftGunUp = !!pa && !!stack && cameraController.isCockpitView() && !vehicleTransition &&
+                (adsHeld || carGunHeld || performance.now() - lastShotTime < 1400);
+            const wantAds = (onFoot || aircraftGunUp) && adsHeld && !!stack && !reloadState && !vehicleTransition && gunMotion.ready;
             adsAmount += ((wantAds ? 1 : 0) - adsAmount) * Math.min(1, dt * 12);
             if (adsAmount < 0.002) adsAmount = 0;
             const zoom = stack ? (gun.adsZoom || 1.3) : 1;
@@ -8154,6 +8169,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         // Flight HUD: altitude, airspeed, throttle (DOM is only touched when the text changes)
         const planeHudEl = document.getElementById('plane-hud');
         const planeHudLineEl = document.getElementById('plane-hud-line');
+        const planeHudHintEl = document.getElementById('plane-hud-hint');
+        let _planeHudHeli = false;
         let _planeHudText = '';
         function updatePlaneHUD(plane) {
             if (!planeHudEl) return;
@@ -8162,10 +8179,18 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 _planeHudText = '';
                 return;
             }
-            const stalling = !plane.onGround && plane.speed < PLANE_CONFIG.STALL_SPEED;
+            const stalling = !plane.isHelicopter && !plane.onGround && plane.speed < plane.cfg.STALL_SPEED;
             const text = `ALT ${Math.round(plane.position.y * 3.281)} ft   SPD ${Math.round(plane.speed * 2.237)} mph   ` +
                 `THR ${Math.round(plane.throttle * 100)}%` +
-                (plane.onGround ? '   [ON GROUND]' : '') + (stalling ? '   ⚠ STALL' : '');
+                (plane.isHelicopter && plane.rotorRpm < 0.92 ? `   ROTOR ${Math.round(plane.rotorRpm * 100)}%` : '') +
+                (plane.onGround ? '   [ON GROUND]' : '') + (stalling ? '   ⚠ STALL' : '') +
+                `   HARNESS ${plane.harness ? 'ON' : 'OFF'}` + (plane.canopyBroken && !plane.open ? '   ⚠ CABIN PRESSURE' : '');
+            if (plane.isHelicopter !== _planeHudHeli && planeHudHintEl) {
+                _planeHudHeli = plane.isHelicopter;
+                planeHudHintEl.textContent = _planeHudHeli
+                    ? 'W/S climb/descend · A/D turn · ↑/↓ forward/back · ←/→ slide · V view · LMB fire · E exit (jump out in the air)'
+                    : 'W/S throttle · A/D roll · ↓/↑ pitch up/down · ←/→ rudder · Space brake/airbrake · V view · LMB fire · E exit (jump out in the air)';
+            }
             if (planeHudEl.style.display !== 'block') planeHudEl.style.display = 'block';
             if (text !== _planeHudText) {
                 _planeHudText = text;
@@ -8345,13 +8370,20 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             dx /= len;
             dz /= len;
 
-            const dist = SPAWN_DISTANCE[kind] + extra;
+            // Aircraft: the type picked in the dev menu (options.type), in one of its own paint jobs
+            let aircraftType = 'cub';
+            if (kind === 'plane') {
+                const picked = options.type || document.getElementById('dev-aircraft-type')?.value;
+                aircraftType = AIRCRAFT[picked] ? picked : 'cub';
+            }
+            const aSpec = AIRCRAFT[aircraftType];
+            const dist = SPAWN_DISTANCE[kind] + extra + (kind === 'plane' ? aSpec.dims.radius * 0.8 : 0);
             const x = ox + dx * dist;
             const z = oz + dz * dist;
             const yaw = Math.atan2(-dx, -dz);
             const palette = SPAWN_COLORS[kind];
-            const color = palette[spawnCounter % palette.length];
             const id = `spawned_${kind}_${++spawnCounter}`;
+            const color = kind === 'plane' ? aSpec.colors[spawnCounter % aSpec.colors.length] : palette[spawnCounter % palette.length];
 
             // Cars: the model picked in the dev menu (options.model), otherwise a random one in its own colours
             let modelId = null;
@@ -8360,15 +8392,16 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 modelId = CAR_MODELS[picked] ? picked : pickCarModel(Math.random(), CAR_MODEL_IDS);
             }
             const vehicle = (kind === 'plane')
-                ? new Plane(id, x, z, yaw, color)
+                ? (aSpec.kind === 'heli' ? new Helicopter(id, x, z, yaw, color, aircraftType) : new Plane(id, x, z, yaw, color, aircraftType))
                 : new Vehicle(id, x, z, yaw, options.color !== undefined ? options.color : pickCarColor(modelId, Math.random()), false, modelId);
             vehicle.isSpawned = true;
             vehicle.spawnKind = kind;
             if (kind === 'plane' && options.airborne) {
                 // Cruising at 120 m so the player doesn't need a clear runway between the houses
                 vehicle.position.y = 120;
-                vehicle.speed = 45;
+                vehicle.speed = vehicle.isHelicopter ? 15 : vehicle.cfg.MAX_SPEED * 0.6;
                 vehicle.throttle = 0.7;
+                if (vehicle.isHelicopter) vehicle.rotorRpm = 1;
                 vehicle.onGround = false;
                 vehicle._updateMeshTransform(0);
             }
@@ -8516,6 +8549,20 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             const status = document.getElementById('dev-menu-status');
             if (status) status.textContent = e.target.checked ? 'Police disabled' : 'Police enabled';
         });
+        const devAircraftSelect = document.getElementById('dev-aircraft-type');
+        if (devAircraftSelect) {
+            for (const [label, ids] of [['Planes', PLANE_TYPES], ['Helicopters', HELI_TYPES]]) {
+                const grp = document.createElement('optgroup');
+                grp.label = label;
+                for (const id of ids) {
+                    const opt = document.createElement('option');
+                    opt.value = id;
+                    opt.textContent = AIRCRAFT[id].name;
+                    grp.appendChild(opt);
+                }
+                devAircraftSelect.appendChild(grp);
+            }
+        }
         document.getElementById('dev-spawn-plane')?.addEventListener('click', () => devSpawn('plane'));
         document.getElementById('dev-spawn-plane-air')?.addEventListener('click', () => devSpawn('plane', { airborne: true }));
         document.getElementById('dev-clear-spawned')?.addEventListener('click', () => {
@@ -9223,7 +9270,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     yaw: veh.yaw, pitch: veh.pitch || 0, roll: veh.roll || 0,
                     state: veh.isPlane ? 'plane' : 'car',
                     color: (typeof veh.color === 'number') ? veh.color : 0x111111,
-                    model: veh.modelId || 'civic',
+                    model: veh.aircraftType || veh.modelId || 'civic',
                     steer: Math.max(-1, Math.min(1, (veh.steerAngle || 0) / 0.6)),
                     // What's on the radio, for anyone riding along
                     radio: isRadioPlaying() && radioState.sourceVehicle === veh ? radioState.currentTrackIndex : -1,
@@ -9625,6 +9672,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         let playerHitCooldown = 0;
 
         function resetPlayerAction() {
+            try { stopWindLoop(); } catch (e) { /* (the wind loop is set up further down) */ }
             playerAction.eject = false;
             playerAction.type = null;
             playerAction.phase = '';
@@ -9731,7 +9779,9 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 if (seatbelt && isMobile) seatbelt.buckled = true;
             }
             if (!seatbelt) return;
-            seatbelt.update(camera, cameraController.isCockpitView() && !cameraController.isAiming);
+            const beltInSeat = cameraController.isCockpitView() && !cameraController.isAiming;
+            seatbelt.lean(camera, beltInSeat);
+            seatbelt.update(camera, beltInSeat);
             // Unbuckled with the engine on: the lamp on the cluster lights and the car dings
             const warn = !seatbelt.buckled && isEngineRunning(car);
             car.beltWarning = warn;
@@ -9829,6 +9879,298 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             witnessesReact(v.position.x, v.position.z, 1);
         }
 
+        // ---- Aircraft: shooting from the cockpit, decompression, bailing out, free fall ----
+        // The Cub and the Stunt Biplane have open windows, so you can shoot out of them. Everything else is a
+        // sealed cabin: the first shot goes through the canopy, and above DECOMP_SPEED the rush of air out of
+        // the broken cabin pulls you out of the seat. There are no parachutes.
+        const DECOMP_SPEED = 35;             // m/s (about 78 mph)
+        const TERMINAL_FALL = 55;            // m/s, belly to earth
+        let _windLoop = null;
+
+        function noiseBurst(seconds, gainPeak, lowHz, highHz) {
+            const ctx = ensureCarAudioEngine();
+            if (!ctx || ctx.state !== 'running') return;
+            const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * seconds)), ctx.sampleRate);
+            const d = buf.getChannelData(0);
+            for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2);
+            const src = ctx.createBufferSource();
+            src.buffer = buf;
+            const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = lowHz;
+            const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = highHz;
+            const gn = ctx.createGain(); gn.gain.value = gainPeak;
+            src.connect(hp); hp.connect(lp); lp.connect(gn); gn.connect(ctx.destination);
+            src.start();
+        }
+
+        function fireFromAircraft(v) {
+            const r = shootWeapon();
+            if (r && r.fired && !v.open && !v.canopyBroken) breakCanopy(v);
+            return r;
+        }
+
+        function updateAircraftGuns(v) {
+            if (!carGunHeld) return;
+            const w = currentWeapon();
+            if (w && w.type === 'gun' && w.mode === 'auto' && cameraController.isCockpitView()) fireFromAircraft(v);
+        }
+
+        function breakCanopy(v) {
+            if (v.open || v.canopyBroken || !v.mesh) return;
+            v.canopyBroken = true;
+            v.mesh.traverse((c) => { if (c.userData && c.userData.glass) c.visible = false; });
+            noiseBurst(0.45, 0.5, 1800, 9000);
+            crashShake = Math.max(crashShake, 0.35);
+            v.decompT = null;
+            startCabinAlarm(6);
+            showToast(v.harness ? 'The canopy is gone. The harness holds you.' : (v.speed > DECOMP_SPEED ? 'CABIN DEPRESSURISED: press B to buckle your harness!' : 'The canopy shatters. Keep it slow.'), 2600);
+        }
+
+        // Cabin alarm: a two-tone siren and the whole view pulsing red while the cabin has lost pressure
+        const DECOMP_DELAY = 1.8;            // seconds from the glass going to being pulled out (unbuckled)
+        let _cabinAlarm = null;
+        let cabinAlarmUntil = 0;
+        let _alarmFlashEl = null;
+
+        function startCabinAlarm(seconds) {
+            cabinAlarmUntil = performance.now() + seconds * 1000;
+            stopCabinAlarm();
+            const ctx = ensureCarAudioEngine();
+            if (!ctx || ctx.state !== 'running') return;
+            const osc = ctx.createOscillator();
+            osc.type = 'square';
+            const gn = ctx.createGain();
+            gn.gain.value = 0.09;
+            const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2400;
+            osc.connect(lp); lp.connect(gn); gn.connect(ctx.destination);
+            const t0 = ctx.currentTime;
+            for (let i = 0; i < seconds * 4; i++) osc.frequency.setValueAtTime(i % 2 ? 640 : 960, t0 + i * 0.25);
+            osc.start(t0);
+            osc.stop(t0 + seconds);
+            _cabinAlarm = { osc, gn, ctx };
+        }
+
+        function stopCabinAlarm() {
+            cabinAlarmUntil = Math.min(cabinAlarmUntil, performance.now());
+            if (_cabinAlarm) {
+                const a = _cabinAlarm;
+                _cabinAlarm = null;
+                try { a.gn.gain.setTargetAtTime(0, a.ctx.currentTime, 0.05); a.osc.stop(a.ctx.currentTime + 0.3); } catch (e) { /* (already stopped) */ }
+            }
+            if (_alarmFlashEl) _alarmFlashEl.style.opacity = '0';
+        }
+
+        function updateAlarmFlash(on) {
+            if (!_alarmFlashEl) {
+                if (!on) return;
+                _alarmFlashEl = document.createElement('div');
+                _alarmFlashEl.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:40;opacity:0;transition:opacity 0.12s;' +
+                    'background:radial-gradient(ellipse at center, rgba(255,0,0,0.15) 30%, rgba(255,0,0,0.75) 100%);';
+                document.body.appendChild(_alarmFlashEl);
+            }
+            _alarmFlashEl.style.opacity = on ? (Math.floor(performance.now() / 250) % 2 ? '0.9' : '0.15') : '0';
+        }
+
+        function updateDecompression(v, dt = 1 / 60) {
+            if (!v.canopyBroken || v.open || playerHealth <= 0 || playerAction.type) {
+                updateAlarmFlash(false);
+                return;
+            }
+            // red pulsing view while the alarm sounds; the wind roars through the hole
+            updateAlarmFlash(performance.now() < cabinAlarmUntil);
+            startWindLoop();
+            if (_windLoop) {
+                const f = Math.min(1, v.speed / 70);
+                _windLoop.gn.gain.setTargetAtTime(0.04 + f * 0.35, _windLoop.ctx.currentTime, 0.1);
+                _windLoop.bp.frequency.setTargetAtTime(250 + f * 1500, _windLoop.ctx.currentTime, 0.1);
+            }
+            if (v.speed > DECOMP_SPEED) {
+                if (v.decompT === null || v.decompT === undefined) v.decompT = DECOMP_DELAY;
+                if (v.harness) {
+                    if (v.decompT > 0 && v.decompT <= DECOMP_DELAY * 0.5) { /* (still counting for the toast) */ }
+                    if (!v._holdToast && v.decompT <= 0.2) { v._holdToast = true; showToast('The harness holds. Slow down.', 2200); }
+                    v._wasBuckled = true;
+                    v.decompT = Math.max(0.1, v.decompT - dt);   // buckled in: the suction can't take you
+                    return;
+                }
+                if (v._wasBuckled) { v._wasBuckled = false; v.decompT = DECOMP_DELAY; v._holdToast = false; }   // just unbuckled: a fresh warning
+                v.decompT -= dt;
+                if (v.decompT <= 0) {
+                    noiseBurst(1.4, 0.7, 120, 2500);
+                    stopCabinAlarm();
+                    bailOut(v, true);
+                }
+            } else if (v.decompT !== null && v.speed < DECOMP_SPEED * 0.8) {
+                v.decompT = null;
+                v._holdToast = false;
+            }
+        }
+
+        // Debug handle: aircraft gun / canopy / harness / bail-out
+        window.__AIR__ = {
+            state: () => ({ weapon: currentWeaponType(), ads: adsHeld, gunUp: aircraftGunUp, ammo: (heldGunStack() || { data: {} }).data.mag, plane: !!getActivePlane() }),
+            breakCanopy: () => breakCanopy(getActivePlane()),
+            harness: (on) => { const v = getActivePlane(); if (v) v.setHarness(on); },
+            bail: () => bailOut(getActivePlane()),
+            fire: () => { const v = getActivePlane(); return v ? fireFromAircraft(v) : null; },
+            alarm: () => ({ until: cabinAlarmUntil, flash: _alarmFlashEl ? _alarmFlashEl.style.opacity : null })
+        };
+
+        function toggleHarness() {
+            const v = getActivePlane();
+            if (!v || v.wrecked) return;
+            v.setHarness(!v.harness);
+            playBeltClick();
+            showToast(v.harness ? 'Harness buckled' : 'Harness released', 1200);
+        }
+
+        /** Jump out (E in the air), or get pulled out when `forced` (the cabin lost pressure). */
+        function bailOut(v, forced = false) {
+            if (playerController.getState() !== 'IN_VEHICLE' || playerController.getVehicle() !== v || playerHealth <= 0 || v.wrecked) return false;
+            if (!forced && v.harness) {
+                v.setHarness(false);
+                playBeltClick();
+                showToast('Harness released. Press E again to jump.', 1800);
+                return false;
+            }
+            stopCabinAlarm();
+            const alt = v.position.y;
+            const yaw = v.yaw || 0;
+            const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+            const lx = -Math.cos(yaw), lz = Math.sin(yaw);
+            const vx = v.velocity ? v.velocity.x : fx * (v.speed || 0);
+            const vz = v.velocity ? v.velocity.y : fz * (v.speed || 0);
+            const vy = v.verticalSpeed || 0;
+            for (const k of ['w', 'a', 's', 'd', 'space']) playerController.keys[k] = false;
+            if (!playerController.exitVehicle(spatialGrid, true)) return false;
+            handleExitVehicleRadio();
+            // out of the left door (or up through the hole)
+            const side = forced ? 0.2 : 1.7;
+            myPosition.set(v.position.x + lx * side, 0, v.position.z + lz * side);
+            playerController.position.copy(myPosition);
+            fpCameraYaw = yaw;
+            fpCameraPitch = forced ? 0.2 : -0.3;
+            if (cameraController) { cameraController.fpYaw = fpCameraYaw; cameraController.fpPitch = fpCameraPitch; }
+            stopStroking();
+            isSpraying = false;
+            isFiringGun = false;
+            carGunHeld = false;
+            const grip = forced ? 0.95 : 0.8;   // you leave at nearly the aircraft's speed
+            startSkydive(alt + CAMERA_EYE_HEIGHT * 0.6, vx * grip, vz * grip, vy, forced);
+            if (alt > 3) showToast(forced ? 'Torn out of the cockpit!' : 'You jump. There is no parachute.', 2600);
+            return true;
+        }
+
+        function startSkydive(h, vx, vz, vy, tumble) {
+            playerAction.type = 'skydive';
+            playerAction.phase = 'air';
+            playerAction.t = 0;
+            playerAction.vx = vx;
+            playerAction.vz = vz;
+            playerAction.vy = vy;
+            playerAction.h = Math.max(h, CAMERA_LYING_HEIGHT);
+            playerAction.rotX = playerAction.rotZ = 0;
+            playerAction.spin = 0;
+            playerAction.tumble = tumble ? 9 : 0;
+            playerAction.eject = false;
+            startWindLoop();
+        }
+
+        function startWindLoop() {
+            if (_windLoop) return;
+            const ctx = ensureCarAudioEngine();
+            if (!ctx) return;
+            const len = ctx.sampleRate * 2;
+            const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+            const d = buf.getChannelData(0);
+            for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+            const src = ctx.createBufferSource();
+            src.buffer = buf;
+            src.loop = true;
+            const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 500; bp.Q.value = 0.6;
+            const gn = ctx.createGain(); gn.gain.value = 0;
+            src.connect(bp); bp.connect(gn); gn.connect(ctx.destination);
+            src.start();
+            _windLoop = { src, bp, gn, ctx };
+        }
+
+        function stopWindLoop() {
+            if (!_windLoop) return;
+            const w = _windLoop;
+            _windLoop = null;
+            w.gn.gain.setTargetAtTime(0, w.ctx.currentTime, 0.15);
+            setTimeout(() => { try { w.src.stop(); } catch (e) {} }, 800);
+        }
+
+        /** Free fall: steer a little with WASD, the wind roars, the ground arrives at ~55 m/s. */
+        function updateSkydive(a, dt) {
+            a.t += dt;
+            if (playerHealth <= 0 && a.h > 3) { /* dead in the air: the body keeps falling */ }
+            // gravity, with air drag that tops out around TERMINAL_FALL
+            a.vy -= 9.8 * dt;
+            a.vy += Math.sign(a.vy) * -(9.8 / (TERMINAL_FALL * TERMINAL_FALL)) * a.vy * a.vy * dt;
+            // steer: lean to slide through the air (while tumbling you can't)
+            const ctl = a.tumble > 0.5 ? 0 : 1;
+            const fwd = ((fpKeys.w ? 1 : 0) - (fpKeys.s ? 1 : 0)) * ctl;
+            const side = ((fpKeys.d ? 1 : 0) - (fpKeys.a ? 1 : 0)) * ctl;
+            const fx = -Math.sin(fpCameraYaw), fz = -Math.cos(fpCameraYaw);
+            const rx = Math.cos(fpCameraYaw), rz = -Math.sin(fpCameraYaw);
+            a.vx += (fx * fwd + rx * side) * 14 * dt;
+            a.vz += (fz * fwd + rz * side) * 14 * dt;
+            const hd = Math.exp(-0.35 * dt);   // the forward speed you left the aircraft with bleeds off
+            a.vx *= hd;
+            a.vz *= hd;
+            a.h += a.vy * dt;
+            if (a.h > 12) {
+                myPosition.x += a.vx * dt;
+                myPosition.z += a.vz * dt;
+            } else {
+                movePlayerBy(a.vx * dt, a.vz * dt);
+            }
+            // view: a violent tumble out of a depressurised cabin that settles into belly-down free fall
+            if (a.tumble > 0.2) {
+                a.spin += a.tumble * dt;
+                a.tumble *= Math.exp(-0.45 * dt);
+                a.rotX = -a.spin;
+                a.rotZ = Math.sin(a.spin * 0.5) * 0.5;
+            } else {
+                const k = 1 - Math.exp(-3 * dt);
+                a.rotX = ((a.rotX + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;   // unwind the tumble the short way
+                a.rotX += (0 - a.rotX) * k;
+                a.rotZ += (0 - a.rotZ) * k;
+            }
+            const speedNow = Math.hypot(a.vx, a.vz, a.vy);
+            a.rotZ += Math.sin(a.t * 37) * 0.006 * Math.min(1, speedNow / 40);   // buffeting
+            if (_windLoop) {
+                const f = Math.min(1, speedNow / 60);
+                _windLoop.gn.gain.setTargetAtTime(0.05 + f * 0.5, _windLoop.ctx.currentTime, 0.1);
+                _windLoop.bp.frequency.setTargetAtTime(300 + f * 1800, _windLoop.ctx.currentTime, 0.1);
+            }
+            crashShake = Math.max(crashShake, Math.min(0.12, speedNow / 700));
+            // the ground
+            if (a.h <= CAMERA_LYING_HEIGHT && a.vy <= 0) {
+                const impact = -a.vy;
+                stopWindLoop();
+                a.h = CAMERA_LYING_HEIGHT;
+                a.type = 'ragdoll';
+                a.phase = 'ground';
+                a.t = 0;
+                a.vx *= 0.2;
+                a.vz *= 0.2;
+                a.rotX = -0.5;
+                a.rotZ = 1.3;
+                a.tumble = 0;
+                if (impact > 11) {
+                    lastHitBy = null;
+                    damagePlayer(playerMaxHealth * 10);
+                    impacts.bleed(new THREE.Vector3(myPosition.x, myPosition.y + 0.3, myPosition.z), new THREE.Vector3(0, 1, 0), { amount: 4 });
+                    noiseBurst(0.35, 0.8, 40, 500);
+                } else if (impact > 5) {
+                    damagePlayer(Math.min(playerMaxHealth, Math.round((impact - 4) * 14)));
+                    noiseBurst(0.25, 0.4, 60, 700);
+                }
+            }
+        }
+
         // Debug handle: being thrown through the windshield
         window.__EJECT__ = { action: playerAction, eject: ejectThroughWindshield, speeds: _ejectSpeeds, watch: watchForEjection, belt: () => seatbelt, whip };
 
@@ -9872,7 +10214,11 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
         function updatePlayerAction(dt) {
             if (playerHitCooldown > 0) playerHitCooldown -= dt;
             const a = playerAction;
-            if (!a.type) return;
+            if (!a.type) {
+                if (_windLoop && playerController.getState() !== 'IN_VEHICLE') stopWindLoop();
+                updateAlarmFlash(false);
+                return;
+            }
             if (devMode || (carjackState.active || vehicleTransition) || playerController.getState() !== 'ON_FOOT') {
                 resetPlayerAction();
                 return;
@@ -9883,6 +10229,11 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                 a.phase = 'ground';
                 a.t = 0;
                 a.h = CAMERA_LYING_HEIGHT;
+            }
+
+            if (a.type === 'skydive') {
+                updateSkydive(a, dt);
+                return;
             }
 
             a.t += dt;
@@ -10531,8 +10882,23 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             }
             stopStroking();
             const inVehicle = (playerController && playerController.getState() === 'IN_VEHICLE');
-            // Drive-by aiming and shooting use the car cockpit, so they don't apply while piloting a plane
-            if (inVehicle && getActivePlane()) return;
+            // Piloting: the left button fires whatever gun you're holding out of the cockpit
+            const flying = inVehicle ? getActivePlane() : null;
+            if (flying) {
+                if (e.button === 2) {
+                    if (!cameraController.isCockpitView()) { showToast('Switch to the cockpit view (V) to aim', 1500); return; }
+                    if (currentWeaponType() !== 'gun') selectBestGun();   // (it takes a moment to draw)
+                    adsHeld = true;   // aim down the sights: the gun comes up, the view zooms, the head is the aim
+                    return;
+                }
+                if (e.button === 0) {
+                    if (!cameraController.isCockpitView()) { showToast('Switch to the cockpit view (V) to shoot', 1500); return; }
+                    if (currentWeaponType() !== 'gun') selectBestGun();
+                    carGunHeld = true;
+                    fireFromAircraft(flying);
+                }
+                return;
+            }
 
             if (e.button === 2) { // Right Click - Aim pistol in first person while driving
                 if (inVehicle) {
@@ -10799,6 +11165,8 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     } else {
                         tryBoardOrJackVehicle(true);
                     }
+                } else if (getActivePlane() && !getActivePlane().canExit() && getActivePlane().position.y > 1.5) {
+                    bailOut(getActivePlane());
                 } else if (exitVehicleAnimated()) {
                     // climbing out
                 } else {
@@ -10808,7 +11176,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                         myPosition.copy(playerController.position);
                         camera.position.set(playerController.position.x, playerController.position.y + 1.7, playerController.position.z);
                     } else if (getActivePlane()) {
-                        showToast('Land and slow down before leaving the plane');
+                        showToast('Slow down to climb out (or get some height and press E to jump)');
                     }
                 }
                 return;
@@ -10872,9 +11240,11 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     }
                     break;
                 case 'c': toggleColorPicker(); break;
+                case 'b': if (getActivePlane()) toggleHarness(); break;
                 case 'v':
-                    if (playerController.getState() === 'IN_VEHICLE' && !getActivePlane()) {
-                        showToast(cameraController.toggleDriveView() ? 'Driver view' : 'Chase camera', 1200);
+                    if (playerController.getState() === 'IN_VEHICLE') {
+                        const first = cameraController.toggleDriveView();
+                        showToast(first ? (getActivePlane() ? 'Cockpit view' : 'Driver view') : 'Chase camera', 1200);
                     } else {
                         toggleMode();
                     }
@@ -11670,8 +12040,16 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
                     }
                     playerController.update(dt, spatialGrid, roadNetwork);
                     if (activeV.isPlane) {
-                        // Arrow Down pulls the nose up, Arrow Up pushes it down
+                        // Arrow Down pulls the nose up, Arrow Up pushes it down; Left / Right is the rudder
+                        // (a helicopter slides sideways with them instead)
                         activeV.setPitchInput((arrowLookKeys.ArrowDown ? 1 : 0) - (arrowLookKeys.ArrowUp ? 1 : 0));
+                        activeV.setYawInput((arrowLookKeys.ArrowLeft ? 1 : 0) - (arrowLookKeys.ArrowRight ? 1 : 0));
+                        if (activeV.hintPending) {
+                            activeV.hintPending = false;
+                            showToast('B: buckle your harness', 3500);
+                        }
+                        updateAircraftGuns(activeV);
+                        updateDecompression(activeV, dt);
                     }
                     activeV.update(dt, spatialGrid);
                     if (activeV.isPlane && activeV.crashed) explodePlane(activeV);
@@ -11886,6 +12264,13 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             const nowMs = performance.now();
             const renderDt = Math.min(0.1, (nowMs - lastRenderTime) / 1000);
             lastRenderTime = nowMs;
+            {
+                const pv = playerController.getState() === 'IN_VEHICLE' ? playerController.getVehicle() : null;
+                if (pv && pv.isPlane && pv.renderInterp && cameraController.isCockpitView()) {
+                    pv.renderInterp(accumulator / FIXED_DELTA);
+                    cameraController.refreshAircraftSeat(renderDt);
+                }
+            }
             sunHaloMesh.lookAt(camera.position);
             updateBrawl(renderDt);
             updateViewmodel();
@@ -11932,6 +12317,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
 
             // Viewmodel (on foot OR in vehicle first-person aiming), lit like the world around it
             const showViewmodel = (playerController.getState() === 'ON_FOOT' && !vehicleTransition && !net.riding && !(lsdTrip && lsdTrip.phase !== 'colors')) ||
+                aircraftGunUp ||
                 (cameraController && cameraController.aimTransition > 0.4) ||
                 (drugUse && !vehicleTransition && !(lsdTrip && lsdTrip.phase !== 'colors')) ||
                 (phoneAmount > 0.01 && !vehicleTransition && !(lsdTrip && lsdTrip.phase !== 'colors'));
@@ -11948,6 +12334,7 @@ WASD + Space/Shift | Arrows = Look | Ctrl = Sprint | F12 = Exit</div>
             if (crosshairEl && gameStarted) {
                 const showCrosshair = (playerController.getState() === 'ON_FOOT' && phoneAmount < 0.3) ||
                     (cameraController && cameraController.aimTransition > 0.15) ||
+                    aircraftGunUp ||
                     cockpitPointerActive;
                 crosshairEl.style.display = showCrosshair ? 'block' : 'none';
             }

@@ -1,0 +1,51 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Aircraft preview</title>
+<style>html,body{margin:0;background:#8fb8e0;overflow:hidden}canvas{display:block}</style>
+<script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }</script>
+</head><body>
+<script type="module">
+// Showroom for js/game/aircraft.js without the city map: ?type=<id>&view=exterior|cockpit|cabin
+import * as THREE from 'three';
+import { Plane } from '../js/game/plane.js';
+import { Helicopter } from '../js/game/rotorcraft.js';
+import { AIRCRAFT } from '../js/game/aircraft.js';
+const q = new URLSearchParams(location.search);
+const type = AIRCRAFT[q.get('type')] ? q.get('type') : 'cub', view = q.get('view') || 'exterior';
+const spec = AIRCRAFT[type];
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fb8e0);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x556655, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(20, 30, 10);
+scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: 0x5b6b4a }));
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+const v = spec.kind === 'heli' ? new Helicopter('p', 0, 0, 0, spec.colors[0], type) : new Plane('p', 0, 0, 0, spec.colors[0], type);
+v.setPlayerControlled(true);
+v.speed = 40;
+scene.add(v.mesh);
+v.interior.update({ speed: 40, maxSpeed: spec.stats.MAX_SPEED || spec.stats.maxSpeed || 80, pitch: 0.08, roll: 0.15, yaw: 0.4, alt: 300, rpm: 0.7, vs: 2, throttle: 0.7, steer: 0.3, pitchIn: 0.2, collective: 0.5 });
+const camera = new THREE.PerspectiveCamera(q.get('fov') ? +q.get('fov') : 75, innerWidth / innerHeight, 0.1, 500);
+const e = v.driverEye;
+if (view === 'exterior') {
+    const r = v.radius * 2.4;
+    camera.position.set(r * 0.8, r * 0.45, -r * 0.7);
+    camera.lookAt(0, 1.5, 0);
+} else {
+    const yaw = +(q.get('yaw') || 0), pit = +(q.get('pitch') || 0);
+    if (view === 'cabin') {   // sit behind the pilots and look forward-and-around the cabin
+        camera.position.set(e.x, e.y, e.z + (+q.get('back') || 2.2));
+        camera.lookAt(e.x + Math.sin(yaw) * -5, e.y + pit * 5 - 0.3, e.z + (+q.get('back') || 2.2) - Math.cos(yaw) * 5);
+    } else {
+        camera.position.copy(e);
+        camera.lookAt(e.x - Math.sin(yaw) * 5, e.y + pit * 5 - 0.2, e.z - Math.cos(yaw) * 5);
+    }
+}
+renderer.render(scene, camera);
+window.__S__ = { scene, camera, renderer, v };
+window.__READY__ = true;
+</script></body></html>

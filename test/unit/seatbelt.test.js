@@ -29,3 +29,17 @@ test('seatbelt: grab the tongue over your left shoulder, let go over the buckle 
     assert.equal(belt.buckled, true);
     assert.equal(belt.grab(cam), false);                  // already on
 });
+
+test('seatbelt: you lean toward the tongue when looking at it, and settle back once buckled', () => {
+    const car = { model: 'civic', mesh: new THREE.Group() };
+    const belt = new Seatbelt(car);
+    const cam = new THREE.PerspectiveCamera();
+    const e = cabinShape('civic').eye;
+    car.mesh.updateMatrixWorld();
+    const seat = () => { cam.position.set(e.x, e.y, e.z); cam.lookAt(belt.rest); };
+    for (let i = 0; i < 60; i++) { seat(); belt.lean(cam, true); }
+    assert.ok(cam.position.x < e.x - 0.1, 'head moved left');
+    belt.buckled = true;
+    for (let i = 0; i < 120; i++) { seat(); belt.lean(cam, true); }
+    assert.ok(Math.abs(cam.position.x - e.x) < 0.01, 'back upright');
+});

@@ -15,6 +15,7 @@ function step(plane, seconds, grid = null, before = null) {
 
 function pilot(plane) {
     plane.setPlayerControlled(true);
+    plane.cfg.TURB = 0; // (calm air: the gusts are random)
     return plane;
 }
 
@@ -34,7 +35,7 @@ test('full throttle accelerates down the runway along the heading (-Z at yaw 0)'
     step(p, 1.5);
     assert.ok(p.speed > 10, `speed ${p.speed}`);
     assert.ok(p.position.z < -5, 'moved toward -Z');
-    assert.ok(Math.abs(p.position.x) < 1e-6);
+    assert.ok(Math.abs(p.position.x) < 1.5, 'only a little prop-torque drift off the line');
     assert.equal(p.position.y, 0, 'still rolling on the ground');
 });
 
@@ -93,9 +94,11 @@ test('levels out after releasing roll input', () => {
     const p = airborne();
     p.setInputs(true, { left: false, right: true }, false, false);
     step(p, 1.5);
+    const peak = Math.abs(p.roll);
     p.setInputs(true, 0, false, false);
-    step(p, 2);
-    assert.ok(Math.abs(p.roll) < 0.01);
+    step(p, 6);
+    // dihedral rolls a released bank back toward level (gradually, not instantly)
+    assert.ok(Math.abs(p.roll) < peak * 0.35, `roll ${p.roll} from ${peak}`);
 });
 
 test('throttle cut in the air stalls and the plane descends back to the ground', () => {

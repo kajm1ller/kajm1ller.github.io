@@ -403,6 +403,8 @@ class TaxiMeter {
 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _s = new THREE.Vector3(), _h = new THREE.Vector3(), _d = new THREE.Vector3(), _p = new THREE.Vector3(), _e = new THREE.Vector3();
+const _z = new THREE.Vector3(0, 0, 1);
 
 /**
  * Interior for one car. Built once per vehicle and reused whenever the player gets back in.
@@ -444,7 +446,7 @@ export class CarInterior {
      */
     _mergeStatic(group) {
         const keep = new Set([this.cluster, this.screenMesh]);
-        for (const arm of [this.armL, this.armR]) if (arm) keep.add(arm.handMesh).add(arm.fore);
+        for (const arm of [this.armL, this.armR]) if (arm) keep.add(arm.handMesh).add(arm.fore).add(arm.upper).add(arm.upper.userData.elbow);
         const byMat = new Map();
         for (const o of group.children) {
             if (!o.isMesh || keep.has(o) || o.children.length || !o.material || o.material.map) continue;
@@ -603,16 +605,31 @@ export class CarInterior {
         // Driver's arms (hand on the grip, forearm + upper arm back to the shoulder)
         const arm = (side) => {
             const g = new THREE.Group();
-            const hand = box(g, M.skin, 0.06, 0.075, 0.045, 0, 0, 0);
-            const fore = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 1), M.sleeve);
-            R.add(g, fore);
+            // a rounded fist round the rim: palm, curled fingers and a thumb along the top
+            const hand = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), M.skin);
+            hand.scale.set(0.034, 0.04, 0.03);
+            g.add(hand);
+            const knuckles = new THREE.Mesh(new THREE.CapsuleGeometry(0.012, 0.05, 4, 8), M.skin);
+            knuckles.rotation.z = Math.PI / 2;
+            knuckles.position.set(0, 0.012, -0.026);
+            const thumb = new THREE.Mesh(new THREE.CapsuleGeometry(0.0095, 0.03, 4, 6), M.skin);
+            thumb.position.set(side * -0.02, 0.04, -0.01);
+            thumb.rotation.z = side * 0.5;
+            g.add(knuckles, thumb);
+            // tapered sleeves (the +z end, the elbow / wrist, is the thin one) and a ball at the elbow
+            const tube = (rTip, rBase) => new THREE.Mesh(new THREE.CylinderGeometry(rTip, rBase, 1, 10).rotateX(Math.PI / 2), M.sleeve);
+            const fore = tube(0.026, 0.034);
+            const upper = tube(0.034, 0.042);
+            const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.036, 10, 8), M.sleeve);
+            upper.userData.elbow = elbow;
+            R.add(g, fore, upper, elbow);
             // Pointing pose (index finger out), used when reaching for the screen
             const point = new THREE.Group();
             box(point, M.skin, 0.055, 0.045, 0.07, 0, 0, 0);                    // fist
             box(point, M.skin, 0.016, 0.016, 0.06, side * 0.016, 0.008, -0.06);  // index finger
             point.visible = false;
             R.add(point);
-            return { side, hand: g, handMesh: hand, fore, point };
+            return { side, hand: g, handMesh: hand, fore, upper, point };
         };
         this.armL = arm(-1);
         this.armR = arm(1);
@@ -918,7 +935,7 @@ export class CarInterior {
         this.occupied = occupied;
         if (this.root) this.updateVisibility();
         for (const arm of [this.armL, this.armR]) {
-            arm.hand.visible = arm.fore.visible = occupied;
+            arm.hand.visible = arm.fore.visible = arm.upper.visible = arm.upper.userData.elbow.visible = occupied;
             arm.point.visible = false;
         }
     }
@@ -983,6 +1000,7 @@ export class CarInterior {
         if (info.showArms === false) {
             for (const arm of [this.armL, this.armR]) arm.hand.visible = arm.fore.visible = arm.point.visible = false;
         }
+        for (const arm of [this.armL, this.armR]) arm.upper.visible = arm.upper.userData.elbow.visible = arm.fore.visible;
     }
 
     /**
@@ -1032,12 +1050,7 @@ export class CarInterior {
         arm.point.rotateY(Math.PI); // finger along -Z of the fist faces the target
         arm.point.visible = true;
         arm.hand.visible = false;
-        // Forearm trails back from the wrist towards the shoulder
-        const len = 0.3;
-        arm.fore.position.set(hx - dx * len * 0.5, hy - dy * len * 0.5, hz - dz * len * 0.5);
-        arm.fore.scale.set(1, 1, len);
-        _v2.set(hx, hy, hz).applyMatrix4(R.matrixWorld);
-        arm.fore.lookAt(_v2);
+        this._solveArm(arm, hx, hy, hz);
     }
 
     _placeArm(arm, grip) {
@@ -1049,18 +1062,33 @@ export class CarInterior {
         arm.hand.position.copy(_v1);
         arm.hand.quaternion.copy(grip.parent.quaternion);
         arm.hand.rotateZ(grip.rotation.z);
-        // Forearm runs from the wrist back and down towards the elbow, out of view below the camera
-        const hx = _v1.x, hy = _v1.y, hz = _v1.z;
-        let dx = E.x + arm.side * 0.3 - hx;
-        let dy = E.y - 0.6 - hy;
-        let dz = E.z + 0.15 - hz;
-        const dl = Math.hypot(dx, dy, dz) || 1;
-        const len = 0.3;
-        dx = (dx / dl) * len; dy = (dy / dl) * len; dz = (dz / dl) * len;
-        arm.fore.position.set(hx + dx * 0.5, hy + dy * 0.5, hz + dz * 0.5 + 0.01);
-        arm.fore.scale.set(1, 1, len);
-        _v2.set(hx + dx, hy + dy, hz + dz).applyMatrix4(R.matrixWorld);
-        arm.fore.lookAt(_v2);
+        this._solveArm(arm, _v1.x, _v1.y, _v1.z);
+    }
+
+    /** Two-bone arm from the body's shoulder to the hand, elbow out and down (matches the body in seatbelt.js). */
+    _solveArm(arm, hx, hy, hz) {
+        const E = this.eye;
+        const L1 = 0.37, L2 = 0.36;
+        const S = _s.set(E.x + arm.side * 0.21, E.y - 0.24, E.z + 0.14);
+        const H = _h.set(hx, hy, hz);
+        const dir = _d.subVectors(H, S);
+        const d = Math.min(dir.length(), L1 + L2 - 0.005) || 0.01;
+        dir.normalize();
+        const a = (L1 * L1 - L2 * L2 + d * d) / (2 * d);
+        const hh = Math.sqrt(Math.max(0, L1 * L1 - a * a));
+        _p.set(arm.side * 0.45, -1, 0.15);
+        _p.addScaledVector(dir, -_p.dot(dir)).normalize();
+        _e.copy(S).addScaledVector(dir, a).addScaledVector(_p, hh);
+        const bone = (m, A, B) => {
+            _d.subVectors(B, A);
+            const len = _d.length();
+            m.position.addVectors(A, B).multiplyScalar(0.5);
+            m.quaternion.setFromUnitVectors(_z, _d.divideScalar(len || 1));
+            m.scale.set(1, 1, len);
+        };
+        arm.upper.userData.elbow.position.copy(_e);
+        bone(arm.upper, S, _e);
+        bone(arm.fore, _e, H);
     }
 }
 

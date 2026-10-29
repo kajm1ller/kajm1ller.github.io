@@ -9,6 +9,9 @@
  * taxi back to a free spot on the apron. Runway and taxiway coordinates come from the same OSM
  * extract as the map (runway 10/28 runs x -555..715 at z ~ -2500).
  *
+ * Two helicopters work from pads beside the apron: they spool up, lift off, fly a loop over town
+ * and come back to land (scripted too, see `_heliStep`).
+ *
  * The planes are scripted (they follow 3D routes with a speed profile and bank into turns) rather
  * than flown by plane.js's flight model, and use its mesh. A shared propeller drone follows the
  * nearest one.
@@ -16,6 +19,7 @@
 
 import * as THREE from 'three';
 import { createPlaneMesh } from './plane.js';
+import { buildAircraft, AIRCRAFT, HELI_TYPES } from './aircraft.js';
 
 export const AIR_CONFIG = Object.freeze({
     PARKING: [[-641, -1958], [-621, -1958], [-601, -1958], [-581, -1958]],
@@ -27,7 +31,16 @@ export const AIR_CONFIG = Object.freeze({
     HIDE_DISTANCE: 1400,         // planes on the ground (each is ~25 meshes, so far ones aren't drawn)
     HIDE_DISTANCE_AIR: 2200,
     SHADOW_DISTANCE: 250,
-    SOUND_RANGE: 450
+    SOUND_RANGE: 450,
+    HELI_PADS: [[-520, -1958], [-495, -1958]],
+    HELI_EVERY: [60, 150],
+    HELI_CRUISE: 42,
+    HELI_ALT: 120,
+    // loop over town (x, z), flown after climbing out; each helicopter picks one at random
+    HELI_ROUTES: [
+        [[-1500, -1500], [-2000, 0], [-800, 600], [400, -800]],
+        [[-900, -1000], [-300, 400], [900, 200], [1200, -1200]]
+    ]
 });
 
 // Ground routes (x, z) between the apron and runway 10/28 via taxiway A and B3
@@ -68,6 +81,9 @@ export class AirTraffic {
         this.departureT = between(30, 70);
         this._v = new THREE.Vector3();
         this.audio = null;
+        this.helis = [];
+        this.heliT = between(10, 30);
+        for (let i = 0; i < AIR_CONFIG.HELI_PADS.length; i++) this._makeHeli(i);
 
         // Some planes are already parked
         for (let i = 0; i < AIR_CONFIG.PARKED_AT_START; i++) {
@@ -89,6 +105,96 @@ export class AirTraffic {
         };
         this.planes.push(p);
         return p;
+    }
+
+    _makeHeli(pad) {
+        const type = HELI_TYPES[(Math.random() * HELI_TYPES.length) | 0];
+        const colors = AIRCRAFT[type].colors;
+        const { root, spinners } = buildAircraft(type, colors[(Math.random() * colors.length) | 0], `ai_${pad}`);
+        root.rotation.order = 'YXZ';
+        this.scene.add(root);
+        const [x, z] = AIR_CONFIG.HELI_PADS[pad];
+        const h = {
+            mesh: root, spinners, rotorAngle: 0, rpm: 0, pad,
+            position: new THREE.Vector3(x, 0, z), vel: new THREE.Vector3(), yaw: Math.PI, pitch: 0, roll: 0,
+            state: 'parked', route: [], wp: 0, timer: 0, isHeli: true, isAirTraffic: true
+        };
+        root.position.copy(h.position);
+        root.rotation.y = h.yaw;
+        this.helis.push(h);
+        return h;
+    }
+
+    _heliGo(h) {
+        const routes = AIR_CONFIG.HELI_ROUTES;
+        h.route = routes[(Math.random() * routes.length) | 0].map(([x, z]) => [x + between(-150, 150), z + between(-150, 150)]);
+        h.wp = 0;
+        h.state = 'spool';
+        h.timer = between(5, 8);
+    }
+
+    _heliStep(h, dt) {
+        const [px, pz] = AIR_CONFIG.HELI_PADS[h.pad];
+        const pos = h.position;
+        const want = new THREE.Vector3(); // target velocity
+        let rpmWant = 1;
+        want.set(0, 0, 0);
+        switch (h.state) {
+            case 'parked':
+                rpmWant = 0;
+                break;
+            case 'spool':
+                rpmWant = 1;
+                h.timer -= dt;
+                if (h.rpm > 0.95 && h.timer <= 0) h.state = 'lift';
+                break;
+            case 'lift':
+                want.y = 4;
+                if (pos.y > AIR_CONFIG.HELI_ALT) h.state = 'cruise';
+                break;
+            case 'cruise': {
+                const r = h.route, tgt = h.wp < r.length ? r[h.wp] : [px, pz];
+                const dx = tgt[0] - pos.x, dz = tgt[1] - pos.z, d = Math.hypot(dx, dz) || 1;
+                const home = h.wp >= r.length;
+                const sp = home ? Math.min(AIR_CONFIG.HELI_CRUISE, 6 + d * 0.08) : AIR_CONFIG.HELI_CRUISE;
+                want.set((dx / d) * sp, (AIR_CONFIG.HELI_ALT - pos.y) * 0.3, (dz / d) * sp);
+                if (d < (home ? 8 : 120)) {
+                    if (home) h.state = 'descend';
+                    else h.wp++;
+                }
+                break;
+            }
+            case 'descend': {
+                const dx = px - pos.x, dz = pz - pos.z;
+                want.set(dx * 0.4, -Math.max(0.8, Math.min(5, pos.y * 0.25)), dz * 0.4);
+                if (pos.y <= 0.05) {
+                    pos.y = 0;
+                    h.state = 'cooldown';
+                    h.timer = between(6, 10);
+                }
+                break;
+            }
+            case 'cooldown':
+                want.set(0, 0, 0);
+                rpmWant = 0.4;
+                h.timer -= dt;
+                if (h.timer <= 0) h.state = 'parked';
+                break;
+        }
+        // Can only climb once the rotor is up to speed
+        if (h.rpm < 0.9 && want.y > 0) want.y = 0;
+        h.vel.lerp(want, Math.min(1, dt * 0.8));
+        pos.addScaledVector(h.vel, dt);
+        if (pos.y < 0) pos.y = 0;
+        h.rpm += (rpmWant - h.rpm) * Math.min(1, dt * (rpmWant > h.rpm ? 0.25 : 0.12));
+
+        const hs = Math.hypot(h.vel.x, h.vel.z);
+        const prevYaw = h.yaw;
+        if (hs > 3) h.yaw += angleDiff(h.yaw, Math.atan2(-h.vel.x, -h.vel.z)) * Math.min(1, dt * 0.9);
+        const yawRate = angleDiff(prevYaw, h.yaw) / Math.max(dt, 1e-4);
+        h.pitch += (-Math.min(0.2, hs * 0.005) - h.pitch) * Math.min(1, dt * 1.5); // nose down in forward flight
+        const rollWant = Math.max(-0.35, Math.min(0.35, -yawRate * hs * 0.05));
+        h.roll += (rollWant - h.roll) * Math.min(1, dt * 1.5);
     }
 
     _park(p, spot) {
@@ -178,6 +284,7 @@ export class AirTraffic {
             if (!this.asleep) {
                 this.asleep = true;
                 for (const p of this.planes) p.mesh.visible = false;
+                for (const h of this.helis) h.mesh.visible = false;
                 if (this.audio) this.audio.gain.gain.setTargetAtTime(0, this.audio.ctx.currentTime, 0.1);
             }
             return;
@@ -225,7 +332,28 @@ export class AirTraffic {
                 p.mesh.traverse((o) => { if (o.isMesh) o.castShadow = shadows; });
             }
         }
+        this._updateHelis(dt, ctx);
         this._updateSound(ctx);
+    }
+
+    _updateHelis(dt, ctx) {
+        this.heliT -= dt;
+        if (this.heliT <= 0) {
+            this.heliT = between(...AIR_CONFIG.HELI_EVERY);
+            const parked = this.helis.filter((h) => h.state === 'parked');
+            if (parked.length) this._heliGo(parked[(Math.random() * parked.length) | 0]);
+        }
+        const cam = ctx && ctx.cameraPos;
+        for (const h of this.helis) {
+            this._heliStep(h, dt);
+            const m = h.mesh;
+            m.position.copy(h.position);
+            m.rotation.set(h.pitch, h.yaw, -h.roll);
+            h.rotorAngle += h.rpm * dt;
+            for (const sp of h.spinners) sp.obj.rotation[sp.axis] = h.rotorAngle * sp.k;
+            const d = cam ? Math.hypot(h.position.x - cam.x, h.position.z - cam.z) : 0;
+            m.visible = d < (h.position.y > 5 ? AIR_CONFIG.HIDE_DISTANCE_AIR : AIR_CONFIG.HIDE_DISTANCE);
+        }
     }
 
     _fly(p, dt) {
@@ -349,7 +477,7 @@ export class AirTraffic {
         const cam = ctx && ctx.cameraPos;
         let best = null, bestD = AIR_CONFIG.SOUND_RANGE;
         if (cam) {
-            for (const p of this.planes) {
+            for (const p of this.planes.concat(this.helis)) {
                 if (p.rpm < 0.05) continue;
                 const d = p.position.distanceTo(cam);
                 if (d < bestD) {
@@ -362,7 +490,7 @@ export class AirTraffic {
         const vol = best ? (0.16 * best.rpm) / (1 + (bestD / 40) ** 2) : 0;
         a.gain.gain.setTargetAtTime(vol, now, 0.2);
         if (best) {
-            const f = 38 + best.rpm * 52;
+            const f = best.isHeli ? 70 + best.rpm * 30 : 38 + best.rpm * 52;
             a.osc.frequency.setTargetAtTime(f, now, 0.3);
             a.osc2.frequency.setTargetAtTime(f * 2.01, now, 0.3);
             a.filter.frequency.setTargetAtTime(400 + best.rpm * 900, now, 0.3);
@@ -370,8 +498,9 @@ export class AirTraffic {
     }
 
     getStats() {
-        const out = { parked: 0, departing: 0, arriving: 0, asleep: !!this.asleep };
+        const out = { parked: 0, departing: 0, arriving: 0, helis: this.helis.length, helisFlying: 0, asleep: !!this.asleep };
         for (const p of this.planes) out[p.state]++;
+        for (const h of this.helis) if (h.state !== 'parked' && h.state !== 'cooldown') out.helisFlying++;
         return out;
     }
 }

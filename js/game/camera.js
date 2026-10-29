@@ -13,6 +13,8 @@
 
 import * as THREE from 'three';
 
+const _worldUp = new THREE.Vector3(0, 1, 0);
+
 export const CameraMode = Object.freeze({
     FIRST_PERSON: 'FIRST_PERSON',
     CHASE: 'CHASE'
@@ -96,9 +98,56 @@ export class CameraController {
         this._seatLook = new THREE.Vector3();
     }
 
-    /** Whether a target can be driven from the driver's seat (cars yes, aircraft no). */
+    /** Whether a target can be driven from the driver's seat (cars, and aircraft with a modelled cockpit). */
     _cockpitCapable(target) {
-        return !!(target && target.isHondaCivic && !target.isPlane);
+        return !!(target && ((target.isHondaCivic && !target.isPlane) || (target.isPlane && target.interior)));
+    }
+
+    /**
+     * Puts the camera in an aircraft's pilot seat. Called from update() and again every rendered frame
+     * (game.html, after the mesh has been drawn between sim steps) so the view never judders.
+     * The head sinks under g, slides with acceleration, shakes with the engine / turbulence / a stall,
+     * jolts on touchdown and glances into turns; the horizon banks with the aircraft.
+     */
+    _aircraftSeat(tv, dt) {
+        const mesh = tv.mesh;
+        mesh.updateMatrixWorld(true);
+        const eye = tv.driverEye || this.cockpitOffset;
+        const st = this._air || (this._air = { gy: 0, gx: 0, gz: 0, t: 0, look: 0 });
+        const k = 1 - Math.exp(-Math.max(dt, 0.001) * 5);
+        const g = tv.gLoad === undefined ? 1 : tv.gLoad;
+        st.gy += (Math.max(-0.07, Math.min(0.09, (g - 1) * 0.028)) - st.gy) * k;
+        st.gx += (Math.max(-0.07, Math.min(0.07, -(tv.accelLat || 0) * 0.035)) - st.gx) * k;
+        st.gz += (Math.max(-0.05, Math.min(0.06, (tv.accelLong || 0) * 0.005)) - st.gz) * k;
+        st.t += dt * 1;
+        const vib = tv.vibration || 0, th = tv.thump || 0, T = st.t;
+        const jx = (Math.sin(T * 61) + Math.sin(T * 37.7)) * 0.0011 * vib;
+        const jy = (Math.sin(T * 73) + 0.6 * Math.sin(T * 29)) * 0.0016 * vib - th * 0.07;
+        this._cockpitPos.set(eye.x + st.gx + jx, eye.y - st.gy + jy, eye.z + st.gz).applyMatrix4(mesh.matrixWorld);
+        // look: head turn from the mouse, plus a glance into the turn
+        const lookTarget = (tv.roll || 0) * -0.22;
+        st.look += (lookTarget - st.look) * (1 - Math.exp(-Math.max(dt, 0.001) * 1.5));
+        const hy = this.orbitYaw + st.look, hp = this.orbitPitch;
+        this._seatLook.set(eye.x - Math.sin(hy) * Math.cos(hp) * 25.0, eye.y - 0.1 + Math.sin(hp) * 25.0, eye.z - Math.cos(hy) * Math.cos(hp) * 25.0)
+            .applyMatrix4(mesh.matrixWorld);
+        this.camera.position.copy(this._cockpitPos);
+        this.camera.up.set(0, 1, 0).applyQuaternion(mesh.quaternion);
+        this.camera.lookAt(this._seatLook);
+        if (vib > 0.001) {
+            this.camera.rotateZ(Math.sin(T * 41) * 0.0022 * vib);
+            this.camera.rotateX(Math.sin(T * 53 + 1) * 0.0018 * vib + th * 0.03);
+        }
+        // the world rushes by faster in a jet
+        const want = Math.min(9, ((tv.speed || 0) / (tv.cfg ? tv.cfg.MAX_SPEED : 80)) * 9);
+        this.fovKick = (this.fovKick || 0) + (want - (this.fovKick || 0)) * (1 - Math.exp(-Math.max(dt, 0.001) * 2));
+    }
+
+    /** Re-places the camera after the aircraft mesh was interpolated for this frame (no state changes). */
+    refreshAircraftSeat(dt) {
+        const tv = this.targetVehicle;
+        if (this.mode !== CameraMode.CHASE || !tv || !tv.isPlane || !tv.mesh || !this.cockpitView || this.viewBlend < 0.98 || this.isAiming) return false;
+        this._aircraftSeat(tv, dt);
+        return true;
     }
 
     /** True while the camera sits in the driver's seat of the current vehicle. */
@@ -158,6 +207,7 @@ export class CameraController {
             this.isAiming = false;
             this.aimTransition = 0.0;
             this.viewBlend = (this.cockpitView && this._cockpitCapable(target)) ? 1.0 : 0.0;
+            this.camera.up.set(0, 1, 0);
 
             if (target) {
                 const vYaw = typeof target.getYaw === 'function' ? target.getYaw() : 0;
@@ -355,6 +405,12 @@ export class CameraController {
             if (Math.abs(this.viewBlend - (wantCockpit ? 1 : 0)) < 0.002) this.viewBlend = wantCockpit ? 1 : 0;
             const seat = this.viewBlend * this.viewBlend * (3.0 - 2.0 * this.viewBlend);
 
+            // Pilot's seat: its own placement (head movement, shake, banking horizon); see _aircraftSeat
+            if (tv.isPlane && wantCockpit && this.viewBlend > 0.98 && !this.isAiming && tv.mesh) {
+                this._aircraftSeat(tv, dt);
+                return;
+            }
+
             // Chase placement (orbit only applies to the chase camera)
             if (wantCockpit) {
                 this._desiredPos.set(
@@ -387,7 +443,7 @@ export class CameraController {
             const ox = eye.x + this._headX - out * 0.8;
             const oy = eye.y + out * 0.07 + Math.sin(this._shakeTime * 7.3) * Math.min(0.004, Math.abs(speed) * 0.0002);
             const oz = eye.z + this._headZ - out * 0.12;
-            if (tv.mesh && tv.mesh.parent && !tv.isPlane) {
+            if (tv.mesh && tv.mesh.parent) {
                 // through the body's transform, so the view rolls and pitches with the car
                 tv.mesh.updateMatrixWorld();
                 this._cockpitPos.set(ox, oy, oz).applyMatrix4(tv.mesh.matrixWorld);
@@ -402,12 +458,20 @@ export class CameraController {
             // Where the driver looks: ahead and a little into the turn, plus mouse look (seat view), or the drive-by aim
             this._lookInto = (this._lookInto || 0) + ((tv.steerAngle || 0) * 0.45 - (this._lookInto || 0)) * (1 - Math.exp(-dt * 4));
             const lookYaw = vy + this._lookInto + (wantCockpit ? this.orbitYaw : 0);
+            const isAir = !!tv.isPlane;
             const lookPitch = (wantCockpit ? this.orbitPitch - 0.06 : -0.06) + (tv.bumpPitch || 0) + (tv.bodyPitch || 0);
-            this._seatLook.set(
-                this._cockpitPos.x - Math.sin(lookYaw) * Math.cos(lookPitch) * 25.0,
-                this._cockpitPos.y + Math.sin(lookPitch) * 25.0,
-                this._cockpitPos.z - Math.cos(lookYaw) * Math.cos(lookPitch) * 25.0
-            );
+            if (isAir && tv.mesh) {
+                // Pilot's head turns inside the cabin, which pitches and rolls with the aircraft
+                const hy = wantCockpit ? this.orbitYaw : 0, hp = wantCockpit ? this.orbitPitch : 0;
+                this._seatLook.set(ox - Math.sin(hy) * Math.cos(hp) * 25.0, oy + Math.sin(hp) * 25.0, oz - Math.cos(hy) * Math.cos(hp) * 25.0)
+                    .applyMatrix4(tv.mesh.matrixWorld);
+            } else {
+                this._seatLook.set(
+                    this._cockpitPos.x - Math.sin(lookYaw) * Math.cos(lookPitch) * 25.0,
+                    this._cockpitPos.y + Math.sin(lookPitch) * 25.0,
+                    this._cockpitPos.z - Math.cos(lookYaw) * Math.cos(lookPitch) * 25.0
+                );
+            }
             const cosP = Math.cos(this.aimPitch);
             const sinP = Math.sin(this.aimPitch);
             this._cockpitAimTarget.set(
@@ -427,6 +491,12 @@ export class CameraController {
             // Look: chase target -> seat look -> aim
             this._blendedLookTarget.lerpVectors(this._chaseLook, this._seatLook, seat);
             this._blendedLookTarget.lerp(this._cockpitAimTarget, aim);
+            // Aircraft: the horizon tilts with the wings (up follows the body in the seat view)
+            if (isAir && tv.mesh && seat > 0.001) {
+                this.camera.up.set(0, 1, 0).applyQuaternion(tv.mesh.quaternion).lerp(_worldUp, 1 - seat).normalize();
+            } else {
+                this.camera.up.set(0, 1, 0);
+            }
             this.camera.lookAt(this._blendedLookTarget);
             // Roll: the seat view tilts with the body (the neck takes some out); the chase camera banks a hair
             const chaseBank = Math.max(-0.03, Math.min(0.03, (this._turnLook || 0) * 0.012));

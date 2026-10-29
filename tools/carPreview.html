@@ -24,7 +24,8 @@
     // Dev showroom: every car model side by side, or one model up close (?model=id&view=interior)
     import * as THREE from 'three';
     import { CAR_MODEL_IDS, CAR_MODELS, buildCarMesh, pickCarColor } from '../js/game/carModels.js';
-    import { CarInterior } from '../js/game/carInterior.js';
+    import { Seatbelt } from '../js/game/seatbelt.js';
+        import { CarInterior } from '../js/game/carInterior.js';
     import { Vehicle } from '../js/game/vehicle.js';
     import { InstancedVehicleFleet } from '../js/game/instancedFleet.js';
 
@@ -124,6 +125,12 @@
             interior.update(1 / 60, { radioTitle: 'Cosmic Girl', radioPlaying: true, showArms: true });
             if (view === 'open') interior.exposeCabin();
             vehicleLike.interior = interior;
+            // ?body=1 adds the driver's body and seatbelt (?buckled=1 buckles it)
+            if (params.get('body')) {
+                const belt = new Seatbelt(vehicleLike);
+                if (params.get('buckled')) belt.buckled = true;
+                for (let i = 0; i < 30; i++) belt.update(camera, true);
+            }
             if (view === 'interior') {
                 const e = vehicleLike.driverEye || interior.eye;
                 eye = new THREE.Vector3(e.x, e.y, e.z);
@@ -139,7 +146,12 @@
             camera.updateProjectionMatrix();
             camera.position.copy(eye);
             const lookYaw = parseFloat(params.get('look') || '0');
-            camera.lookAt(eye.x - Math.sin(lookYaw) * 5, eye.y - 0.35, eye.z - Math.cos(lookYaw) * 5);
+            camera.lookAt(eye.x - Math.sin(lookYaw) * 5, eye.y - parseFloat(params.get('drop') || '0.35'), eye.z - Math.cos(lookYaw) * 5);
+            // ?cam=x,y,z&at=x,y,z puts the camera anywhere in car space (to check the body from outside)
+            if (params.get('cam')) {
+                camera.position.set(...params.get('cam').split(',').map(Number));
+                camera.lookAt(...params.get('at').split(',').map(Number));
+            }
         } else {
             if (spin) angle += 0.004;
             camera.position.set(target.x + Math.sin(angle) * dist, height, target.z + Math.cos(angle) * dist);

@@ -15,6 +15,7 @@ import * as THREE from 'three';
 
 import { createHondaCivic } from './vehicle.js';
 import { createPlaneMesh } from './plane.js';
+import { AIRCRAFT, buildAircraft } from './aircraft.js';
 import { lerpAngle } from './camera.js';
 import { poseWalk, poseAim, poseIdle, poseUse, poseSeated, poseStagger, poseHold, poseGrabbing, posePunch } from './avatarPose.js';
 
@@ -306,7 +307,9 @@ export class RemotePlayers {
         if (entry.state === 'car') {
             visual = createHondaCivic(entry.color, `remote_${entry.id}`, entry.model);
         } else if (entry.state === 'plane') {
-            visual = createPlaneMesh(entry.color, `remote_${entry.id}`).root;
+            visual = (entry.model !== 'cub' && AIRCRAFT[entry.model])
+                ? buildAircraft(entry.model, entry.color, `remote_${entry.id}`).root
+                : createPlaneMesh(entry.color, `remote_${entry.id}`).root;
         } else if (this.peds) {
             // A person drawn by the pedestrian renderer; the group just holds the name tag
             visual = new THREE.Group();

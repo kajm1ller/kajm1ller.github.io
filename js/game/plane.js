@@ -20,9 +20,9 @@
 
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
+import { AIRCRAFT, buildAircraft } from './aircraft.js';
 
 const GRAVITY = 9.8;
-const _circleOffsets = [2.8, 0.0, -2.8];
 const _scratchCollisionResults = [];
 
 // ============================================================================
@@ -169,8 +169,18 @@ export const PLANE_CONFIG = Object.freeze({
     STALL_SINK: 16.0,         // m/s of extra sink at zero airspeed (scaled by lost lift)
     GLIDE_SINK: 4.0,          // m/s of sink with the engine at idle
     MAX_ALTITUDE: 900,
-    CRASH_SINK_RATE: 9.0      // descending faster than this on touchdown is a hard landing
+    CRASH_SINK_RATE: 9.0,     // descending faster than this on touchdown is a hard landing
+    STABILITY: 0.35,          // how firmly the nose settles to its trim attitude when the stick is let go
+    ROLL_STAB: 0.7,           // dihedral: how fast a released bank rolls back to level
+    RUDDER_RATE: 0.45,        // rad/s of yaw at full rudder
+    TURB: 1.0                 // how much the air shoves it around
 });
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+/** Moves cur toward target at `up` per second when pushing away from centre, `down` when returning. */
+const slew = (cur, target, up, down, dt) => {
+    const rate = Math.abs(target) > Math.abs(cur) ? up : down;
+    return cur + clamp(target - cur, -rate * dt, rate * dt);
+};
 
 export class Plane {
     /**
@@ -180,8 +190,16 @@ export class Plane {
      * @param {number} yaw heading in radians (0 = facing -Z)
      * @param {number} color body paint
      */
-    constructor(id, x = 0, z = 0, yaw = 0, color = 0xf2f2f2) {
+    constructor(id, x = 0, z = 0, yaw = 0, color = 0xf2f2f2, type = 'cub') {
+        const spec = AIRCRAFT[type] || AIRCRAFT.cub;
         this.id = id;
+        this.aircraftType = AIRCRAFT[type] ? type : 'cub';
+        this.modelName = spec.name;
+        this.cfg = Object.assign({}, PLANE_CONFIG, spec.kind === 'plane' ? spec.stats : {});
+        this.isJet = !!spec.jet;
+        this.harness = false;             // buckled in: a depressurised cabin can't pull you out
+        this.canopyBroken = false;
+        this.open = !!spec.open;          // open windows: you can shoot out of it; sealed cabins lose pressure instead
         this.isPlane = true;
         this.isPlayer = false;
         this.color = color;
@@ -202,15 +220,16 @@ export class Plane {
 
         // Dimensions. `width` is the distance the player is placed to the side when exiting,
         // so it is kept just inside the wingspan (the player stands under the wing).
-        this.length = 9.5;
-        this.width = 7.0;
-        this.height = 3.0;
-        this.radius = 5.6;
-        this.circleRadius = 1.9;
-        this.interactionRadius = 8.0;
+        this.length = spec.dims.length;
+        this.width = Math.min(spec.dims.width, 7.0);
+        this.height = spec.dims.height;
+        this.radius = spec.dims.radius;
+        this.circleRadius = spec.dims.circleRadius;
+        this._circleOffsets = [this.length * 0.3, 0, -this.length * 0.3];
+        this.interactionRadius = Math.max(8.0, this.radius + 2.5);
         // Aircraft are big: the chase camera sits farther back and higher than for a car
-        this.chaseCamera = { chaseDistance: 17.0, chaseHeight: 4.8, targetLookHeight: 1.8 };
-        this.maxForwardSpeed = PLANE_CONFIG.MAX_SPEED;
+        this.chaseCamera = Object.assign({}, spec.chase);
+        this.maxForwardSpeed = this.cfg.MAX_SPEED || 75;
         this.maxReverseSpeed = 0;
 
         // Compat with Vehicle inputs
@@ -219,6 +238,23 @@ export class Plane {
         this.inputSteer = 0;
         this.inputHandbrake = false;
         this.inputPitch = 0;     // +1 = nose up (set by the game from the arrow keys)
+        this.inputYaw = 0;       // rudder: +1 = yaw left (arrow keys)
+
+        // Flight state beyond attitude: smoothed stick, angular rates, engine spool, sensations for the camera
+        this.ctl = { r: 0, p: 0, y: 0 };
+        this.rollRate = 0;
+        this.pitchRate = 0;
+        this.power = 0;          // engine output, lags the throttle lever
+        this.stalled = false;
+        this.stallSide = 1;
+        this.gLoad = 1;
+        this.vibration = 0;      // 0..1 shake felt in the cockpit
+        this.thump = 0;          // touchdown jolt, decays
+        this.accelLong = 0;
+        this.accelLat = 0;
+        this.airbrake = 0;
+        this._t = Math.random() * 100;
+        this._prev = { x: x, y: 0, z: z, yaw: yaw, pitch: 0, roll: 0 };
 
         this.lastSafePosition = new THREE.Vector3(x, 0, z);
         this.lastSafeYaw = yaw;
@@ -230,11 +266,23 @@ export class Plane {
         ];
         this._syncCollisionCircles();
 
-        const built = createPlaneMesh(color, id);
+        let built;
+        if (this.aircraftType === 'cub') {
+            const b = createPlaneMesh(color, id);
+            built = { root: b.root, propellers: [b.propeller], spinners: [], interior: spec.interior(b.root) };
+        } else {
+            built = buildAircraft(this.aircraftType, color, id);
+        }
         this.mesh = built.root;
         this.mesh.userData.vehicle = this;
-        this.propeller = built.propeller;
+        this.propeller = built.propellers[0] || null;
+        this.propellers = built.propellers;
+        this.spinners = built.spinners;
+        this.interior = built.interior;
+        // Where the pilot's eyes are (camera.js reads `driverEye` in the aircraft's local space)
+        this.driverEye = built.interior.eye.clone();
         this.propAngle = 0;
+        this._instrumentT = 0;
         this._updateMeshTransform(0);
     }
 
@@ -247,7 +295,17 @@ export class Plane {
         return this.position.y <= 0.05 && Math.abs(this.speed) < 6;
     }
 
+    /** Buckle / unbuckle the pilot's harness (B); the straps show in the cockpit while it's on. */
+    setHarness(on) {
+        this.harness = !!on;
+        if (this.interior && this.interior.harness) this.interior.harness.visible = this.harness;
+    }
+
     setPlayerControlled(isControlled) {
+        if (isControlled && !this.isPlayer) {
+            this.setHarness(false);
+            this.hintPending = true;   // (game.html tells the pilot about the harness once)
+        }
         this.isPlayer = !!isControlled;
         if (!this.isPlayer) {
             this.setInputs(false, 0, false, false);
@@ -270,6 +328,35 @@ export class Plane {
         this.inputThrottle = throttle ? 1 : 0;
         this.inputBrake = brake ? 1 : 0;
         this.inputHandbrake = !!handbrake;
+    }
+
+    /** The state before this step, so the renderer can draw between steps (see renderInterp). */
+    _snapshotPrev() {
+        const q = this._prev;
+        q.x = this.position.x; q.y = this.position.y; q.z = this.position.z;
+        q.yaw = this.yaw; q.pitch = this.pitch; q.roll = this.roll;
+    }
+
+    /**
+     * Draws the aircraft `alpha` (0..1) of the way from the previous step to the current one. The sim runs
+     * at a fixed 60 Hz; a jet covers metres per step, so without this the cockpit view would judder.
+     */
+    renderInterp(alpha) {
+        if (!this.mesh || this.wrecked) return;
+        const q = this._prev, a = Math.max(0, Math.min(1, alpha));
+        this.mesh.position.set(q.x + (this.position.x - q.x) * a, q.y + (this.position.y - q.y) * a, q.z + (this.position.z - q.z) * a);
+        let dy = this.yaw - q.yaw;
+        if (dy > Math.PI) dy -= 2 * Math.PI;
+        if (dy < -Math.PI) dy += 2 * Math.PI;
+        this.mesh.rotation.order = 'YXZ';
+        this.mesh.rotation.y = q.yaw + dy * a;
+        this.mesh.rotation.x = q.pitch + (this.pitch - q.pitch) * a;
+        this.mesh.rotation.z = -(q.roll + (this.roll - q.roll) * a);
+        this.mesh.updateMatrixWorld(true);
+    }
+
+    setYawInput(y) {
+        this.inputYaw = Math.max(-1, Math.min(1, y || 0));
     }
 
     setPitchInput(p) {
@@ -302,8 +389,8 @@ export class Plane {
         const fwdX = -Math.sin(this.yaw);
         const fwdZ = -Math.cos(this.yaw);
         for (let i = 0; i < 3; i++) {
-            this.collisionCircles[i].x = this.position.x + _circleOffsets[i] * fwdX;
-            this.collisionCircles[i].z = this.position.z + _circleOffsets[i] * fwdZ;
+            this.collisionCircles[i].x = this.position.x + this._circleOffsets[i] * fwdX;
+            this.collisionCircles[i].z = this.position.z + this._circleOffsets[i] * fwdZ;
         }
     }
 
@@ -315,6 +402,7 @@ export class Plane {
      */
     update(dt, grid = null) {
         if (!dt || dt <= 0) return;
+        this._snapshotPrev();
         this.crashed = false;
         if (this.wrecked) {
             // Exploded: the game hides the mesh; keep the husk motionless where it blew up
@@ -324,76 +412,122 @@ export class Plane {
             this.verticalSpeed = 0;
             return;
         }
-        const C = PLANE_CONFIG;
+        const C = this.cfg;
         const occupied = this.isPlayer;
+        this._t += dt;
 
-        // 1. Throttle lever. Unoccupied planes idle with the engine off.
+        // 1. Controls. The stick takes time to move and to come back; the engine takes time to spool.
+        const ctl = this.ctl;
+        ctl.r = slew(ctl.r, occupied ? -this.inputSteer : 0, 3.2, 4.5, dt);
+        ctl.p = slew(ctl.p, occupied ? this.inputPitch : 0, 2.6, 4.0, dt);
+        ctl.y = slew(ctl.y, occupied ? this.inputYaw : 0, 3.0, 5.0, dt);
         if (occupied) {
             if (this.inputThrottle > 0) this.throttle = Math.min(1, this.throttle + C.THROTTLE_RATE * dt);
             if (this.inputBrake > 0 && !this.onGround) this.throttle = Math.max(0, this.throttle - C.THROTTLE_RATE * dt);
         } else {
             this.throttle = 0;
         }
+        const spool = this.isJet ? 0.9 : 2.5;
+        this.power += (this.throttle - this.power) * Math.min(1, dt * (this.throttle > this.power ? spool : spool * 1.6));
         const brakingOnGround = this.onGround && (this.inputHandbrake || (occupied && this.inputBrake > 0 && this.throttle <= 0.02));
+        // Space in the air: speed brake / flaps down (drag, nose pitches up a touch)
+        this.airbrake += ((!this.onGround && occupied && this.inputHandbrake ? 1 : 0) - this.airbrake) * Math.min(1, dt * 2);
 
-        // 2. Airspeed. Pitch trades speed for height (climbing bleeds speed, diving gains it).
-        const targetSpeed = this.throttle * C.MAX_SPEED;
-        let accel = 0;
-        if (this.throttle > 0.02) {
-            accel = Math.sign(targetSpeed - this.speed) * C.ACCEL * (this.speed < targetSpeed ? 1 : 0.5);
-            if (Math.abs(targetSpeed - this.speed) < 0.4) accel = 0;
-        } else if (this.speed > 0) {
-            accel = -(this.onGround ? C.GROUND_FRICTION : 1.0); // coast down with the engine off
+        // 2. Airspeed. Thrust pulls toward the lever's speed, drag and gravity do the rest.
+        const targetSpeed = this.power * C.MAX_SPEED;
+        const cosR = Math.max(0.25, Math.cos(this.roll));
+        let accel;
+        if (this.power > 0.03) {
+            accel = clamp((targetSpeed - this.speed) * 0.9, -C.ACCEL * 0.5, C.ACCEL);
+        } else {
+            accel = -(this.onGround ? C.GROUND_FRICTION : 0.8 + this.speed * 0.02);
         }
-        if (!this.onGround) accel -= Math.sin(this.pitch) * GRAVITY * 0.9;
+        if (!this.onGround) {
+            accel -= Math.sin(this.pitch) * GRAVITY * 0.9;
+            accel -= (1 / cosR - 1) * 4.0;              // hauling it round a tight turn costs energy
+            accel -= this.airbrake * (4 + this.speed * 0.06);
+        }
         if (brakingOnGround) accel -= C.GROUND_BRAKE;
         this.speed += accel * dt;
         if (this.speed < 0) this.speed = 0;
         if (this.speed > C.MAX_SPEED * 1.35) this.speed = C.MAX_SPEED * 1.35;
+        this.accelLong += (accel - this.accelLong) * Math.min(1, dt * 4);
 
-        // 3. Control surfaces. Authority grows with airspeed.
-        const authority = Math.min(1, this.speed / C.ROTATE_SPEED);
-        const lift = Math.min(1, (this.speed / C.STALL_SPEED));
+        // 3. Attitude. Authority grows with airspeed; the air is never quite smooth.
+        const authority = this.onGround ? Math.min(1, this.speed / C.ROTATE_SPEED) : 0.25 + 0.75 * Math.min(1, this.speed / C.ROTATE_SPEED);
+        const lift = Math.min(1, this.speed / C.STALL_SPEED);
         const liftFactor = lift * lift;
+        const gustAmp = occupied && !this.onGround ? C.TURB * (0.25 + 0.75 * Math.max(0, 1 - this.position.y / 500)) * (0.4 + 0.6 * Math.min(1, this.speed / C.MAX_SPEED)) : 0;
+        const t = this._t;
+        const gR = (Math.sin(t * 1.3) + 0.6 * Math.sin(t * 2.9 + 1.2) + 0.4 * Math.sin(t * 5.3 + 0.4)) * gustAmp;
+        const gP = (Math.sin(t * 1.1 + 2) + 0.5 * Math.sin(t * 3.7) + 0.3 * Math.sin(t * 6.1 + 1)) * gustAmp;
 
         if (this.onGround) {
             this.roll += (0 - this.roll) * Math.min(1, 8 * dt);
+            this.rollRate = 0;
+            this.pitchRate = 0;
+            this.stalled = false;
             // Nose-up only once there is enough speed to rotate
-            if (this.inputPitch > 0 && this.speed >= C.ROTATE_SPEED) {
-                this.pitch = Math.min(C.MAX_PITCH, this.pitch + C.PITCH_RATE * authority * dt);
+            if (ctl.p > 0.05 && this.speed >= C.ROTATE_SPEED * 0.92) {
+                this.pitch = Math.min(C.MAX_PITCH, this.pitch + C.PITCH_RATE * 0.8 * authority * ctl.p * dt);
             } else {
-                this.pitch += (0 - this.pitch) * Math.min(1, 5 * dt);
+                this.pitch += (0 - this.pitch) * Math.min(1, 4 * dt);
             }
-            // Nose-wheel steering, tighter at taxi speeds
+            // Steering: the nose wheel at taxi speed, the rudder as the airflow builds. A prop's torque tugs it left.
             const steerAuth = Math.min(1, this.speed / 4) * Math.max(0.25, 1 - this.speed / 40);
-            this.steerAngle = this.inputSteer * 0.6;
-            this.yaw += this.inputSteer * 0.85 * steerAuth * dt;
+            const steerIn = clamp(-ctl.r + ctl.y, -1, 1);
+            this.steerAngle = steerIn * 0.6;
+            this.yaw += steerIn * 0.85 * steerAuth * dt;
+            if (!this.isJet && this.power > 0.5) this.yaw += 0.1 * this.power * Math.max(0, 1 - this.speed / C.ROTATE_SPEED) * dt;
         } else {
-            // Pitch
-            if (this.inputPitch !== 0) {
-                this.pitch += this.inputPitch * C.PITCH_RATE * authority * dt;
-            } else {
-                this.pitch += (0 - this.pitch) * Math.min(1, 0.5 * dt); // gentle auto-level
+            // Pitch: rate follows the stick with inertia; let go and it settles toward trim for the current speed
+            const wantRate = ctl.p * C.PITCH_RATE * authority;
+            this.pitchRate += (wantRate - this.pitchRate) * Math.min(1, dt * 4);
+            const trim = clamp((this.speed - C.MAX_SPEED * 0.55) * 0.004, -0.2, 0.14) + this.airbrake * 0.08;
+            const hands = 1 - Math.min(1, Math.abs(ctl.p) * 2);
+            this.pitchRate += (trim - this.pitch) * C.STABILITY * hands * dt * 8;
+            this.pitchRate -= (1 - Math.cos(this.roll)) * 2.7 * dt * (1 - Math.min(1, ctl.p * 2));   // the nose drops in a bank
+            this.pitchRate += gP * 0.25 * dt * 4;
+            // Stall: the nose falls through and a wing drops, buffeting all the way
+            const wasStalled = this.stalled;
+            this.stalled = this.speed < C.STALL_SPEED * (wasStalled ? 1.08 : 0.92);
+            if (this.stalled) {
+                if (!wasStalled) this.stallSide = Math.abs(this.roll) > 0.05 ? Math.sign(this.roll) : (Math.random() < 0.5 ? -1 : 1);
+                const deficit = 1 - liftFactor;
+                this.pitchRate -= deficit * 3.3 * dt;
+                this.rollRate += this.stallSide * deficit * 1.8 * dt;
             }
-            // Stalled wings drop the nose
-            if (liftFactor < 1) this.pitch -= (1 - liftFactor) * 0.7 * dt;
-            this.pitch = Math.max(-C.MAX_PITCH, Math.min(C.MAX_PITCH, this.pitch));
+            this.pitch += this.pitchRate * dt;
+            if (Math.abs(this.pitch) > C.MAX_PITCH) {
+                this.pitch = Math.sign(this.pitch) * C.MAX_PITCH;
+                this.pitchRate *= 0.3;
+            }
 
-            // Roll toward the commanded bank (A = left, D = right), self-levels when released
-            const targetBank = -this.inputSteer * C.MAX_BANK;
-            const rollStep = C.ROLL_RATE * dt;
-            const dr = targetBank - this.roll;
-            this.roll += Math.max(-rollStep, Math.min(rollStep, dr));
+            // Roll: also a rate with inertia; dihedral rolls a released bank back toward level
+            const wantRoll = ctl.r * C.ROLL_RATE * authority;
+            this.rollRate += (wantRoll - this.rollRate) * Math.min(1, dt * 3.2);
+            this.rollRate += -this.roll * C.ROLL_STAB * (1 - Math.min(1, Math.abs(ctl.r) * 2.5)) * dt * 1.2;
+            this.rollRate += gR * 0.4 * dt * 4;
+            this.roll += this.rollRate * dt;
+            if (Math.abs(this.roll) > C.MAX_BANK) {
+                this.roll = Math.sign(this.roll) * C.MAX_BANK;
+                if (Math.sign(this.rollRate) === Math.sign(this.roll)) this.rollRate *= 0.2;
+            }
 
-            // Coordinated turn: bank converts into a heading change
+            // Heading: a banked wing turns it (pulling back tightens it); rudder and adverse yaw on top
             const turnSpeed = Math.max(this.speed, 12);
-            this.yaw += -Math.tan(this.roll) * (GRAVITY / turnSpeed) * C.TURN_RATE_SCALE * authority * dt;
+            const pull = 1 + Math.max(0, ctl.p) * 0.5;
+            this.yaw += -Math.tan(this.roll) * (GRAVITY / turnSpeed) * C.TURN_RATE_SCALE * authority * pull * dt;
+            this.yaw += ctl.y * C.RUDDER_RATE * authority * dt + this.rollRate * 0.06 * dt;
+            if (!this.isJet && this.power > 0.5) this.yaw += 0.04 * this.power * dt;
             this.steerAngle = 0;
         }
         while (this.yaw > Math.PI) this.yaw -= 2 * Math.PI;
         while (this.yaw < -Math.PI) this.yaw += 2 * Math.PI;
+        this.gLoad = clamp(1 / cosR + this.pitchRate * this.speed / GRAVITY, -3, 9);
+        this.accelLat += ((-Math.sin(this.roll) * this.gLoad) - this.accelLat) * Math.min(1, dt * 3);
 
-        // 4. Integrate position. Vertical speed follows the pitch, minus sink when under-speed.
+        // 4. Integrate position. Vertical speed follows the pitch with some inertia, minus sink when under-speed.
         const cosP = Math.cos(this.pitch);
         const fwdX = -Math.sin(this.yaw);
         const fwdZ = -Math.cos(this.yaw);
@@ -401,17 +535,27 @@ export class Plane {
         this.velocity.y = fwdZ * this.speed * cosP;
 
         // Below ~45% throttle there isn't enough power to hold height: the plane glides down
-        const glideSink = C.GLIDE_SINK * (1 - Math.min(1, this.throttle / 0.45));
-        let vy = Math.sin(this.pitch) * this.speed - (1 - liftFactor) * C.STALL_SINK - glideSink;
+        const glideSink = C.GLIDE_SINK * (1 - Math.min(1, this.power / 0.45));
+        let vy = Math.sin(this.pitch) * this.speed - (1 - liftFactor) * C.STALL_SINK - glideSink + gP * 0.8
+            - (1 - cosR) * this.speed * 0.16 * (1 - clamp(this.pitch / 0.3, 0, 1));
         if (this.onGround) vy = Math.max(0, vy);
+        else vy = this.verticalSpeed + (vy - this.verticalSpeed) * Math.min(1, dt * 2.5);
         this.verticalSpeed = vy;
 
         this.position.x += this.velocity.x * dt;
         this.position.z += this.velocity.y * dt;
         this.position.y += vy * dt;
 
+        // What the pilot feels through the seat
+        const rough = this.onGround ? Math.min(1, this.speed / 25) * 0.45 : 0.1 + 0.35 * Math.min(1, this.speed / C.MAX_SPEED) + gustAmp * 0.12;
+        const hole = this.canopyBroken && occupied ? 0.55 * Math.min(1, this.speed / 50) : 0;      // wind tearing through a broken canopy
+        const shake = clamp(rough * (occupied ? 1 : 0) * (0.35 + this.power * 0.65) + (this.stalled ? 0.5 : 0) + hole, 0, 1);
+        this.vibration += (shake - this.vibration) * Math.min(1, dt * 5);
+        this.thump *= Math.exp(-dt * 6);
+
         // 5. Ground contact
         if (this.position.y <= 0) {
+            let bounced = false;
             if (!this.onGround) {
                 const hard = vy < -C.CRASH_SINK_RATE || Math.abs(this.roll) > 0.55 || this.pitch < -0.35;
                 if (hard) {
@@ -419,10 +563,20 @@ export class Plane {
                     this.speed *= 0.45;
                     this.throttle = 0;
                 }
-                this.onGround = true;
+                this.thump = Math.min(1, Math.abs(vy) / 6);
+                // Touch down hard-ish and it skips back into the air once
+                if (!hard && vy < -2.5 && this.speed > C.STALL_SPEED * 0.9) {
+                    this.verticalSpeed = -vy * 0.28;
+                    this.position.y = 0.05;
+                    bounced = true;
+                } else {
+                    this.onGround = true;
+                }
             }
-            this.position.y = 0;
-            this.verticalSpeed = 0;
+            if (!bounced) {
+                this.position.y = 0;
+                this.verticalSpeed = 0;
+            }
             if (this.pitch < 0) this.pitch = 0;
         } else if (this.onGround && vy > 0) {
             this.onGround = false;
@@ -533,11 +687,40 @@ export class Plane {
         this.mesh.rotation.y = this.yaw;
         this.mesh.rotation.x = this.pitch;
         this.mesh.rotation.z = -this.roll;
-        if (dt > 0 && this.propeller) {
+        if (dt > 0 && this.propellers.length) {
             // Idle windmill when stopped, faster with throttle and airspeed
             const spin = 6 + this.throttle * 55 + this.speed * 0.3;
             this.propAngle += spin * dt;
-            this.propeller.rotation.z = this.propAngle;
+            for (const p of this.propellers) p.rotation.z = this.propAngle;
         }
+        this._updateInstruments(dt);
+    }
+
+    /** Live gauges and moving controls of the cabin (the aircraft someone is flying): needles glide, canvases repaint ~24 times a second. */
+    _updateInstruments(dt) {
+        if (!this.isPlayer || !this.interior) return;
+        const s = this._instState || (this._instState = { speed: 0, alt: 0, rpm: 0, vs: 0, throttle: 0, pitch: 0, roll: 0, steer: 0, pitchIn: 0, collective: 0, rudder: 0 });
+        const k = Math.min(1, (dt || 1 / 60) * 8);
+        s.speed += (this.speed - s.speed) * k;
+        s.alt += (this.position.y - s.alt) * k;
+        s.vs += (this.verticalSpeed - s.vs) * k;
+        const rpm = this.isHelicopter ? this.rotorRpm : 0.25 + this.power * 0.75;
+        s.rpm += (rpm - s.rpm) * k;
+        s.throttle += (this.throttle - s.throttle) * k;
+        s.maxSpeed = this.cfg.MAX_SPEED || this.cfg.maxSpeed || 80;
+        s.pitch = this.pitch;
+        s.roll = this.roll;
+        s.yaw = this.yaw;
+        // the controls move at once, with the (already smoothed) stick
+        s.steer = -this.ctl.r;
+        s.pitchIn = this.ctl.p;
+        s.rudder = this.isHelicopter ? this.ctl.r : this.ctl.y;
+        s.collective = this.isHelicopter ? this.collective : (this.inputThrottle > 0 ? 1 : 0) - (this.inputBrake > 0 ? 1 : 0);
+        this._instrumentT = (this._instrumentT || 0) - (dt || 0);
+        s.alarm = this.canopyBroken && !this.open ? 1 : 0;
+        s.flash = Math.floor(this._t * 4) % 2 === 0;
+        s.redraw = this._instrumentT <= 0;
+        if (s.redraw) this._instrumentT = 1 / 24;
+        this.interior.update(s);
     }
 }
